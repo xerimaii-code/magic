@@ -332,8 +332,16 @@ class AIAgentClient {
     this.coolReducePct = Math.min(50, coolReduce);
   }
 
+  getBaseMoveSpeedFrame60() {
+    // 플레이어(data.js)와 100% 동일한 상용 MMORPG 헤이스트 전 기본 이동속도 (60FPS 기준 프레임당 픽셀)
+    const base = this.charClass === 'ranger' ? 2.02 : (this.charClass === 'wizard' ? 1.85 : 1.90);
+    const spdBoost = (this.hasBuff('HOLY_WALK') || this.hasBuff('WIND_WALK') || this.hasBuff('HASTE')) ? 1.18 : 1.0;
+    return Number((base * spdBoost).toFixed(2));
+  }
+
   buildPlayerSyncPayload() {
     const wType = this.equip?.weapon?.type || (this.charClass === 'ranger' ? 'W_BW02' : (this.charClass === 'wizard' ? 'W_ST02' : 'W_SW02'));
+    const curSpd60 = this.getBaseMoveSpeedFrame60();
     return {
       charId: this.charId,
       name: this.name,
@@ -341,6 +349,9 @@ class AIAgentClient {
       level: this.level,
       x: Math.round(this.x),
       y: Math.round(this.y),
+      moveX: (this.isWalking && typeof this.moveX === 'number') ? Math.round(this.moveX) : Math.round(this.x),
+      moveY: (this.isWalking && typeof this.moveY === 'number') ? Math.round(this.moveY) : Math.round(this.y),
+      speed: curSpd60,
       dir: this.dir || 'down',
       isWalking: Boolean(this.isWalking),
       lastAttackTime: this.lastAttackTime || 0,
@@ -360,6 +371,7 @@ class AIAgentClient {
         level: this.mercenary.level || this.level,
         x: Math.round(this.mercenary.x || this.x + 40),
         y: Math.round(this.mercenary.y || this.y + 30),
+        speed: Number((curSpd60 * 1.02).toFixed(2)),
         dir: this.mercenary.dir || 'down',
         isWalking: Boolean(this.mercenary.isWalking),
         stance: this.mercenary.stance || 'ATTACK',
@@ -749,9 +761,16 @@ class AIAgentClient {
   // 메인 자율 루프 (전투, 1~6서클 스킬/마법, 버프/힐, 루팅, 용병 제어)
   // =====================================================================
   startLoop() {
+    this.lastTickTime = Date.now();
+    this.lastAiDecisionTime = 0;
+    this.lastSyncSentTime = 0;
+
+    // 100ms 고주파 틱(초당 10회, 서버 WORLD_STATE_TICK 주기와 1:1 동기화)으로 플레이어처럼 부드러운 이동 구현
     this.loopTimer = setInterval(() => {
       if (this.isLoggingOut) return;
       const now = Date.now();
+      const dtMs = Math.min(220, Math.max(20, now - (this.lastTickTime || (now - 100))));
+      this.lastTickTime = now;
 
       // 1) 세션 만료 체크 (Graceful Logout -> 300명 풀에서 신규 에이전트 자동 교체 투입)
       if (now - this.sessionStart >= this.sessionDuration) {
@@ -769,7 +788,7 @@ class AIAgentClient {
         this.checkDrinkPotion();
       }
 
-      // 3) 주기적 장비 평가, 안전 인챈트(+6/+4), 가방 정리, 속도/공격 물약 도핑 (10초마다)
+      // 3) 주기적 장비 평가, 안전 인챈트(+6/+4), 가방 정리, 물약 도핑 (10초마다)
       if (now - this.lastItemManageTime >= 10000) {
         this.lastItemManageTime = now;
         this.manageEquipmentAndEnchant();
@@ -784,47 +803,47 @@ class AIAgentClient {
         this.saveToSupabase(false);
       }
 
-      // 5) 자가 버프(1~6서클 버프 마법) 및 파티/용병 힐·버프 지원
-      this.processBuffsAndPartySupport(now);
-
-      // 6) 능동적 파티 초대 체크
-      this.checkProactivePartyInvite(now);
-
-      // 7) 레벨에 맞는 사냥터/던전 스마트 로테이션
-      this.checkSmartMapNavigation(now);
-
-      // 8) 끼임(Stuck) 감지 및 자가 탈출
-      this.checkAndResolveStuck(now);
-
-      // 9) 메인 행동 상태 머신 (정비 / 팔로워 / 사냥 & 루팅)
-      if (this.state !== 'SHOPPING') {
-        this.executeCombatAndLootRoutine(now);
-        this.updateMovement(300);
+      // 5) 전투/타겟팅/버프 의사결정은 200ms 주기로 안정적으로 수행하고, 위치 이동은 매 100ms마다 부드럽게 전진
+      if (now - (this.lastAiDecisionTime || 0) >= 200) {
+        this.lastAiDecisionTime = now;
+        this.processBuffsAndPartySupport(now);
+        this.checkProactivePartyInvite(now);
+        this.checkSmartMapNavigation(now);
+        this.checkAndResolveStuck(now);
+        if (this.state !== 'SHOPPING') {
+          this.executeCombatAndLootRoutine(now);
+        }
       }
 
-      // 10) 동반 용병(Mercenary) 자율 전투, 스킬 구사 및 이동 업데이트
-      this.updateMercenaryRoutine(300, now);
+      // 6) 매 100ms마다 에이전트 및 동반 용병 연속 이동 업데이트
+      if (this.state !== 'SHOPPING') {
+        this.updateMovement(dtMs);
+      }
+      this.updateMercenaryRoutine(dtMs, now);
 
-      // 11) 서버로 실시간 상태 동기화
-      this.sendWs({
-        type: 'PLAYER_SYNC',
-        charId: this.charId,
-        mapKey: this.mapKey,
-        regionKey: this.regionKey,
-        player: this.buildPlayerSyncPayload()
-      });
-    }, 300);
+      // 7) 서버로 실시간 상태 동기화 (이동/전투 중에는 100ms마다, 정지 시에는 900ms마다 전송)
+      const isActiveNow = Boolean(
+        this.isWalking ||
+        (this.mercenary && this.mercenary.isWalking) ||
+        (now - (this.lastAttackTime || 0) < 600) ||
+        (this.mercenary && (now - (this.mercenary.lastAttackTime || 0) < 600))
+      );
+      if (isActiveNow || (now - (this.lastSyncSentTime || 0) >= 900)) {
+        this.lastSyncSentTime = now;
+        this.sendWs({
+          type: 'PLAYER_SYNC',
+          charId: this.charId,
+          mapKey: this.mapKey,
+          regionKey: this.regionKey,
+          player: this.buildPlayerSyncPayload()
+        });
+      }
+    }, 100);
   }
 
   checkBuffPotions(now) {
     if (this.state === 'SHOPPING' || now - this.lastBuffPotTime < 180000) return;
-    const spdIdx = this.inventory.findIndex(it => it && it.type === 'C_SPD01' && (it.count || 1) > 0);
-    if (spdIdx > -1) {
-      this.inventory[spdIdx].count = (this.inventory[spdIdx].count || 1) - 1;
-      if (this.inventory[spdIdx].count <= 0) this.inventory.splice(spdIdx, 1);
-      this.activeBuffs.HASTE = now + 300000;
-      this.lastBuffPotTime = now;
-    }
+    // 헤이스트 전 기본 이동속도를 자연스럽게 유지하기 위해 자동 가속 물약 상시 복용은 제외하고 공격력 물약만 도핑
     const atkIdx = this.inventory.findIndex(it => it && it.type === 'C_ATK01' && (it.count || 1) > 0);
     if (atkIdx > -1) {
       this.inventory[atkIdx].count = (this.inventory[atkIdx].count || 1) - 1;
@@ -985,38 +1004,25 @@ class AIAgentClient {
         }
       }
 
-      // 2) 원거리 직업(ranger/wizard): 적이 130px 이내로 붙으면 카이팅 또는 닷지 스텝
-      if (isRanged && dist < 130) {
-        if (this.charClass === 'ranger' && this.learnedSkills.includes('AS3') && this.mp >= 10 && now - (this.skillCooldowns.AS3 || 0) >= 3500) {
-          this.mp -= 10;
-          this.skillCooldowns.AS3 = now;
-          const awayAng = Math.atan2(this.y - mob.y, this.x - mob.x);
-          this.x = Math.max(200, Math.min(3800, this.x + Math.cos(awayAng) * 145));
-          this.y = Math.max(600, Math.min(13200, this.y + Math.sin(awayAng) * 145));
-          this.sendWs({
-            type: 'PLAYER_ACTION_FX',
-            charId: this.charId,
-            mapKey: this.mapKey,
-            fxKind: 'teleport',
-            x: Math.round(this.x),
-            y: Math.round(this.y),
-            skillName: '닷지 스텝'
-          });
-          return;
+      // 2) 원거리 직업(ranger/wizard): 적이 115px 이내로 붙으면 플레이어처럼 일정한 궤적으로 부드럽게 카이팅
+      if (isRanged && (dist < 115 || (this.kiteUntil && now < this.kiteUntil && dist < 165))) {
+        if (!this.kiteUntil || now >= this.kiteUntil || this.moveX === null || this.moveY === null) {
+          this.kiteUntil = now + 700;
+          this.orbitDir = this.orbitDir || (Math.random() < 0.5 ? 1 : -1);
+          const awayAngle = Math.atan2(this.y - mob.y, this.x - mob.x) + this.orbitDir * 0.45;
+          this.moveX = Math.max(220, Math.min(3780, this.x + Math.cos(awayAngle) * 155));
+          this.moveY = Math.max(650, Math.min(13150, this.y + Math.sin(awayAngle) * 155));
         }
-        const awayAngle = Math.atan2(this.y - mob.y, this.x - mob.x) + (Math.random() * 0.5 - 0.25);
-        this.moveX = Math.max(200, Math.min(3800, this.x + Math.cos(awayAngle) * 195));
-        this.moveY = Math.max(600, Math.min(13200, this.y + Math.sin(awayAngle) * 195));
         this.isWalking = true;
-        this.angle = Math.atan2(mob.y - this.y, mob.x - this.x);
-        this.dir = angleToDirString(this.angle);
         return;
       }
 
-      // 3) 사거리 밖이면 적에게 접근
+      // 3) 사거리 밖이면 적의 사거리 가장자리까지 부드럽게 접근
       if (dist > maxAtkRange) {
-        this.moveX = mob.x;
-        this.moveY = mob.y;
+        const approachAng = Math.atan2(mob.y - this.y, mob.x - this.x);
+        const stopDist = Math.max(44, maxAtkRange - 14);
+        this.moveX = mob.x - Math.cos(approachAng) * stopDist;
+        this.moveY = mob.y - Math.sin(approachAng) * stopDist;
         this.isWalking = true;
         return;
       }
@@ -1213,8 +1219,9 @@ class AIAgentClient {
     const dx = this.moveX - this.x;
     const dy = this.moveY - this.y;
     const dist = fastHypot(dx, dy);
-    const spdBoost = (this.hasBuff('HOLY_WALK') || this.hasBuff('WIND_WALK') || this.hasBuff('HASTE')) ? 1.22 : 1.0;
-    const speedPx = 168 * spdBoost * (dtMs / 1000);
+    // 상용 MMORPG 기본 속도(헤이스트 전 60FPS 기준 1.85~2.02 px/frame = 초당 111~121.2 px)
+    const speedPxPerSec = this.getBaseMoveSpeedFrame60() * 60;
+    const speedPx = speedPxPerSec * (dtMs / 1000);
 
     if (dist <= speedPx) {
       this.x = this.moveX;
@@ -1261,23 +1268,26 @@ class AIAgentClient {
     }
 
     const target = this.targetMob;
-    const mSpeed = 178 * (dtMs / 1000);
+    const ownerSpdPxPerSec = this.getBaseMoveSpeedFrame60() * 60;
+    const mSpeed = ownerSpdPxPerSec * 1.02 * (dtMs / 1000);
 
     if (target && !target.isDead && target.hp > 0 && this.state === 'HUNTING') {
       const dist = fastHypot(target.x - m.x, target.y - m.y);
       const isRanged = m.class === 'ranger' || m.class === 'wizard';
       const atkRange = isRanged ? 255 : 64;
 
-      if (isRanged && dist < 115) {
-        const awayAng = Math.atan2(m.y - target.y, m.x - target.x);
-        m.x += Math.cos(awayAng) * mSpeed;
-        m.y += Math.sin(awayAng) * mSpeed;
-        m.dir = angleToDirString(Math.atan2(target.y - m.y, target.x - m.x));
+      if (isRanged && (dist < 105 || (m.kiteUntil && now < m.kiteUntil && dist < 148))) {
+        if (!m.kiteUntil || now >= m.kiteUntil) m.kiteUntil = now + 600;
+        const awayAng = Math.atan2(m.y - target.y, m.x - target.x) + 0.35;
+        m.x += Math.cos(awayAng) * mSpeed * 0.88;
+        m.y += Math.sin(awayAng) * mSpeed * 0.88;
+        m.dir = angleToDirString(awayAng);
         m.isWalking = true;
       } else if (dist > atkRange) {
         const ang = Math.atan2(target.y - m.y, target.x - m.x);
-        m.x += Math.cos(ang) * mSpeed;
-        m.y += Math.sin(ang) * mSpeed;
+        const stepM = Math.min(mSpeed, dist - (atkRange - 8));
+        m.x += Math.cos(ang) * stepM;
+        m.y += Math.sin(ang) * stepM;
         m.dir = angleToDirString(ang);
         m.isWalking = true;
       } else {
@@ -1293,11 +1303,15 @@ class AIAgentClient {
         }
       }
     } else {
-      const distToOwner = fastHypot(this.x - m.x, this.y - m.y);
-      if (distToOwner > 68) {
-        const ang = Math.atan2(this.y - m.y, this.x - m.x);
-        m.x += Math.cos(ang) * mSpeed;
-        m.y += Math.sin(ang) * mSpeed;
+      const desiredX = this.x + (this.dir === 'left' ? 44 : -44);
+      const desiredY = this.y + 28;
+      const distToSpot = fastHypot(desiredX - m.x, desiredY - m.y);
+      const followThreshold = m.isWalking ? 18 : 48;
+      if (distToSpot > followThreshold) {
+        const ang = Math.atan2(desiredY - m.y, desiredX - m.x);
+        const stepM = Math.min(distToSpot, mSpeed);
+        m.x += Math.cos(ang) * stepM;
+        m.y += Math.sin(ang) * stepM;
         m.dir = angleToDirString(ang);
         m.isWalking = true;
       } else {

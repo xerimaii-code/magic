@@ -3542,8 +3542,8 @@ setInterval(() => {
 
         if (targetDist > mobAtkRange) {
           const angle = Math.atan2(targetY - m.y, targetX - m.x);
-          // 상용 MMORPG 밸런스에 맞춘 몬스터 추격 속도 (보스 2.50 / 일반 2.15)
-          const chaseSpd = m.isBoss ? 2.50 : 2.15;
+          // 상용 MMORPG(헤이스트 전 기본 속도 기준) 밸런스에 맞춘 몬스터 추격 속도 (보스 1.82 / 일반 1.45)
+          const chaseSpd = m.isBoss ? 1.82 : 1.45;
           const step = chaseSpd * DELTA_60;
           const steer = findServerOpenSteerPoint(mapInst, m.x, m.y, angle, step, true, m, mapPlayers);
           if (steer) {
@@ -3585,8 +3585,8 @@ setInterval(() => {
         const dTarget = Math.hypot(m.targetX - m.x, m.targetY - m.y);
         if (dTarget > 5) {
           const angle = Math.atan2(m.targetY - m.y, m.targetX - m.x);
-          const nx = m.x + Math.cos(angle) * 0.95 * DELTA_60;
-          const ny = m.y + Math.sin(angle) * 0.95 * DELTA_60;
+          const nx = m.x + Math.cos(angle) * 0.65 * DELTA_60;
+          const ny = m.y + Math.sin(angle) * 0.65 * DELTA_60;
           if (!checkServerCollision(mapInst, nx, ny) && !isInsideServerWarpSafeZone(mapInst, nx, ny) && !checkServerUnitCollision(mapInst, nx, ny, m, mapPlayers)) {
             m.x = nx;
             m.y = ny;
@@ -3774,11 +3774,14 @@ setInterval(() => {
                 isPartyLeader: isLeader
               });
             } else {
-              // 축약 델타 플레이어 패킷 (변화한 위치/모션/체력만 전송)
+              // 축약 델타 플레이어 패킷 (변화한 위치/모션/속도/목표좌표/체력 전송)
               visiblePlayers.push({
                 charId: other.charId,
                 x: ox,
                 y: oy,
+                moveX: typeof op.moveX === 'number' ? Math.round(op.moveX) : undefined,
+                moveY: typeof op.moveY === 'number' ? Math.round(op.moveY) : undefined,
+                speed: typeof op.speed === 'number' ? op.speed : undefined,
                 dir: op.dir,
                 isWalking: Boolean(op.isWalking),
                 lastAttackTime: op.lastAttackTime || 0,
@@ -3793,6 +3796,7 @@ setInterval(() => {
                   isDead: Boolean(merc.isDead),
                   x: mx,
                   y: my,
+                  speed: typeof merc.speed === 'number' ? merc.speed : undefined,
                   dir: merc.dir || 'down',
                   isWalking: Boolean(merc.isWalking),
                   stance: merc.stance || 'SUPPORT',
@@ -3834,6 +3838,7 @@ setInterval(() => {
         }
         if (visiblePlayers.length > 0 || otherCountChanged) {
           tickPacket.players = visiblePlayers;
+          tickPacket.playersDelta = true;
           tickPacket.allCharIds = Array.from(currentOtherIds);
         }
         if (isNearRefreshTick) {
@@ -4340,7 +4345,8 @@ server.listen(PORT, '0.0.0.0', () => {
   if (process.env.PM2_MANAGED !== 'true' && process.env.DISABLE_AUTO_AI_RUNNER !== 'true') {
     setTimeout(() => {
       try {
-        const { startAIAgentRunner } = require('./aiAgentRunner.js');
+        const runnerPath = fs.existsSync(path.join(__dirname, 'aiAgentRunner.js')) ? './aiAgentRunner.js' : './aiagentrunner.js';
+        const { startAIAgentRunner } = require(runnerPath);
         startAIAgentRunner();
       } catch (err) {
         console.warn('⚠️ [AI Runner 자동 시작 알림]:', err.message);

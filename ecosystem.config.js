@@ -1,3 +1,4 @@
+require('dotenv').config(); 
 module.exports = {
   apps: [
     {
@@ -24,7 +25,6 @@ module.exports = {
         NODE_ENV: "production",
         SERVER_WS_URL: "ws://127.0.0.1:4000/ws",
         SERVER_HTTP_URL: "http://127.0.0.1:4000",
-        DOTENV_CONFIG_PATH: "./.env",
         AI_TOTAL_POOL: "300",
         MAX_CONCURRENT_AI: "50"
       }
