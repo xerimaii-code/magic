@@ -1417,7 +1417,7 @@ function handleChatCommand(entry, rawText) {
   const args = tokens.slice(1);
   const restText = trimmed.slice(tokens[0].length).trim();
 
-  // 👥 /누구 및 /who 명령어 (전체접속인원 · 지역별 인원 · 내가 있는 맵 인원 이름(레벨) 및 파티 표기)
+ // 👥 /누구 및 /who 명령어 (전체접속인원 · 내가 속한 지역별 인원 및 맵 인원 이름(레벨)·파티 표기)
   if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유저목록') {
     const targetQuery = args[0] ? String(args[0]).trim().toLowerCase() : '';
     if (targetQuery) {
@@ -1444,21 +1444,24 @@ function handleChatCommand(entry, rawText) {
     // 1) 전체 접속 인원
     const totalCount = visibleEntries.length;
 
-    // 2) 지역별 인원 집계
-    const regionCounts = new Map();
-    visibleEntries.forEach(e => {
-      const rKey = e.regionKey || String(e.mapKey || 'R01').split('_')[0] || 'R01';
-      regionCounts.set(rKey, (regionCounts.get(rKey) || 0) + 1);
+    // 2) 내가 속한 지역(예: R01) 유저들만 따로 묶어서 집계
+    const myRegionKey = String(entry.regionKey || 'R01').split('_')[0];
+    const myRegObj = (GameDB.Regions || []).find(r => r.id === myRegionKey) || { name: myRegionKey };
+    
+    const sameRegionEntries = visibleEntries.filter(e => {
+      const eReg = String(e.regionKey || e.mapKey || 'R01').split('_')[0];
+      return eReg === myRegionKey;
     });
-    const regionSummaryParts = [];
-    (GameDB.Regions || []).forEach(r => {
-      const cnt = regionCounts.get(r.id) || 0;
-      if (cnt > 0) regionSummaryParts.push(`${r.name}: ${cnt}명`);
-    });
+
+    const sameRegionListStr = sameRegionEntries.map(e => {
+      const p = e.player;
+      const eParty = getPartyByCharId(e.charId);
+      const pBadge = eParty ? (eParty.leaderCharId === e.charId ? ' [👑파티장]' : ' [🎗️파티]') : '';
+      return `${p.name || '모험가'}(Lv.${p.level || 1})${pBadge}`;
+    }).join(', ');
 
     // 3) 내가 있는 맵 인원 및 접속자 이름(레벨) + 파티 여부 표기
     const myCanonicalMap = normalizeMapKey(entry.mapKey);
-    const myRegObj = (GameDB.Regions || []).find(r => r.id === entry.regionKey) || { name: entry.regionKey || '알트리아' };
     const isDung = myCanonicalMap.endsWith('_dungeon');
     const myMapLabel = `${myRegObj.name}${isDung ? ' 던전' : ''}`;
     const sameMapEntries = visibleEntries.filter(e => normalizeMapKey(e.mapKey) === myCanonicalMap);
@@ -1470,7 +1473,7 @@ function handleChatCommand(entry, rawText) {
     }).join(', ');
 
     sendSystemMsgToEntry(entry, `🌐 [전체 접속 인원] 총 ${totalCount}명`, 'log-kill');
-    sendSystemMsgToEntry(entry, `🗺️ [지역별 인원] ${regionSummaryParts.join(' · ') || '없음'}`, 'log-sys');
+    sendSystemMsgToEntry(entry, `📍 [현재 지역(${myRegObj.name}) 인원: ${sameRegionEntries.length}명] ${sameRegionListStr || '없음'}`, 'log-sys');
     sendSystemMsgToEntry(entry, `📍 [현재 맵(${myMapLabel}) 인원: ${sameMapEntries.length}명] ${sameMapListStr || '없음'}`, 'log-chat');
     return true;
   }
