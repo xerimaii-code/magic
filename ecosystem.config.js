@@ -12,7 +12,7 @@ module.exports = {
         PORT: 4000,
         PM2_MANAGED: "true",
         AI_TOTAL_POOL: "300",
-        MAX_CONCURRENT_AI: "30"
+        MAX_CONCURRENT_AI: "35"
       }
     },
     {
@@ -26,7 +26,7 @@ module.exports = {
         SERVER_WS_URL: "ws://127.0.0.1:4000/ws",
         SERVER_HTTP_URL: "http://127.0.0.1:4000",
         AI_TOTAL_POOL: "300",
-        MAX_CONCURRENT_AI: "30"
+        MAX_CONCURRENT_AI: "35"
       }
     }
   ]
