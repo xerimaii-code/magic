@@ -170,7 +170,7 @@ function updateMercenaryAI(delta, now, inSafe) {
     if (dangerTg) {
       let escAng = Math.atan2(mercenary.y - dangerTg.y, mercenary.x - dangerTg.x);
       if (Math.hypot(mercenary.x - dangerTg.x, mercenary.y - dangerTg.y) < 5) escAng = Math.random() * Math.PI * 2;
-      const step = Math.max(3.4, (player.speed || 2.85) * 1.25) * delta;
+      const step = Math.max(2.10, (player.speed || 1.90) * 1.15) * delta;
       const steer = findOpenSteerPoint(mercenary.x, mercenary.y, escAng, step, true, mercenary);
       if (steer) {
         mercenary.x = steer.x;
@@ -201,7 +201,7 @@ function updateMercenaryAI(delta, now, inSafe) {
     });
     if (closestThreat) {
       const awayAng = Math.atan2(mercenary.y - closestThreat.y, mercenary.x - closestThreat.x) + 0.65;
-      const evadeStep = Math.max(2.9, (player.speed || 2.85) * 1.05) * delta;
+      const evadeStep = (player.speed || 1.90) * 1.02 * delta;
       const steer = findOpenSteerPoint(mercenary.x, mercenary.y, awayAng, evadeStep, true, mercenary);
       if (steer) {
         mercenary.x = steer.x;
@@ -279,7 +279,7 @@ function updateMercenaryAI(delta, now, inSafe) {
   // 보스전 전력투구(All-Out Burst) 시 공격/스킬 템포 가속
   const isAllOutBoss = Boolean(target.isBoss || isBossFight);
   const atkInterval = Math.max(360, Math.floor(ms.atkSpeedSec * (isAllOutBoss ? 840 : 1000)));
-  const mercMoveSpeed = Math.max(2.85, (player.speed || 2.85) * 1.04);
+  const mercMoveSpeed = (player.speed || 1.90) * 1.02;
 
   if (distToTarget < evadeDist && now - mercenary.lastAttackTime < atkInterval * 0.85) {
     let awayAng = Math.atan2(mercenary.y - target.y, mercenary.x - target.x) + 0.75;
@@ -487,7 +487,7 @@ function followPlayerMovement(delta) {
   const desiredX = player.x + (player.dir === 'left' ? 48 : -48);
   const desiredY = player.y + 28;
   const dist = Math.hypot(desiredX - mercenary.x, desiredY - mercenary.y);
-  const followSpd = Math.max(2.85, (player.speed || 2.85) * 1.05);
+  const followSpd = (player.speed || 1.90) * 1.04;
 
   if (dist > 28) {
     const ang = Math.atan2(desiredY - mercenary.y, desiredX - mercenary.x);
@@ -658,8 +658,8 @@ function gameLoop(delta) {
   if (player.activeBuffs.ELIXIR > 0) speedBonusPct += 6;
   if ((player.activeBuffs.MERC_BLESS || 0) > 0) speedBonusPct += 8;
   // 각종 이동속도 버프는 누적 적용되되 상용 MMORPG 표준 속도감을 해치지 않도록 소프트캡(최대 +62%) 적용
-  const effSpeedMult = 1 + Math.min(0.62, speedBonusPct / 100);
-  const baseSpd = CLASS_STATS[player.class]?.baseSpeed ?? 2.85;
+  const effSpeedMult = 1 + Math.min(0.45, speedBonusPct / 100);
+  const baseSpd = CLASS_STATS[player.class]?.baseSpeed ?? 1.90;
   player.speed = baseSpd * effSpeedMult * (player.gmSpeedMult || 1);
 
   if (player.targetEntity && player.targetEntity.type === 'MONSTER') updateTopTargetUI(player.targetEntity.ref);
@@ -936,9 +936,10 @@ function gameLoop(delta) {
         if (dist > 380) {
           m.x = m.serverX;
           m.y = m.serverY;
-        } else if (dist > 0.25) {
-          // 상용 MMORPG 수준의 등속+감속 하이브리드 보간으로 끊김/튀는 현상 완전 제거
-          const baseGlide = Math.min(dist, Math.max(dist * 0.22, 2.25) * delta);
+        } else if (dist > 0.20) {
+          // 100ms(6프레임) 틱 간격을 끊김 없이 이어주는 상용 MMORPG 등속 글라이드 보간
+          const targetSpd = (m._interpSpeed || (m.isBoss ? 1.82 : 1.45)) + Math.max(0, (dist - 12) * 0.08);
+          const baseGlide = Math.min(dist, targetSpd * delta);
           m.x += (dx / dist) * baseGlide;
           m.y += (dy / dist) * baseGlide;
         }
@@ -1023,7 +1024,7 @@ function gameLoop(delta) {
 
       if (targetDist > mobAtkRange) {
         let angle = Math.atan2(targetY - m.y, targetX - m.x);
-        let step = 2.1 * delta;
+        let step = (m.isBoss ? 1.82 : 1.45) * delta;
         const steer = findOpenSteerPoint(m.x, m.y, angle, step, true);
         if (steer) {
           m.x = steer.x;
@@ -1206,8 +1207,8 @@ function gameLoop(delta) {
       let dTarget = Math.hypot(m.targetX - m.x, m.targetY - m.y);
       if (dTarget > 5) {
         let angle = Math.atan2(m.targetY - m.y, m.targetX - m.x);
-        let nx = m.x + Math.cos(angle) * 1.1 * delta;
-        let ny = m.y + Math.sin(angle) * 1.1 * delta;
+        let nx = m.x + Math.cos(angle) * 0.65 * delta;
+        let ny = m.y + Math.sin(angle) * 0.65 * delta;
         if (!checkCollision(nx, ny) && !isInsideSafeZone(nx, ny)) {
           m.x = nx;
           m.y = ny;
@@ -1361,7 +1362,7 @@ function gameLoop(delta) {
 
             // 헤이스트(+30%)·홀리워크(+50%) 상태에서도 카이팅 보행 속도가 과도하게 튀지 않도록 상한 완충
             const kiteSpeed = (GameOptions?.smoothCamera !== false)
-              ? Math.min(player.speed * 0.68, 3.65)
+              ? Math.min(player.speed * 0.78, 2.35)
               : player.speed * 0.85;
             const step = kiteSpeed * delta;
             let nx = player.x + Math.cos(moveAngle) * step;
@@ -1917,7 +1918,7 @@ function gameLoop(delta) {
     m.nameTag.y = Math.round(barY - 3);
   });
 
-  // 12) 멀티플레이어 타 플레이어(동일 계정 동시접속 캐릭터 포함) 스프라이트시트 렌더링 & 상용 MMORPG급 60FPS 이동 보간
+  // 12) 멀티플레이어 타 플레이어 & AI 에이전트 스프라이트시트 렌더링 & 내 플레이어처럼 끊김 없는 60FPS 등속 글라이드 보간
   if (Array.isArray(window.otherPlayers)) {
     window.otherPlayers.forEach(op => {
       if (!op || op.x === undefined || op.y === undefined) return;
@@ -1925,19 +1926,43 @@ function gameLoop(delta) {
         const dxOp = op.serverX - op.x;
         const dyOp = op.serverY - op.y;
         const dOp = Math.hypot(dxOp, dyOp);
+        const baseOpSpd = op._interpSpeed || op.speed || CLASS_STATS[op.class]?.baseSpeed || 1.90;
+
         if (dOp > 380) {
           op.x = op.serverX;
           op.y = op.serverY;
-        } else if (dOp > 0.25) {
-          // 튀지 않고 부드럽게 이어지는 등속+감속 글라이드 보간 (상용 속도 2.85~3.6에 맞춤)
-          const moveStep = Math.min(dOp, Math.max(dOp * 0.22, 2.90) * delta);
+        } else if (dOp > 0.20) {
+          // 100ms 서버 틱(약 6프레임) 동안 멈추는 프레임 없이 일정한 속도로 미끄러지듯 이동
+          const glideSpd = baseOpSpd + Math.max(0, (dOp - 14) * 0.08);
+          const moveStep = Math.min(dOp, glideSpd * delta);
           op.x += (dxOp / dOp) * moveStep;
           op.y += (dyOp / dOp) * moveStep;
           op.lastMoveVisualTime = now;
-          if (dOp > 1.0) {
-            if (Math.abs(dxOp) > Math.abs(dyOp)) op.dir = dxOp > 0 ? 'right' : 'left';
-            else op.dir = dyOp > 0 ? 'down' : 'up';
+          op.isWalking = true;
+          if (dOp > 1.5 && now - (op._lastDirUpdateTs || 0) > 130) {
+            op._lastDirUpdateTs = now;
+            if (Math.abs(dxOp) > Math.abs(dyOp) * 1.15) op.dir = dxOp > 0 ? 'right' : 'left';
+            else if (Math.abs(dyOp) > Math.abs(dxOp) * 1.15) op.dir = dyOp > 0 ? 'down' : 'up';
+            else if (op.serverDir) op.dir = op.serverDir;
           }
+        } else if (op.serverWalking && typeof op.moveX === 'number' && typeof op.moveY === 'number' && (now - (op.lastPacketTime || 0) < 220)) {
+          // 다음 100ms 패킷이 도착하기 전 미세한 공백 프레임에서도 목표 방향(moveX, moveY)으로 끊김 없이 예측 보행(Dead Reckoning)
+          const exDx = op.moveX - op.x;
+          const exDy = op.moveY - op.y;
+          const exDist = Math.hypot(exDx, exDy);
+          if (exDist > 1.0) {
+            const exStep = Math.min(exDist, baseOpSpd * 0.90 * delta);
+            op.x += (exDx / exDist) * exStep;
+            op.y += (exDy / exDist) * exStep;
+            op.lastMoveVisualTime = now;
+            op.isWalking = true;
+          } else {
+            op.isWalking = (now - (op.lastMoveVisualTime || 0)) < 240;
+          }
+        } else {
+          // 패킷 사이 미세 간격 동안 보행 모션이 idle로 툭툭 끊기지 않도록 240ms 홀드
+          op.isWalking = Boolean(op.serverWalking || (now - (op.lastMoveVisualTime || 0) < 240));
+          if (!op.isWalking && op.serverDir) op.dir = op.serverDir;
         }
       }
       const inView = !op.isMinimapOnly && Math.abs(op.x - player.x) <= viewW && Math.abs(op.y - player.y) <= viewH;
@@ -1991,19 +2016,22 @@ function gameLoop(delta) {
           const dxOm = om.serverX - (om.x ?? om.serverX);
           const dyOm = om.serverY - (om.y ?? om.serverY);
           const dOm = Math.hypot(dxOm, dyOm);
+          const baseOmSpd = om._interpSpeed || om.speed || 1.94;
           if (om.x === undefined || dOm > 320) {
             om.x = om.serverX;
             om.y = om.serverY;
-          } else if (dOm > 0.3) {
-            const stepOm = Math.min(dOm, Math.max(dOm * 0.22, 2.95) * delta);
+          } else if (dOm > 0.20) {
+            const glideOm = baseOmSpd + Math.max(0, (dOm - 14) * 0.08);
+            const stepOm = Math.min(dOm, glideOm * delta);
             om.x += (dxOm / dOm) * stepOm;
             om.y += (dyOm / dOm) * stepOm;
+            om.lastMoveVisualTime = now;
             om.isWalking = true;
-            if (dOm > 1.0) {
+            if (dOm > 1.2 && Math.abs(dxOm) > 0.8) {
               om.dir = dxOm >= 0 ? 'right' : 'left';
             }
           } else {
-            om.isWalking = Boolean(om.serverWalking);
+            om.isWalking = Boolean(om.serverWalking || (now - (om.lastMoveVisualTime || 0) < 240));
           }
         }
         const omX = om.x || (op.x - 42);
@@ -2382,4 +2410,3 @@ function renderMinimap() {
   mCtx.fill();
   mCtx.stroke();
 }
-

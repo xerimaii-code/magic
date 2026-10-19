@@ -821,7 +821,7 @@ function cleanupOtherPlayerVisuals(oldOp) {
   destroyOtherPlayerSprite(oldOp);
 }
 
-function syncAuthoritativePlayersList(playersArr, isDelta = false) {
+function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = null) {
   if (!Array.isArray(playersArr)) return;
   const incomingMap = new Map();
   playersArr.forEach(p => {
@@ -829,9 +829,15 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false) {
     incomingMap.set(p.charId, p);
   });
 
-  if (!isDelta && Array.isArray(window.otherPlayers)) {
+  const validIdSet = Array.isArray(allCharIds) ? new Set(allCharIds) : null;
+
+  if (Array.isArray(window.otherPlayers)) {
     window.otherPlayers.forEach(oldOp => {
-      if (oldOp && !incomingMap.has(oldOp.charId)) {
+      if (!oldOp) return;
+      const shouldRemove = isDelta
+        ? (validIdSet ? !validIdSet.has(oldOp.charId) : false)
+        : !incomingMap.has(oldOp.charId);
+      if (shouldRemove) {
         cleanupOtherPlayerVisuals(oldOp);
       }
     });
@@ -842,44 +848,71 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false) {
   if (isDelta && Array.isArray(window.otherPlayers)) {
     window.otherPlayers.forEach(op => {
       if (op && op.charId && op.charId !== activeCharacterId) {
-        baseMap.set(op.charId, op);
+        if (!validIdSet || validIdSet.has(op.charId)) {
+          baseMap.set(op.charId, op);
+        }
       }
     });
   }
 
   incomingMap.forEach((newP, cId) => {
     const existing = baseMap.get(cId) || (window.otherPlayers || []).find(o => o && o.charId === cId);
-    const isMiniOnly = Boolean(newP.mOnly);
+    const isMiniOnly = Boolean(newP.mOnly || newP._minimapOnly);
     if (existing) {
       const movedDelta = Math.hypot((newP.x || 0) - (existing.serverX ?? existing.x ?? 0), (newP.y || 0) - (existing.serverY ?? existing.y ?? 0));
-      if (movedDelta > 1.2 || newP.isWalking) {
+      const distFromRender = Math.hypot((newP.x || 0) - (existing.x ?? newP.x ?? 0), (newP.y || 0) - (existing.y ?? newP.y ?? 0));
+      const classBaseSpd = CLASS_STATS[newP.class || existing.class]?.baseSpeed || 1.90;
+      const reportedSpd = typeof newP.speed === 'number' ? newP.speed : (existing.speed || classBaseSpd);
+
+      // 100ms(6프레임) 동안 현재 화면 위치에서 새 서버 위치까지 끊김 없이 등속으로 도달하도록 보간 속도 산출
+      existing._interpSpeed = distFromRender > 0.5
+        ? Math.max(reportedSpd * 0.88, Math.min(reportedSpd * 1.45, distFromRender / 6.0))
+        : reportedSpd;
+      existing.speed = reportedSpd;
+      existing.lastPacketTime = nowTs;
+
+      if (movedDelta > 0.5 || newP.isWalking) {
         existing.lastMoveVisualTime = nowTs;
       }
       existing.serverX = newP.x;
       existing.serverY = newP.y;
+      if (typeof newP.moveX === 'number') existing.moveX = newP.moveX;
+      if (typeof newP.moveY === 'number') existing.moveY = newP.moveY;
       existing.isMinimapOnly = isMiniOnly;
       if (!isMiniOnly) {
-        existing.dir = newP.dir || existing.dir;
-        existing.isWalking = Boolean(newP.isWalking || movedDelta > 1.2);
+        existing.serverDir = newP.dir || existing.serverDir || existing.dir;
+        if (!existing.isWalking || !existing.dir) {
+          existing.dir = newP.dir || existing.dir;
+        }
+        existing.serverWalking = Boolean(newP.isWalking || movedDelta > 0.5);
+        existing.isWalking = Boolean(existing.serverWalking || (nowTs - (existing.lastMoveVisualTime || 0) < 240));
         existing.lastAttackTime = newP.lastAttackTime || existing.lastAttackTime || 0;
         existing.hp = newP.hp ?? existing.hp;
         existing.maxHp = newP.maxHp ?? existing.maxHp;
         existing.mp = newP.mp ?? existing.mp;
         existing.maxMp = newP.maxMp ?? existing.maxMp;
         existing.weaponType = newP.weaponType || existing.weaponType;
-        existing.hasShield = Boolean(newP.hasShield);
+        if (newP.hasShield !== undefined) existing.hasShield = Boolean(newP.hasShield);
       }
       existing.level = newP.level || existing.level;
       existing.name = newP.name || existing.name;
       existing.class = newP.class || existing.class;
       existing.isAdmin = Boolean(newP.isAdmin ?? existing.isAdmin);
-      existing.gmInvisible = Boolean(newP.gmInvisible);
+      existing.gmInvisible = Boolean(newP.gmInvisible ?? existing.gmInvisible);
       existing.partyId = newP.partyId !== undefined ? newP.partyId : existing.partyId;
       existing.isPartyLeader = Boolean(newP.isPartyLeader ?? existing.isPartyLeader);
 
       if (!isMiniOnly) {
         if (newP.mercenary && newP.mercenary.hired) {
           if (existing.mercenary) {
+            const mRenderDist = Math.hypot(
+              (newP.mercenary.x || 0) - (existing.mercenary.x ?? newP.mercenary.x ?? 0),
+              (newP.mercenary.y || 0) - (existing.mercenary.y ?? newP.mercenary.y ?? 0)
+            );
+            const mReportedSpd = typeof newP.mercenary.speed === 'number' ? newP.mercenary.speed : (reportedSpd * 1.02);
+            const mInterpSpd = mRenderDist > 0.5
+              ? Math.max(mReportedSpd * 0.88, Math.min(mReportedSpd * 1.45, mRenderDist / 6.0))
+              : mReportedSpd;
             existing.mercenary = {
               ...existing.mercenary,
               ...newP.mercenary,
@@ -887,7 +920,10 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false) {
               y: existing.mercenary.y ?? newP.mercenary.y,
               serverX: newP.mercenary.x,
               serverY: newP.mercenary.y,
-              serverWalking: Boolean(newP.mercenary.isWalking),
+              speed: mReportedSpd,
+              _interpSpeed: mInterpSpd,
+              serverWalking: Boolean(newP.mercenary.isWalking || mRenderDist > 0.5),
+              lastMoveVisualTime: (newP.mercenary.isWalking || mRenderDist > 0.5) ? nowTs : (existing.mercenary.lastMoveVisualTime || 0),
               lastAttackTime: Math.max(existing.mercenary.lastAttackTime || 0, newP.mercenary.lastAttackTime || 0),
               nameTag: existing.mercenary.nameTag || null
             };
@@ -896,11 +932,14 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false) {
               ...newP.mercenary,
               serverX: newP.mercenary.x,
               serverY: newP.mercenary.y,
+              speed: newP.mercenary.speed || (reportedSpd * 1.02),
+              _interpSpeed: newP.mercenary.speed || (reportedSpd * 1.02),
               serverWalking: Boolean(newP.mercenary.isWalking),
+              lastMoveVisualTime: newP.mercenary.isWalking ? nowTs : 0,
               nameTag: null
             };
           }
-        } else {
+        } else if (newP.mercenary === null && !newP._delta) {
           if (existing.mercenary?.nameTag?.parent) {
             existing.mercenary.nameTag.parent.removeChild(existing.mercenary.nameTag);
             existing.mercenary.nameTag.destroy();
@@ -910,8 +949,14 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false) {
       }
       baseMap.set(cId, existing);
     } else {
+      const initSpd = newP.speed || CLASS_STATS[newP.class]?.baseSpeed || 1.90;
       baseMap.set(cId, {
         ...newP,
+        speed: initSpd,
+        _interpSpeed: initSpd,
+        serverDir: newP.dir || 'down',
+        serverWalking: Boolean(newP.isWalking),
+        lastPacketTime: nowTs,
         isMinimapOnly: isMiniOnly,
         serverX: newP.x,
         serverY: newP.y,
@@ -1192,7 +1237,7 @@ function handleCentralServerPacket(msg) {
       }
     }
 
-    // A. 초경량 튜플 패킷(msg.ms: [id, x, y, hp, isDead, respawnTimer, stunUntil, defDownUntil]) 복원
+    // A. 초경량 튜플 패킷(msg.ms: [id, x, y, hp, isDead, mp, maxHp, stunUntil, defDownUntil, respawnTimer]) 복원
     if (Array.isArray(msg.ms)) {
       const mobMap = new Map();
       monsterList.forEach(m => mobMap.set(m.id, m));
@@ -1200,6 +1245,9 @@ function handleCentralServerPacket(msg) {
         if (!Array.isArray(tup)) return;
         const m = mobMap.get(tup[0]);
         if (m) {
+          const distM = Math.hypot((tup[1] || 0) - (m.x ?? tup[1] ?? 0), (tup[2] || 0) - (m.y ?? tup[2] ?? 0));
+          const defMobSpd = m.isBoss ? 1.82 : 1.45;
+          m._interpSpeed = distM > 0.4 ? Math.max(0.45, Math.min(2.45, distM / 6.0)) : defMobSpd;
           m.serverX = tup[1];
           m.serverY = tup[2];
           if (tup[3] !== undefined) m.hp = tup[3];
@@ -1210,9 +1258,17 @@ function handleCentralServerPacket(msg) {
             m.y = tup[2];
           }
           m.isDead = deadFlag;
-          if (tup[5] !== undefined) m.respawnTimer = tup[5];
-          m.stunUntil = tup[6] || 0;
-          m.defDownUntil = tup[7] || 0;
+          if (tup.length >= 9) {
+            if (tup[5] !== undefined) m.mp = tup[5];
+            if (tup[6] !== undefined) m.maxHp = tup[6];
+            m.stunUntil = tup[7] || 0;
+            m.defDownUntil = tup[8] || 0;
+            if (tup[9] !== undefined) m.respawnTimer = tup[9];
+          } else {
+            if (tup[5] !== undefined) m.respawnTimer = tup[5];
+            m.stunUntil = tup[6] || 0;
+            m.defDownUntil = tup[7] || 0;
+          }
         }
       });
       if (player.targetEntity?.type === 'MONSTER' && player.targetEntity.ref) {
@@ -1224,6 +1280,8 @@ function handleCentralServerPacket(msg) {
       msg.monsters.forEach(sm => {
         const m = mobMap.get(sm.id);
         if (m) {
+          const distM = Math.hypot((sm.x || 0) - (m.x ?? sm.x ?? 0), (sm.y || 0) - (m.y ?? sm.y ?? 0));
+          m._interpSpeed = distM > 0.4 ? Math.max(0.45, Math.min(2.45, distM / 6.0)) : (m.isBoss ? 1.82 : 1.45);
           m.serverX = sm.x;
           m.serverY = sm.y;
           if (sm.hp !== undefined) m.hp = sm.hp;
@@ -1242,8 +1300,8 @@ function handleCentralServerPacket(msg) {
       }
     }
 
-    if (Array.isArray(msg.players)) {
-      syncAuthoritativePlayersList(msg.players, Boolean(msg.playersDelta));
+    if (Array.isArray(msg.players) || Array.isArray(msg.allCharIds)) {
+      syncAuthoritativePlayersList(msg.players || [], Boolean(msg.playersDelta || msg.allCharIds), msg.allCharIds);
     }
     return;
   }
@@ -2103,4 +2161,3 @@ function handleCentralServerPacket(msg) {
     }
   }
 }
-

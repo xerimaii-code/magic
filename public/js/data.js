@@ -159,7 +159,7 @@ export const GameDB = {
       str: 13, dex: 3, int: 1, con: 3,
       baseHp: 240, baseMp: 95, hpPerLv: 22, mpPerLv: 13, hpPerCon: 11, mpPerInt: 10,
       baseMDef: 6, mDefPerLv: 1.0,
-      atkMult: 1.05, magicMult: 0.2, attackRange: 64, baseSpeed: 2.85,
+      atkMult: 1.05, magicMult: 0.2, attackRange: 64, baseSpeed: 1.90,
       statPerLv: 3, resetUnlockLv: 50, resetStepLv: 50,
       desc: "높은 체력과 근접 방어력, 단일·광역 검술에 특화된 최전방 클래스"
     },
@@ -168,7 +168,7 @@ export const GameDB = {
       str: 3, dex: 15, int: 3, con: 3,
       baseHp: 215, baseMp: 180, hpPerLv: 21, mpPerLv: 15, hpPerCon: 11, mpPerInt: 11,
       baseMDef: 10, mDefPerLv: 1.35,
-      atkMult: 1.14, magicMult: 0.72, attackRange: 255, baseSpeed: 3.02,
+      atkMult: 1.14, magicMult: 0.72, attackRange: 255, baseSpeed: 2.02,
       statPerLv: 3, resetUnlockLv: 50, resetStepLv: 50,
       desc: "빠른 기동성과 원거리 치명타, 정령 보조 치유에 특화된 밸런스 클래스"
     },
@@ -177,7 +177,7 @@ export const GameDB = {
       str: 1, dex: 2, int: 14, con: 3,
       baseHp: 165, baseMp: 270, hpPerLv: 18, mpPerLv: 14, hpPerCon: 9, mpPerInt: 10,
       baseMDef: 12, mDefPerLv: 1.5,
-      atkMult: 0.45, magicMult: 1.18, attackRange: 240, baseSpeed: 2.80,
+      atkMult: 0.45, magicMult: 1.18, attackRange: 240, baseSpeed: 1.85,
       statPerLv: 3, resetUnlockLv: 50, resetStepLv: 50,
       desc: "강력한 단일·광역 원소 마법과 고위 성마법 힐·버프를 구사하는 클래스"
     }
