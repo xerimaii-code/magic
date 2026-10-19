@@ -1435,13 +1435,16 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
       return true;
     }
 
+    // 1) 접속 중인 모든 유저/AI 소켓 안전하게 수집
     const visibleEntries = [];
-    activeCharSockets.forEach(e => {
-      if (e.gmInvisible && !entry.isAdmin && e.charId !== entry.charId) return;
-      if (e.player) visibleEntries.push(e);
-    });
+    if (typeof activeCharSockets !== 'undefined' && activeCharSockets.size > 0) {
+      activeCharSockets.forEach(e => {
+        if (!e) return;
+        if (e.gmInvisible && !entry.isAdmin && e.charId !== entry.charId) return;
+        if (e.player) visibleEntries.push(e);
+      });
+    }
 
-    // 1) 전체 접속 인원 계산
     const totalCount = visibleEntries.length;
 
     // 2) 지역별 인원 집계
@@ -1451,12 +1454,14 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
       regionCounts.set(rKey, (regionCounts.get(rKey) || 0) + 1);
     });
     const regionSummaryParts = [];
-    (GameDB.Regions || []).forEach(r => {
-      const cnt = regionCounts.get(r.id) || 0;
-      if (cnt > 0) regionSummaryParts.push(`${r.name}: ${cnt}명`);
-    });
+    if (GameDB && Array.isArray(GameDB.Regions)) {
+      GameDB.Regions.forEach(r => {
+        const cnt = regionCounts.get(r.id) || 0;
+        if (cnt > 0) regionSummaryParts.push(`${r.name} ${cnt}명`);
+      });
+    }
 
-    // 3) 내가 속한 지역 유저들만 집계
+    // 3) 내가 속한 지역 유저들 집계
     const myRegionKey = String(entry.regionKey || 'R01').split('_')[0];
     const myRegObj = (GameDB.Regions || []).find(r => r.id === myRegionKey) || { name: myRegionKey };
     const sameRegionEntries = visibleEntries.filter(e => {
@@ -1464,32 +1469,36 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
       return eReg === myRegionKey;
     });
     const sameRegionListStr = sameRegionEntries.map(e => {
-      const p = e.player;
+      const p = e.player || {};
       const eParty = getPartyByCharId(e.charId);
       const pBadge = eParty ? (eParty.leaderCharId === e.charId ? ' [👑파티장]' : ' [🎗️파티]') : '';
       return `${p.name || '모험가'}(Lv.${p.level || 1})${pBadge}`;
     }).join(', ');
 
-    // 4) 내가 있는 맵 인원
-    const myCanonicalMap = normalizeMapKey(entry.mapKey);
+    // 4) 내가 있는 맵 인원 집계
+    const myCanonicalMap = typeof normalizeMapKey === 'function' ? normalizeMapKey(entry.mapKey) : (entry.mapKey || 'R01_sub1');
     const isDung = myCanonicalMap.endsWith('_dungeon');
     const myMapLabel = `${myRegObj.name}${isDung ? ' 던전' : ''}`;
-    const sameMapEntries = visibleEntries.filter(e => normalizeMapKey(e.mapKey) === myCanonicalMap);
+    const sameMapEntries = visibleEntries.filter(e => {
+      const eMap = typeof normalizeMapKey === 'function' ? normalizeMapKey(e.mapKey) : (e.mapKey || 'R01_sub1');
+      return eMap === myCanonicalMap;
+    });
     const sameMapListStr = sameMapEntries.map(e => {
-      const p = e.player;
+      const p = e.player || {};
       const eParty = getPartyByCharId(e.charId);
       const pBadge = eParty ? (eParty.leaderCharId === e.charId ? ' [👑파티장]' : ' [🎗️파티]') : '';
       return `${p.name || '모험가'}(Lv.${p.level || 1})${pBadge}`;
     }).join(', ');
 
-    // 💡 [출력 순서] 전체 접속자 ➡️ 지역별 요약 ➡️ 현재 지역 인원 ➡️ 현재 맵 인원
-    sendSystemMsgToEntry(entry, `🌐 [전체 접속 인원] 총 ${totalCount}명`, 'log-kill');
-    sendSystemMsgToEntry(entry, `🗺️ [지역별 분포] ${regionSummaryParts.join(' · ') || '없음'}`, 'log-sys');
+    // 💡 [확실한 출력] 4줄 모두 빠짐없이 개별 전송
+    sendSystemMsgToEntry(entry, `----------------------------------------`, 'log-sys');
+    sendSystemMsgToEntry(entry, `🌐 [전체 접속 인원 합계] 👉 총 ${totalCount}명 접속 중`, 'log-kill');
+    sendSystemMsgToEntry(entry, `🗺️ [전체 지역별 분포] ${regionSummaryParts.join(' | ') || '없음'}`, 'log-sys');
     sendSystemMsgToEntry(entry, `📍 [현재 지역(${myRegObj.name}) 인원: ${sameRegionEntries.length}명] ${sameRegionListStr || '없음'}`, 'log-sys');
     sendSystemMsgToEntry(entry, `📍 [현재 맵(${myMapLabel}) 인원: ${sameMapEntries.length}명] ${sameMapListStr || '없음'}`, 'log-chat');
+    sendSystemMsgToEntry(entry, `----------------------------------------`, 'log-sys');
     return true;
   }
-
 
 
   // 🤝 파티 명령어 (/파티초대 <이름>, /파티가입 <이름>, /파티장요구, /파티탈퇴, /파티위임 <이름>, /파티 <할말>)
