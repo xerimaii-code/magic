@@ -1,0 +1,31 @@
+name: Auto Deploy Age of Magic to HostDare
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to HostDare VPS via SSH and Restart PM2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST_IP }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          port: 22
+          script: |
+            set -e
+            mkdir -p /root/magic_rpg
+            cd /root/magic_rpg
+            git fetch origin main || git fetch origin master
+            git reset --hard origin/main || git reset --hard origin/master
+            npm install --production
+            node seed_ai_50.js 300 || true
+            pm2 startOrReload ecosystem.config.js --update-env
+            pm2 save
