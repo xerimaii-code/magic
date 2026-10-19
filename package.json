@@ -1,0 +1,19 @@
+{
+  "name": "age-of-magic-server",
+  "version": "1.2.0",
+  "description": "Age of Magic MMORPG Server & Human-like Autonomous AI Agent System",
+  "main": "magic_server.js",
+  "scripts": {
+    "start": "node magic_server.js",
+    "ai": "node aiAgentRunner.js",
+    "seed-ai": "node seed_ai_50.js",
+    "pm2:start": "pm2 start ecosystem.config.js && pm2 save",
+    "pm2:reload": "pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.6.1",
+    "groq-sdk": "^0.7.0",
+    "ws": "^8.16.0"
+  }
+}

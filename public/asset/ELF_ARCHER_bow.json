@@ -1,0 +1,120 @@
+{
+  "image": "spritesheet_final.png",
+  "spriteSize": {
+    "width": 64,
+    "height": 64
+  },
+  "fps": 10,
+  "animations": [
+    {
+      "action": "attack_up",
+      "frames": 5
+    },
+    {
+      "action": "attack_left",
+      "frames": 5
+    },
+    {
+      "action": "attack_down",
+      "frames": 6
+    },
+    {
+      "action": "attack_right",
+      "frames": 5
+    },
+    {
+      "action": "walk_up",
+      "frames": 7
+    },
+    {
+      "action": "walk_left",
+      "frames": 7
+    },
+    {
+      "action": "walk_down",
+      "frames": 7
+    },
+    {
+      "action": "walk_right",
+      "frames": 7
+    }
+  ],
+  "project_config": {
+    "globalW": 64,
+    "globalH": 64,
+    "rows": [
+      {
+        "included": true,
+        "action": "attack_up",
+        "startX": 0,
+        "startY": 1024,
+        "frameW": 64,
+        "frameH": 64,
+        "frameCount": 5
+      },
+      {
+        "included": true,
+        "action": "attack_left",
+        "startX": 0,
+        "startY": 1088,
+        "frameW": 64,
+        "frameH": 64,
+        "frameCount": 5
+      },
+      {
+        "included": true,
+        "action": "attack_down",
+        "startX": 0,
+        "startY": 1152,
+        "frameW": 64,
+        "frameH": 64,
+        "frameCount": 6
+      },
+      {
+        "included": true,
+        "action": "attack_right",
+        "startX": 0,
+        "startY": 1216,
+        "frameW": 64,
+        "frameH": 64,
+        "frameCount": 5
+      },
+      {
+        "included": true,
+        "action": "walk_up",
+        "startX": 0,
+        "startY": 3489,
+        "frameW": 128,
+        "frameH": 64,
+        "frameCount": 7
+      },
+      {
+        "included": true,
+        "action": "walk_left",
+        "startX": 0,
+        "startY": 3615,
+        "frameW": 128,
+        "frameH": 64,
+        "frameCount": 7
+      },
+      {
+        "included": true,
+        "action": "walk_down",
+        "startX": 0,
+        "startY": 3744,
+        "frameW": 128,
+        "frameH": 64,
+        "frameCount": 7
+      },
+      {
+        "included": true,
+        "action": "walk_right",
+        "startX": 0,
+        "startY": 3871,
+        "frameW": 128,
+        "frameH": 64,
+        "frameCount": 7
+      }
+    ]
+  }
+}

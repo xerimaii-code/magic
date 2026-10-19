@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Age of Magic</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<!-- 🔐 1. 로그인 / 회원가입 및 캐릭터 3슬롯 선택 메인 화면 -->
+<div id="auth-overlay-ui" class="modal flex-center" style="display: flex; z-index: 9500;">
+    <div class="auth-card-box" style="position: relative;">
+        <span id="db-conn-badge" class="db-online-dot" onclick="toggleSupabaseConfigModal()" title="DB 연결 확인 중 (클릭하여 설정)"></span>
+
+        <h1 style="font-size: 24px; font-weight: 900; color: #facc15; margin-bottom: 4px; text-shadow: 0 2px 6px #000; font-family: 'Cinzel', serif;">AGE OF MAGIC</h1>
+        <p style="font-size: 11px; color: #9ca3af; margin-bottom: 14px;">대마법 시대 : 차원의 수호자</p>
+
+        <!-- 로그인 / 회원가입 박스 -->
+        <div id="auth-box">
+            <div class="auth-tabs">
+                <button type="button" id="tab-login-btn" class="auth-tab active" onclick="switchAuthMode('login')">로그인</button>
+                <button type="button" id="tab-signup-btn" class="auth-tab" onclick="switchAuthMode('signup')">회원가입</button>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:8px; text-align:left;">
+                <div>
+                    <label style="font-size:11px; color:#d1d5db; font-weight:bold; display:block; margin-bottom:3px;">이메일 계정</label>
+                    <div style="display:flex; gap:5px;">
+                        <input type="email" id="auth-email" class="auth-input" placeholder="example@email.com" autocomplete="email" oninput="onAuthEmailInput()" onchange="onAuthEmailInput()" onblur="onAuthEmailInput()">
+                        <button type="button" id="btn-check-email" class="auth-sub-btn" style="display:none;" onclick="checkEmailDuplicate()">중복확인</button>
+                    </div>
+                    <div id="auth-email-msg" style="font-size:10.5px; margin-top:3px; min-height:14px;"></div>
+                </div>
+
+                <div>
+                    <label style="font-size:11px; color:#d1d5db; font-weight:bold; display:block; margin-bottom:3px;">비밀번호</label>
+                    <input type="password" id="auth-password" class="auth-input" placeholder="비밀번호 (6자리 이상)" autocomplete="current-password">
+                </div>
+
+                <div id="signup-confirm-wrap" style="display: none;">
+                    <label style="font-size:11px; color:#d1d5db; font-weight:bold; display:block; margin-bottom:3px;">비밀번호 확인</label>
+                    <input type="password" id="auth-password-confirm" class="auth-input" placeholder="비밀번호 다시 입력" autocomplete="new-password">
+                </div>
+
+                <div id="remember-id-wrap" style="display:flex; align-items:center; justify-content:space-between; margin-top:2px;">
+                    <label style="color:#cbd5e1; font-size: 11.5px; cursor: pointer; display:flex; align-items:center; gap:5px;">
+                        <input type="checkbox" id="auth-remember-id" checked onchange="window.onRememberEmailToggle && window.onRememberEmailToggle()" style="accent-color:#facc15; width:14px; height:14px;"> 이메일 아이디 기억하기
+                    </label>
+                </div>
+
+                <div id="auth-status-msg" style="font-size:11px; color:#fca5a5; text-align:center; min-height:16px;"></div>
+
+                <button type="button" id="auth-action-btn" class="auth-primary-btn" onclick="handleAuthSubmit()">로그인</button>
+            </div>
+        </div>
+
+        <!-- 캐릭터 슬롯 3칸 선택 박스 (로그인 후 표시) -->
+        <div id="slot-box" style="display: none; text-align:left;">
+            <div style="display:flex; justify-content:space-between; align-items:center; background:#11141b; border:1px solid #3d3020; border-radius:6px; padding:6px 10px; margin-bottom:10px;">
+                <div style="font-size:11px; color:#e5e7eb; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    👤 계정: <b id="user-info-text" style="color:#fde047;"></b>
+                </div>
+                <span style="font-size:10px; color:#86efac; flex-shrink:0;">📦 창고 계정공유</span>
+            </div>
+
+            <div style="font-size:11.5px; color:#d1b480; font-weight:bold; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                <span>⚔️ 캐릭터 슬롯 (최대 3)</span>
+                <button type="button" class="auth-sub-btn" style="padding:2px 7px; font-size:9.5px;" onclick="refreshCharacterSlotsRealtime()">🔄 실시간 갱신</button>
+            </div>
+
+            <div id="character-slots" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
+
+            <button type="button" class="auth-danger-btn" style="width:100%;" onclick="logoutAccount()">🚪 로그아웃</button>
+        </div>
+    </div>
+</div>
+
+<!-- ⚔️ 2. 클래스 선택(세로 리스팅) 및 캐릭터 이름 중복체크 생성 화면 -->
+<div id="char-select-ui" class="modal flex-center" style="display: none; z-index: 9600;">
+    <div class="char-select-box">
+        <h2 style="font-size: 19px; font-weight:bold; color:#facc15; margin-bottom: 6px; text-shadow: 2px 2px 4px #000;">신규 캐릭터 생성 <button type="button" class="help-q-btn" onclick="showHelpModal('class_create', event)" title="클래스 도움말">?</button></h2>
+
+        <div class="class-cards-vertical" id="class-cards-list">
+            <div class="class-row-card selected" data-class="knight" onclick="selectClassForCreate('knight')">
+                <div class="class-row-icon"><svg width="28" height="28" viewBox="0 0 32 32" style="display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.85));"><defs><linearGradient id="kSh" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ef4444"/><stop offset="100%" stop-color="#7f1d1d"/></linearGradient></defs><path d="M16 3 L27 7 V15 C27 22.5 21.8 27.2 16 29.5 C10.2 27.2 5 22.5 5 15 V7 Z" fill="url(#kSh)" stroke="#facc15" stroke-width="2"/><path d="M16 6 L24 9 V14.8 C24 20.5 20 24.2 16 26.2 C12 24.2 8 20.5 8 14.8 V9 Z" fill="none" stroke="#fef08a" stroke-width="0.9" stroke-opacity="0.7"/><path d="M16 7 V24 M11 13 H21" stroke="#fde047" stroke-width="2.4" stroke-linecap="round"/><circle cx="16" cy="13" r="2.2" fill="#ffffff"/></svg></div>
+                <div class="class-row-info">
+                    <div class="class-row-title">인간전사 <span class="class-row-sub">STR · 근접/방패</span></div>
+                    <div class="class-row-desc">고체력·방어 · 배쉬/휠윈드</div>
+                </div>
+                <div class="class-row-check" id="chk-class-knight">✔</div>
+            </div>
+
+            <div class="class-row-card" data-class="ranger" onclick="selectClassForCreate('ranger')">
+                <div class="class-row-icon"><svg width="28" height="28" viewBox="0 0 32 32" style="display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.85));"><defs><linearGradient id="rBg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#064e3b"/></linearGradient></defs><circle cx="16" cy="16" r="13" fill="url(#rBg)" stroke="#34d399" stroke-width="2"/><path d="M11 6 C21 10 21 22 11 26" fill="none" stroke="#facc15" stroke-width="2.5" stroke-linecap="round"/><line x1="11" y1="6.5" x2="11" y2="25.5" stroke="#e2e8f0" stroke-width="1.3"/><line x1="7" y1="16" x2="24" y2="16" stroke="#fef08a" stroke-width="2.2" stroke-linecap="round"/><polygon points="26,16 21,13 22,16 21,19" fill="#38bdf8"/></svg></div>
+                <div class="class-row-info">
+                    <div class="class-row-title">엘프궁수 <span class="class-row-sub">DEX · 원거리/치명</span></div>
+                    <div class="class-row-desc">고속 사격 · 보조치유/회피</div>
+                </div>
+                <div class="class-row-check" id="chk-class-ranger"></div>
+            </div>
+
+            <div class="class-row-card" data-class="wizard" onclick="selectClassForCreate('wizard')">
+                <div class="class-row-icon"><svg width="28" height="28" viewBox="0 0 32 32" style="display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.85));"><defs><radialGradient id="wOrb" cx="50%" cy="45%" r="55%"><stop offset="0%" stop-color="#e0f2fe"/><stop offset="45%" stop-color="#38bdf8"/><stop offset="85%" stop-color="#9333ea"/><stop offset="100%" stop-color="#3b0764"/></radialGradient></defs><circle cx="16" cy="16" r="13" fill="#1e1b4b" stroke="#c084fc" stroke-width="2"/><line x1="8" y1="25" x2="21" y2="12" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/><path d="M15 7 C20 5 26 11 24 16 C26 12 22 7 15 7 Z" fill="#fde047"/><circle cx="20.5" cy="11.5" r="5.2" fill="url(#wOrb)" stroke="#fef08a" stroke-width="1.4"/><polygon points="20.5,4 21.7,7.5 25,8.5 21.7,9.5 20.5,13 19.3,9.5 16,8.5 19.3,7.5" fill="#ffffff" opacity="0.9"/><circle cx="10" cy="11" r="1.4" fill="#38bdf8"/><circle cx="25" cy="21" r="1.3" fill="#f472b6"/></svg></div>
+                <div class="class-row-info">
+                    <div class="class-row-title">엘프마법사 <span class="class-row-sub">INT · 마법/힐/버프</span></div>
+                    <div class="class-row-desc">광역 원소마법 · 고위 힐/버프</div>
+                </div>
+                <div class="class-row-check" id="chk-class-wizard"></div>
+            </div>
+        </div>
+
+        <div style="background:#11141b; border:1px solid #4a3b2c; border-radius:8px; padding:10px; margin-top:10px; text-align:left;">
+            <label style="font-size:11.5px; color:#fde047; font-weight:bold; display:block; margin-bottom:5px;">🏷️ 캐릭터 이름 (중복 생성 불가)</label>
+            <div style="display:flex; gap:6px;">
+                <input type="text" id="create-char-name" class="auth-input" placeholder="캐릭터 이름 입력 (2~10자)" maxlength="10" oninput="onCharNameInput()">
+                <button type="button" class="auth-sub-btn" onclick="checkCharacterNameDuplicate()">중복체크</button>
+            </div>
+            <div id="create-char-name-msg" style="font-size:10.5px; margin-top:4px; min-height:15px; color:#9ca3af;">이름 입력 후 중복체크를 진행해주세요.</div>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-top:12px;">
+            <button type="button" class="auth-sub-btn" style="flex:0.8; padding:10px;" onclick="cancelCharacterCreate()">⬅️ 뒤로가기</button>
+            <button type="button" class="auth-primary-btn" style="flex:1.4; padding:10px;" onclick="confirmCreateCharacter()">✨ 캐릭터 생성 및 시작</button>
+        </div>
+    </div>
+</div>
+
+<!-- 🗑️ 3. 캐릭터 삭제 확인 모달 ('삭제' 텍스트 입력 필수) -->
+<div id="char-delete-modal" class="modal flex-center" style="display: none; z-index: 9800;">
+    <div class="auth-card-box" style="max-width: 320px;">
+        <h3 style="font-size:16px; font-weight:bold; color:#f87171; margin-bottom:6px;">⚠️ 캐릭터 영구 삭제</h3>
+        <p id="delete-modal-desc" style="font-size:11.5px; color:#e5e7eb; line-height:1.45; margin-bottom:10px;"></p>
+        <div style="background:#1a1114; border:1px solid #7f1d1d; border-radius:6px; padding:8px; margin-bottom:10px;">
+            <div style="font-size:11px; color:#fca5a5; margin-bottom:5px;">실수 방지를 위해 아래 입력창에 <b style="color:#fde047;">삭제</b> 를 정확히 입력해주세요.</div>
+            <input type="text" id="delete-confirm-input" class="auth-input" style="text-align:center; font-weight:bold;" placeholder="'삭제' 입력">
+            <div id="delete-confirm-msg" style="font-size:10.5px; color:#f87171; margin-top:4px; min-height:14px;"></div>
+        </div>
+        <div style="display:flex; gap:8px;">
+            <button type="button" class="auth-sub-btn" style="flex:1;" onclick="closeDeleteCharModal()">취소</button>
+            <button type="button" class="auth-danger-btn" style="flex:1;" onclick="executeDeleteCharacter()">🗑️ 삭제 확인</button>
+        </div>
+    </div>
+</div>
+
+<!-- ⚙️ 4. Supabase DB 연결 설정 모달 -->
+<div id="supabase-config-modal" class="modal flex-center" style="display: none; z-index: 9900;">
+    <div class="auth-card-box" style="max-width: 350px; text-align:left;">
+        <h3 style="font-size:15px; font-weight:bold; color:#fde047; margin-bottom:6px;">⚙️ Supabase DB 연결 설정</h3>
+        <p style="font-size:10.5px; color:#9ca3af; line-height:1.4; margin-bottom:8px;">
+            현재 사용 중인 Supabase Project URL과 Anon Key를 입력하면 <b>magic_accounts</b>, <b>magic_characters</b>, <b>magic_storage</b> 테이블과 실시간 연동됩니다.
+        </p>
+        <label style="font-size:11px; color:#d1d5db; font-weight:bold;">Supabase Project URL</label>
+        <input type="text" id="cfg-supabase-url" class="auth-input" style="margin-bottom:8px; margin-top:3px;" placeholder="https://xxxx.supabase.co">
+        <label style="font-size:11px; color:#d1d5db; font-weight:bold;">Supabase Anon Public Key</label>
+        <input type="text" id="cfg-supabase-key" class="auth-input" style="margin-bottom:10px; margin-top:3px;" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6...">
+        <div style="display:flex; gap:6px;">
+            <button type="button" class="auth-sub-btn" style="flex:1;" onclick="toggleSupabaseConfigModal()">닫기</button>
+            <button type="button" class="auth-primary-btn" style="flex:1;" onclick="saveSupabaseConfigFromUI()">💾 저장 및 연결</button>
+        </div>
+    </div>
+</div>
+
+<!-- ⚠️ 5. 시스템 알림 모달 -->
+<div id="system-alert-modal" class="modal flex-center" style="display: none; z-index: 9950;">
+    <div class="auth-card-box" style="max-width: 320px;">
+        <h3 id="sys-alert-title" style="font-size:15px; font-weight:bold; color:#facc15; margin-bottom:8px;">알림</h3>
+        <p id="sys-alert-body" style="font-size:12px; color:#e5e7eb; line-height:1.5; margin-bottom:14px; white-space:pre-line;"></p>
+        <div id="sys-alert-btns" style="display:flex; gap:8px; justify-content:center;">
+            <button type="button" class="auth-primary-btn" style="flex:1;" onclick="closeSystemAlertModal()">확인</button>
+        </div>
+    </div>
+</div>
+
+<!-- 🎮 인게임 메인 래퍼 -->
+<div id="game-wrapper" style="display:none;">
+    <!-- 📢 운영자(GM) 전체 공지 상단 배너 -->
+    <div id="gm-notice-banner" class="gm-notice-banner hidden">
+        <span class="gm-notice-icon">👑</span>
+        <span id="gm-notice-text"></span>
+    </div>
+
+    <!-- 상단 타겟 몬스터 체력바 (#top-hud 바깥 최상위 레이어로 분리하여 대화창·투명모드·2줄고정 위에서도 항상 선명하게 표시) -->
+    <div id="top-target-ui" style="display: none;">
+        <div class="target-bar-wrap">
+            <div id="target-hp-bar"></div>
+            <span id="target-name"></span>
+        </div>
+        <button id="target-close-btn" type="button" onpointerdown="clearTarget(event)" onclick="clearTarget(event)" title="타겟 해제">✖</button>
+    </div>
+
+    <div id="top-hud">
+        <!-- 좌측 상단 플레이어 체력바 + 대화창 닫혔을 때 실시간 최근 2줄 오버레이 -->
+        <div class="top-left-hud-wrap">
+            <div class="profile-section compact" onclick="toggleEquipUI()" title="클릭하여 캐릭터 상태/장비창 열기">
+                <div class="portrait-ring" id="class-icon"><svg width="28" height="28" viewBox="0 0 32 32" style="display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.85));"><defs><linearGradient id="kSh" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ef4444"/><stop offset="100%" stop-color="#7f1d1d"/></linearGradient></defs><path d="M16 3 L27 7 V15 C27 22.5 21.8 27.2 16 29.5 C10.2 27.2 5 22.5 5 15 V7 Z" fill="url(#kSh)" stroke="#facc15" stroke-width="2"/><path d="M16 6 L24 9 V14.8 C24 20.5 20 24.2 16 26.2 C12 24.2 8 20.5 8 14.8 V9 Z" fill="none" stroke="#fef08a" stroke-width="0.9" stroke-opacity="0.7"/><path d="M16 7 V24 M11 13 H21" stroke="#fde047" stroke-width="2.4" stroke-linecap="round"/><circle cx="16" cy="13" r="2.2" fill="#ffffff"/></svg></div>
+                <div class="bars-container">
+                    <div class="bar-bg"><div class="bar-fill hp" id="hud-hp-bar"></div><span class="bar-text" id="hud-hp-txt"></span></div>
+                    <div class="bar-bg"><div class="bar-fill mp" id="hud-mp-bar"></div><span class="bar-text" id="hud-mp-txt"></span></div>
+                </div>
+            </div>
+            <!-- 대화창이 닫혔을 때만 체력바 바로 아래에 배경 없이 터치 통과로 표시되는 마지막 2줄 로그 -->
+            <div id="hud-closed-chat-feed" class="hud-closed-chat-feed hidden"></div>
+        </div>
+
+        <div class="right-hud">
+            <div id="minimap-container"><canvas id="minimapCanvas" width="80" height="80"></canvas></div>
+            <div id="safe-zone-badge" class="safe-badge hidden">🛡️ 안전지대</div>
+        </div>
+    </div>
+
+    <!-- 📊 스탯 전용 분배 윈도우 창 (터치 편의성 극대화: +1 / +5 / MAX 지원) -->
+    <div id="stat-alloc-modal" class="modal-panel hidden" style="z-index: 260; width: min(92vw, 336px);">
+        <div class="modal-header drag-handle">📊 스탯 분배 · 능력치 성장</div>
+        <button class="close-x-btn" onclick="closeStatAllocModal()">✖</button>
+        <div id="stat-alloc-body" class="stat-alloc-body"></div>
+    </div>
+
+    <!-- ⚔ 장비/상태창 -->
+    <div id="equip-ui" class="modal-panel hidden">
+        <div class="modal-header drag-handle">⚔ 캐릭터 정보 (Status)</div>
+        <button class="close-x-btn" onclick="toggleEquipUI()">✖</button>
+        <div class="status-layout">
+            <div class="stat-left" id="stat-left-panel"></div>
+            <div class="paperdoll-right" id="paperdoll-panel"></div>
+        </div>
+        <div id="equip-item-detail" class="concise-item-detail">
+            슬롯 터치: 상세정보 · 더블터치: 장착/해제
+        </div>
+    </div>
+    
+    <!-- 🎒 인벤토리 창 -->
+    <div id="inventory-ui" class="modal-panel hidden">
+        <div class="modal-header drag-handle">🎒 가방 (Inventory)</div>
+        <button class="close-x-btn" onclick="toggleInventory()">✖</button>
+        <div class="inv-actions">
+            <button onclick="invAction('drop')">🗑 버리기</button>
+            <button onclick="invAction('sell')">💰 판매</button>
+            <span id="enchant-indicator" class="hidden text-blue-400 font-bold ml-2 text-xs">✨ 강화 대기...</span>
+            <div class="inv-header-opts">
+                <input type="checkbox" id="multi-select-toggle" autocomplete="off"> <label for="multi-select-toggle">다중 선택</label>
+            </div>
+        </div>
+        <div class="inventory-grid" id="inventory-grid"></div>
+        <div id="item-detail">
+            터치: 상세정보 · 더블터치: 장착/사용
+        </div>
+    </div>
+
+    <!-- 📜 퀘스트 창 -->
+    <div id="quest-ui" class="modal-panel hidden">
+        <div class="modal-header drag-handle">📜 퀘스트 정보 (Quests)</div>
+        <button class="close-x-btn" onclick="toggleQuestUI()">✖</button>
+        <div id="quest-ui-body" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+    </div>
+
+    <!-- 📕 스킬북 창 -->
+    <div id="skill-ui" class="modal-panel hidden">
+        <div class="modal-header drag-handle">📕 스킬북 (Magic)</div>
+        <button class="close-x-btn" onclick="toggleSkillUI()">✖</button>
+        <div class="skill-tabs">
+            <button class="tab-btn active" onclick="renderSkills('active')">액티브</button>
+            <button class="tab-btn" onclick="renderSkills('passive')">패시브</button>
+        </div>
+        <div class="skill-grid" id="skill-grid" style="display: flex; flex-wrap: wrap; gap: 8px; overflow-y: auto; flex:1; align-content: flex-start; padding: 5px; background: rgba(0,0,0,0.4); border-radius: 4px; border: 1px solid #3d3020;"></div>
+        <div id="skill-detail">
+            터치: 스킬정보 · 하단 슬롯으로 드래그/터치하여 등록
+        </div>
+    </div>
+
+    <!-- ⚙️ 옵션 창 -->
+    <div id="option-ui" class="modal-panel hidden"></div>
+
+    <!-- 💬 NPC 대화/상점/창고 창 -->
+    <div id="npc-modal-ui" class="modal-panel hidden">
+        <div class="modal-header drag-handle" id="npc-modal-title">💬 NPC 대화</div>
+        <button class="close-x-btn" onclick="closeNpcModal()">✖</button>
+        <div id="npc-modal-body" style="flex:1; overflow-y:auto; display:flex; flex-direction:column;"></div>
+    </div>
+
+    <!-- 💬 윈도우형 대화창 (드래그 이동 & 8방향 크기조절 & 헤드 투명화 지원 & 운영자 모드 통합) -->
+    <div id="chat-window-ui" class="chat-window-panel">
+        <!-- 8방향 크기 조절 핸들 -->
+        <div class="chat-resize-handle res-n" data-dir="n"></div>
+        <div class="chat-resize-handle res-s" data-dir="s"></div>
+        <div class="chat-resize-handle res-e" data-dir="e"></div>
+        <div class="chat-resize-handle res-w" data-dir="w"></div>
+        <div class="chat-resize-handle res-nw" data-dir="nw"></div>
+        <div class="chat-resize-handle res-ne" data-dir="ne"></div>
+        <div class="chat-resize-handle res-sw" data-dir="sw"></div>
+        <div class="chat-resize-handle res-se" data-dir="se" title="드래그하여 대화창 크기 조절"></div>
+
+        <!-- 상단 드래그 타이틀바 (특정 위치 투명화 토글 버튼 포함) -->
+        <div class="chat-win-header drag-handle" id="chat-win-drag-handle">
+            <div class="chat-win-title-wrap" id="chat-win-title-wrap">
+                <span>💬 대화창</span>
+                <span id="gm-mode-badge" class="gm-badge hidden">👑 운영자모드</span>
+                <span class="chat-win-hint">(드래그 이동 · 크기조절)</span>
+            </div>
+            <div class="chat-win-controls">
+                <button type="button" id="chat-trans-toggle-btn" class="chat-ctrl-btn trans-toggle-spot" onclick="toggleChatTextOnlyTransparency(event)" title="텍스트만 남기고 배경 전체 투명화 / 원상태 복귀">💧투명</button>
+                <button type="button" class="chat-ctrl-btn chat-non-trans-btn" onclick="toggleChatWindowExpand()" title="크게/기본 크기 전환">📐</button>
+                <button type="button" class="chat-ctrl-btn close chat-non-trans-btn" onclick="toggleChatWindow()" title="대화창 닫기">✖</button>
+            </div>
+        </div>
+
+        <!-- 탭 & 필터 바 -->
+        <div class="chat-tabs">
+            <span class="chat-tab active" data-tab="all" onclick="setChatTab('all')">전체</span>
+            <span class="chat-tab" data-tab="chat" onclick="setChatTab('chat')">일반/월드</span>
+            <span class="chat-tab" data-tab="party" onclick="setChatTab('party')">🎗️파티</span>
+            <span class="chat-tab" data-tab="whisper" onclick="setChatTab('whisper')">귓속말</span>
+            <span class="chat-tab" data-tab="sys" onclick="setChatTab('sys')">시스템</span>
+            <span class="chat-tab gm-tab hidden" id="chat-tab-gm" data-tab="gm" onclick="setChatTab('gm')">👑운영자</span>
+            <label class="chat-filter-label">
+                <input type="checkbox" id="exclude-sys-chk" onchange="applyChatFilter()"> 시스템제외
+            </label>
+        </div>
+
+        <!-- 👑 운영자(GM) 모드 전용 빠른 명령어 도우미 바 -->
+        <div id="gm-quick-cmd-bar" class="gm-quick-bar hidden">
+            <span class="gm-quick-label">👑 GM명령:</span>
+            <button type="button" onclick="fillChatCommand('/?', true)">❓도움말(/?)</button>
+            <button type="button" onclick="fillChatCommand('/누구', true)">👥누구(/who)</button>
+            <button type="button" onclick="fillChatCommand('/무적', true)">🛡️무적</button>
+            <button type="button" onclick="fillChatCommand('/투명', true)">👻투명</button>
+            <button type="button" onclick="fillChatCommand('/완전회복 전체', true)">🌿전체회복</button>
+            <button type="button" onclick="fillChatCommand('/전체버프', true)">✨전체버프</button>
+            <button type="button" onclick="fillChatCommand('/모든스킬습득', true)">📘올스킬</button>
+            <button type="button" onclick="fillChatCommand('/올강화 10', true)">⚡올+10강</button>
+            <button type="button" onclick="fillChatCommand('/보스소환', true)">👑보스소환</button>
+            <button type="button" onclick="fillChatCommand('/학살', true)">💥학살</button>
+            <button type="button" onclick="fillChatCommand('/몬스터초기화', true)">🔄젠초기화</button>
+            <button type="button" onclick="fillChatCommand('/바닥청소', true)">🧹바닥청소</button>
+            <button type="button" onclick="fillChatCommand('/공지 ', false)">📢공지</button>
+            <button type="button" onclick="fillChatCommand('/소환 ', false)">🐉소환</button>
+            <button type="button" onclick="fillChatCommand('/아이템 ', false)">🎁아이템</button>
+            <button type="button" onclick="fillChatCommand('/레벨 ', false)">⬆️레벨</button>
+            <button type="button" onclick="fillChatCommand('/골드 ', false)">💰골드</button>
+            <button type="button" onclick="fillChatCommand('/스탯 올스탯 ', false)">💪올스탯</button>
+            <button type="button" onclick="fillChatCommand('/이속 2', true)">⏩이속x2</button>
+            <button type="button" onclick="fillChatCommand('/이동 ', false)">🌀지역이동</button>
+            <button type="button" onclick="fillChatCommand('/출두 ', false)">🏃출두</button>
+            <button type="button" onclick="fillChatCommand('/소환유저 ', false)">🧲유저소환</button>
+            <button type="button" onclick="fillChatCommand('/전체소환', true)">🌟전체소환</button>
+            <button type="button" onclick="triggerAdminRebootServer()" style="background:#7f1d1d;border-color:#f87171;color:#fecaca;">🔄서버재부팅(PM2)</button>
+        </div>
+
+        <!-- 대화 로그 출력 영역 -->
+        <div id="chat-box"></div>
+
+        <!-- 하단 대화 및 명령어 입력창 (브라우저 기본 select 대신 인게임 커스텀 채널 선택기 적용) -->
+        <div class="chat-input-row" style="position:relative;">
+            <input type="hidden" id="chat-channel-select" value="normal">
+            <button type="button" id="chat-channel-btn" class="chat-channel-select" onclick="toggleCustomChatChannelMenu(event)" title="대화 채널 선택">일반 ▾</button>
+            <div id="chat-channel-popup" class="chat-channel-popup hidden">
+                <div class="chat-ch-item" data-ch="normal" onclick="selectCustomChatChannel('normal', event)">💬 일반</div>
+                <div class="chat-ch-item" data-ch="world" onclick="selectCustomChatChannel('world', event)">📢 전체</div>
+                <div class="chat-ch-item" data-ch="region" onclick="selectCustomChatChannel('region', event)">📍 지역</div>
+                <div class="chat-ch-item" data-ch="party" onclick="selectCustomChatChannel('party', event)">🎗️ 파티</div>
+                <div class="chat-ch-item" data-ch="whisper" onclick="selectCustomChatChannel('whisper', event)">💌 귓속말</div>
+                <div class="chat-ch-item" data-ch="cmd" onclick="selectCustomChatChannel('cmd', event)">⚡ 명령어</div>
+                <div class="chat-ch-item gm-ch-only hidden" id="chat-ch-gm-item" data-ch="gm" onclick="selectCustomChatChannel('gm', event)">👑 운영자</div>
+            </div>
+            <input type="text" id="chat-msg-input" placeholder="대화 또는 /명령어 입력 (Enter)" maxlength="140" autocomplete="off" oninput="onChatMsgInputLiveUpdate()" onkeydown="handleChatInputKeydown(event)">
+            <button type="button" class="chat-send-btn" onclick="window.sendMultiplayerChat?.()">전송</button>
+        </div>
+    </div>
+
+    <!-- 게임 캔버스 및 좌측 하단 가상 조이스틱 + 우측 하단 인터페이스 바로 위 대화 아이콘 -->
+    <div id="canvas-wrapper" style="position: relative; width: 100%; flex: 1; overflow: hidden; background: #0a0c10;">
+        <!-- 🕹️ 좌측 하단 터치 후 드래그 시 자동 활성화되는 플로팅 조이스틱 -->
+        <div id="joystick-hint" title="좌측 하단 아무 곳이나 터치 후 드래그하면 조이스틱으로 이동합니다">🕹️</div>
+        <div id="joystick-base" style="display:none;">
+            <div id="joystick-knob"></div>
+        </div>
+
+        <!-- 💬 게임화면 우측 구석 인터페이스 바로 위 심플 대화 아이콘 버튼 (텍스트 제거 · 버프 확장 시 자동 상단 이동) -->
+        <button type="button" id="chat-toggle-fab" class="chat-fab-btn active" onclick="toggleChatWindow()" title="대화창 열기 / 닫기">
+            <span class="chat-fab-icon">💬</span>
+            <span id="chat-unread-badge" class="chat-unread-badge hidden">0</span>
+        </button>
+    </div>
+    
+    <div id="buff-ui" style="position: absolute; bottom: 162px; left: 10px; display: flex; gap: 5px; z-index: 100; pointer-events: none;"></div>
+
+    <div id="exp-bar-container" style="flex: none; width: 100%; height: 4px; background: #000; z-index: 20; border-top: 1px solid #3d3020; border-bottom: 1px solid #000;">
+        <div id="exp-bar-fill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #ca8a04, #fef08a); box-shadow: 0 0 5px #ca8a04; transition: width 0.3s ease;"></div>
+    </div>
+
+    <div id="bottom-panel">
+        <!-- 경험치 라인 바로 아래 얇은 상태바 (골드 옆 기존 대화 프리뷰 삭제 완료) -->
+        <div class="status-bar">
+            <span style="color: #4ade80; font-weight: bold;">Lv.<span id="btm-lv">1</span></span>
+            <span>EXP:<span id="btm-exp" style="color: #fde047; margin-left:2px;">0%</span></span>
+            <span>⚔공격:<span id="btm-atk" style="color: #fca5a5; font-weight:bold; margin-left:2px;">0</span></span>
+            <span>🛡방어:<span id="btm-def" style="color: #93c5fd; font-weight:bold; margin-left:2px;">0</span></span>
+            <span>💰<span id="btm-gold" style="color: #facc15; margin-left:2px;">0</span></span>
+        </div>
+
+        <div class="middle-section">
+            <div class="hotbar-grid" id="hotbar">
+                <div class="slot" id="slot-1" data-slot="1" ondrop="dropSkill(event, 1)" ondragover="allowDrop(event)"><span class="slot-key">1</span><span class="slot-icon"></span><div class="cooldown-overlay"></div></div>
+                <div class="slot" id="slot-2" data-slot="2" ondrop="dropSkill(event, 2)" ondragover="allowDrop(event)"><span class="slot-key">2</span><span class="slot-icon"></span><div class="cooldown-overlay"></div></div>
+                <div class="slot" id="slot-3" data-slot="3" ondrop="dropSkill(event, 3)" ondragover="allowDrop(event)"><span class="slot-key">3</span><span class="slot-icon"></span><div class="cooldown-overlay"></div></div>
+                <div class="slot" id="slot-4" data-slot="4" ondrop="dropSkill(event, 4)" ondragover="allowDrop(event)"><span class="slot-key">4</span><span class="slot-icon"></span><div class="cooldown-overlay"></div></div>
+                <div class="slot" id="slot-5" data-slot="5" ondrop="dropSkill(event, 5)" ondragover="allowDrop(event)"><span class="slot-key">5</span><span class="slot-icon"></span><div class="cooldown-overlay"></div></div>
+                <div class="slot" id="slot-6" data-slot="6" ondrop="dropSkill(event, 6)" ondragover="allowDrop(event)"><span class="slot-key">6</span><span class="slot-icon"></span><div class="cooldown-overlay"></div></div>
+                <div class="slot" id="slot-7" data-slot="7" ondrop="dropSkill(event, 7)" ondragover="allowDrop(event)"><span class="slot-key">7</span><span class="slot-icon"></span><div class="cooldown-overlay"></div></div>
+                <div class="slot" id="slot-8" data-slot="8" ondrop="dropSkill(event, 8)" ondragover="allowDrop(event)"><span class="slot-key">8</span><span class="slot-icon"></span><div class="cooldown-overlay"></div></div>
+                <div class="slot" id="slot-9" data-slot="9" ondrop="dropSkill(event, 9)" ondragover="allowDrop(event)"><span class="slot-key">9</span><span class="slot-icon"></span><div class="cooldown-overlay"></div></div>
+                
+                <div class="slot" id="slot-10" onclick="handleBasicAttack()" ondblclick="toggleAutoAttack()">
+                    <span class="slot-key">0</span>
+                    <span class="slot-icon" style="font-size:10px; color:#ef4444; font-weight:bold; display:flex; flex-direction:column; line-height:1.05; align-items:center;"><span>ATK</span><span style="font-size:7.5px;">(AUTO)</span></span>
+                    <div class="cooldown-overlay"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="bottom-menu-row">
+            <button class="menu-btn" onclick="toggleInventory()">🎒 가방</button>
+            <button class="menu-btn" id="bottom-quest-btn" onclick="toggleQuestUI()">📜 퀘스트</button>
+            <button class="menu-btn" onclick="toggleSkillUI()">📕 스킬</button>
+            <button class="menu-btn" onclick="toggleOptionUI()">⚙️ 옵션</button>
+        </div>
+    </div>
+    <div id="fade-overlay" style="position: absolute; top:0; left:0; width:100%; height:100%; background-color:#000; opacity:0; pointer-events:none; transition: opacity 0.4s ease-in-out; z-index: 9999;"></div>
+</div>
+
+<script>
+  // 새로고침 즉시(0ms) 저장된 이메일 아이디 및 체크박스 상태 복원
+  (function() {
+    try {
+      var pref = localStorage.getItem('MAGIC_REMEMBER_ID_PREF');
+      var saved = (localStorage.getItem('MAGIC_REMEMBERED_EMAIL') || '').trim();
+      var chk = document.getElementById('auth-remember-id');
+      var inp = document.getElementById('auth-email');
+      var rememberOn = (pref !== 'false');
+      if (chk) chk.checked = rememberOn;
+      if (inp && rememberOn && saved) inp.value = saved;
+    } catch (e) {}
+  })();
+</script>
+<script type="module" src="./js/game.js"></script>
+<script defer src="./js/game_01_core.js"></script>
+<script defer src="./js/game_02_merc_party.js"></script>
+<script defer src="./js/game_03_npc_equip.js"></script>
+<script defer src="./js/game_04_combat_spawn.js"></script>
+<script defer src="./js/game_05_loop.js"></script>
+<script defer src="./js/game_06_net_ws.js"></script>
+<script defer src="./js/game_07_auth_save.js"></script>
+</body>
+</html>
