@@ -1491,12 +1491,10 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
     }).join(', ');
 
     // 💡 [확실한 출력] 4줄 모두 빠짐없이 개별 전송
-    sendSystemMsgToEntry(entry, `----------------------------------------`, 'log-sys');
-    sendSystemMsgToEntry(entry, `🌐 [전체 접속 인원 합계] 👉 총 ${totalCount}명 접속 중`, 'log-kill');
-    sendSystemMsgToEntry(entry, `🗺️ [전체 지역별 분포] ${regionSummaryParts.join(' | ') || '없음'}`, 'log-sys');
+    sendSystemMsgToEntry(entry, `🌐 [전체 접속 인원 합계] 총 ${totalCount}명`, 'log-sys');
+    sendSystemMsgToEntry(entry, `🗺️ [지역별 분포] ${regionSummaryParts.join(' | ') || '없음'}`, 'log-sys');
     sendSystemMsgToEntry(entry, `📍 [현재 지역(${myRegObj.name}) 인원: ${sameRegionEntries.length}명] ${sameRegionListStr || '없음'}`, 'log-sys');
     sendSystemMsgToEntry(entry, `📍 [현재 맵(${myMapLabel}) 인원: ${sameMapEntries.length}명] ${sameMapListStr || '없음'}`, 'log-chat');
-    sendSystemMsgToEntry(entry, `----------------------------------------`, 'log-sys');
     return true;
   }
 
