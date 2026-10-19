@@ -16,7 +16,7 @@ module.exports = {
     },
     {
       name: "magic-ai-runner",
-      script: "./aiAgentRunner.js",
+      script: "./aiagentrunner.js",
       autorestart: true,
       watch: false,
       max_memory_restart: "500M",
