@@ -1418,7 +1418,7 @@ function handleChatCommand(entry, rawText) {
   const restText = trimmed.slice(tokens[0].length).trim();
 
  // 👥 /누구 및 /who 명령어 (전체접속인원 · 내가 속한 지역별 인원 및 맵 인원 이름(레벨)·파티 표기)
- if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유저목록') {
+if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유저목록') {
     const targetQuery = args[0] ? String(args[0]).trim().toLowerCase() : '';
     if (targetQuery) {
       const found = findOnlineEntryByName(targetQuery);
@@ -1444,7 +1444,7 @@ function handleChatCommand(entry, rawText) {
     // 1) 전체 접속 인원 계산
     const totalCount = visibleEntries.length;
 
-    // 2) 전체 지역별 인원 집계 (안전한 문법)
+    // 2) 지역별 인원 집계
     const regionCounts = new Map();
     visibleEntries.forEach(e => {
       const rKey = e.regionKey || String(e.mapKey || 'R01').split('_')[0] || 'R01';
@@ -1482,9 +1482,9 @@ function handleChatCommand(entry, rawText) {
       return `${p.name || '모험가'}(Lv.${p.level || 1})${pBadge}`;
     }).join(', ');
 
-    // 💡 [최종 출력 순서] 1. 전체 접속자 ➡️ 2. 지역별 분포 ➡️ 3. 현재 지역 인원 ➡️ 4. 현재 맵 인원 상세
+    // 💡 [출력 순서] 전체 접속자 ➡️ 지역별 요약 ➡️ 현재 지역 인원 ➡️ 현재 맵 인원
     sendSystemMsgToEntry(entry, `🌐 [전체 접속 인원] 총 ${totalCount}명`, 'log-kill');
-    sendSystemMsgToEntry(entry, `🗺️ [지역별 인원] ${regionSummaryParts.join(' · ') || '없음'}`, 'log-sys');
+    sendSystemMsgToEntry(entry, `🗺️ [지역별 분포] ${regionSummaryParts.join(' · ') || '없음'}`, 'log-sys');
     sendSystemMsgToEntry(entry, `📍 [현재 지역(${myRegObj.name}) 인원: ${sameRegionEntries.length}명] ${sameRegionListStr || '없음'}`, 'log-sys');
     sendSystemMsgToEntry(entry, `📍 [현재 맵(${myMapLabel}) 인원: ${sameMapEntries.length}명] ${sameMapListStr || '없음'}`, 'log-chat');
     return true;
