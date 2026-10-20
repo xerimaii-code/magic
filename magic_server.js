@@ -1221,6 +1221,7 @@ function buildMapInitStatePacket(rawMapKey, receiverEntry = null) {
 
   return {
     type: 'MAP_INIT_STATE',
+    serverTime: Date.now(),
     buildVersion: CURRENT_BUILD_VERSION,
     mapKey: mapInst.mapKey,
     bossRespawnTimer: Math.ceil(mapInst.bossRespawnTimer),
@@ -4052,6 +4053,7 @@ setInterval(() => {
 
         const tickPacket = {
           type: 'WORLD_STATE_TICK',
+          serverTime: now,
           mapKey,
           bossRespawnTimer: Math.ceil(mapInst.bossRespawnTimer)
         };
