@@ -74,22 +74,25 @@ function updateMercenaryAI(delta, now, inSafe) {
   }
 
   // 3) 용병 자가 체력 회복 (물약 우선, 없으면 힐 스킬)
+  const hpPotIdx = mercenary.inventory.findIndex(it => it && window.itemDict[it.type]?.healHp > 0 && it.qty > 0);
   if (hpRatio <= mercHpThresh) {
-    const hpPotIdx = mercenary.inventory.findIndex(it => it && window.itemDict[it.type]?.healHp > 0 && it.qty > 0);
     if (hpPotIdx > -1) {
       const potDef = window.itemDict[mercenary.inventory[hpPotIdx].type];
       const mercHpCoolMs = (typeof potDef?.cool === 'number' ? potDef.cool : 0.5) * 1000;
       if (now - mercenary.lastHpPotionTime >= mercHpCoolMs) {
         useMercPotionIndex(hpPotIdx);
       }
-    } else if ((mercenary.class === 'wizard' || mercenary.class === 'ranger') && now - mercenary.lastHealTime >= 2400 && mercenary.mp >= 10) {
+    } else if ((mercenary.class === 'wizard' || mercenary.class === 'ranger') && now - mercenary.lastHealTime >= 2200 && mercenary.mp >= 10) {
       mercenary.lastHealTime = now;
       mercenary.mp = Math.max(0, mercenary.mp - 10);
       const bestHealSk = unlockedSkills.filter(s => s.type === '힐링').sort((a, b) => (b.healFixed || 0) - (a.healFixed || 0))[0];
-      const baseH = bestHealSk?.healFixed || (mercenary.class === 'wizard' ? 120 : 100);
-      const selfHeal = mercenary.class === 'wizard' ? Math.floor(baseH + ms.totalMAtk * 1.25) : Math.floor(baseH + ms.totalAtk * 0.78);
+      const baseH = bestHealSk?.healFixed || (mercenary.class === 'wizard' ? 240 : 210);
+      const pctBonus = Math.floor((mercenary.maxHp || 350) * 0.16);
+      const selfHeal = mercenary.class === 'wizard'
+        ? Math.floor(baseH + ms.totalMAtk * 1.45 + mercenary.level * 3.2 + pctBonus)
+        : Math.floor(baseH + ms.totalAtk * 0.95 + mercenary.level * 2.8 + pctBonus);
       mercenary.hp = Math.min(mercenary.maxHp, mercenary.hp + selfHeal);
-      const mSelfHealName = bestHealSk?.name || (mercenary.class === 'wizard' ? '큐어' : '네이처스 터치');
+      const mSelfHealName = bestHealSk?.name || (mercenary.class === 'wizard' ? '그레이트 힐' : '네이처스 터치');
       floatingTexts.push({ x: mercenary.x, y: mercenary.y - 48, text: `🌿자체힐 +${selfHeal}`, color: 0x4ade80, life: 32 });
       activeEffects.push({ type: 'buff', x: mercenary.x, y: mercenary.y, targetRef: mercenary, life: 25, maxLife: 25, skillName: mSelfHealName });
       window.broadcastMultiplayerActionFx?.('ally_buff', { isMerc: true, x: Math.round(mercenary.x), y: Math.round(mercenary.y), skillName: mSelfHealName, healAmt: selfHeal });
@@ -103,12 +106,12 @@ function updateMercenaryAI(delta, now, inSafe) {
     }
   }
 
-  // 4) 💚 마법사/궁수 용병: 보조(SUPPORT)·대기(STANDBY)·공격 모드에서 플레이어 자동 힐 & 자동 버프!
+  // 4) 💚 용병 자동 힐(마법사/궁수) & 자동 버프(전사 방어버프 포함 전 클래스)!
+  const isSupportOrStandby = (mercenary.stance === 'SUPPORT' || mercenary.stance === 'STANDBY');
   if (mercenary.class === 'wizard' || mercenary.class === 'ranger') {
     const playerHpRatio = player.hp / Math.max(1, player.maxHp);
-    const isSupportOrStandby = (mercenary.stance === 'SUPPORT' || mercenary.stance === 'STANDBY');
-    const healThreshold = isBossFight ? 0.85 : (isSupportOrStandby ? 0.82 : 0.68);
-    const healCool = isBossFight ? 1800 : (isSupportOrStandby ? 2100 : 2600);
+    const healThreshold = isBossFight ? 0.85 : (isSupportOrStandby ? 0.82 : 0.72);
+    const healCool = isBossFight ? 1700 : (isSupportOrStandby ? 1950 : 2400);
 
     if (playerHpRatio <= healThreshold && now - mercenary.lastHealTime >= healCool && mercenary.mp >= 10) {
       const healSkills = unlockedSkills.filter(s => s.type === '힐링').sort((a, b) => (b.healFixed || 0) - (a.healFixed || 0));
@@ -117,10 +120,12 @@ function updateMercenaryAI(delta, now, inSafe) {
       if (mercenary.mp >= mpNeed) {
         mercenary.lastHealTime = now;
         mercenary.mp = Math.max(0, mercenary.mp - mpNeed);
-        const baseHealVal = pickedHeal?.healFixed || (mercenary.class === 'wizard' ? 125 : 110);
+        const baseHealVal = pickedHeal?.healFixed || (mercenary.class === 'wizard' ? 240 : 210);
+        const isGreatH = pickedHeal?.id === 'M13' || (pickedHeal?.name || '').includes('그레이트');
+        const pctHeal = Math.floor((player.maxHp || 400) * (isGreatH ? 0.20 : 0.14));
         const healAmt = mercenary.class === 'wizard'
-          ? Math.floor(baseHealVal + ms.totalMAtk * 1.35 + mercenary.level * 2.5)
-          : Math.floor(baseHealVal + ms.totalAtk * 0.85 + mercenary.level * 2.0);
+          ? Math.floor(baseHealVal + ms.totalMAtk * 1.50 + mercenary.level * 3.5 + pctHeal)
+          : Math.floor(baseHealVal + ms.totalAtk * 1.05 + mercenary.level * 3.0 + pctHeal);
         player.hp = Math.min(player.maxHp, player.hp + healAmt);
         const skillLabel = pickedHeal?.name || (mercenary.class === 'wizard' ? '그레이트 힐' : '네이처스 터치');
         SoundSystem.playSkill(skillLabel, mercenary.class, pickedHeal?.circle || 1, false);
@@ -130,35 +135,38 @@ function updateMercenaryAI(delta, now, inSafe) {
         updateStatusHUD();
       }
     }
+  }
 
-    // 보조(SUPPORT) 및 대기(STANDBY) 모드(또는 보스전 전력투구)일 때 해금된 버프 스킬을 플레이어와 용병에게 자동 시전!
-    if ((isSupportOrStandby || isBossFight) && !mercenary.manaRechargeWait && curMpRatioNow >= 0.14 && now - (mercenary.lastAutoBuffTime || 0) >= 1600) {
-      const supportBuffSkills = unlockedSkills.filter(s =>
-        (s.type === '버프' || s.buffKey) &&
-        s.buffKey &&
-        !['ABSOLUTE_BARRIER', 'SUMMON_GOLEM', 'ARCHMAGE', 'COUNTER'].includes(s.buffKey)
-      );
-      for (const bSk of supportBuffSkills) {
-        const bKey = bSk.buffKey;
-        const playerRem = player.activeBuffs?.[bKey] || 0;
-        if (playerRem <= 4000) {
-          const mpCost = Math.min(20, Math.max(6, Math.floor((bSk.mp || 12) * 0.65)));
-          if (mercenary.mp >= mpCost) {
-            mercenary.lastAutoBuffTime = now;
-            mercenary.mp = Math.max(0, mercenary.mp - mpCost);
-            const durMs = ((bSk.dur && bSk.dur > 0) ? bSk.dur : 180) * 1000;
+  // 전 클래스 용병: 해금된 버프 스킬(아이언 스킨, 가디언 아머, 쉴드, 헤이스트 등)을 플레이어와 용병에게 자동 시전!
+  if (!mercenary.manaRechargeWait && curMpRatioNow >= 0.14 && now - (mercenary.lastAutoBuffTime || 0) >= 1600) {
+    const supportBuffSkills = unlockedSkills.filter(s =>
+      (s.type === '버프' || s.buffKey) &&
+      s.buffKey &&
+      !['ABSOLUTE_BARRIER', 'SUMMON_GOLEM', 'ARCHMAGE', 'COUNTER', 'RAGE'].includes(s.buffKey)
+    );
+    for (const bSk of supportBuffSkills) {
+      const bKey = bSk.buffKey;
+      const mercRem = mercenary.activeBuffs?.[bKey] || 0;
+      const playerRem = player.activeBuffs?.[bKey] || 0;
+      if (mercRem <= 4000 || (bSk.allyCast && playerRem <= 4000)) {
+        const mpCost = Math.min(20, Math.max(6, Math.floor((bSk.mp || 12) * 0.65)));
+        if (mercenary.mp >= mpCost) {
+          mercenary.lastAutoBuffTime = now;
+          mercenary.mp = Math.max(0, mercenary.mp - mpCost);
+          const durMs = ((bSk.dur && bSk.dur > 0) ? bSk.dur : 180) * 1000;
+          mercenary.activeBuffs[bKey] = Math.min(3600000, Math.max(0, mercenary.activeBuffs[bKey] || 0) + durMs);
+          if (bSk.allyCast) {
             player.activeBuffs[bKey] = Math.min(3600000, Math.max(0, player.activeBuffs[bKey] || 0) + durMs);
-            mercenary.activeBuffs[bKey] = Math.min(3600000, Math.max(0, mercenary.activeBuffs[bKey] || 0) + durMs);
-            recalcMaxHpMp(true);
-            syncMercStats(false);
-            SoundSystem.playSkill(bSk.name, mercenary.class, bSk.circle || 1, false);
-            floatingTexts.push({ x: player.x, y: player.y - 54, text: `✨용병버프 [${bSk.name}]`, color: 0xfde047, fontSize: 12.5, life: 34 });
-            activeEffects.push({ type: 'buff', x: player.x, y: player.y, targetRef: player, life: 28, maxLife: 28, skillName: bSk.name });
-            window.broadcastMultiplayerActionFx?.('ally_buff', { x: Math.round(player.x), y: Math.round(player.y), skillName: bSk.name });
-            window.updateBuffUI();
-            updateStatusHUD();
-            break;
           }
+          recalcMaxHpMp(true);
+          syncMercStats(false);
+          SoundSystem.playSkill(bSk.name, mercenary.class, bSk.circle || 1, false);
+          floatingTexts.push({ x: player.x, y: player.y - 54, text: `✨용병버프 [${bSk.name}]`, color: 0xfde047, fontSize: 12.5, life: 34 });
+          activeEffects.push({ type: 'buff', x: player.x, y: player.y, targetRef: player, life: 28, maxLife: 28, skillName: bSk.name });
+          window.broadcastMultiplayerActionFx?.('ally_buff', { x: Math.round(player.x), y: Math.round(player.y), skillName: bSk.name });
+          window.updateBuffUI();
+          updateStatusHUD();
+          break;
         }
       }
     }
@@ -187,28 +195,81 @@ function updateMercenaryAI(delta, now, inSafe) {
     }
   }
 
-  // 6) 💧 마나 10% 미만일 때: 힐 대기 + 몬스터 회피기동(Evasion Maneuver) 수행, 10% 이상 회복 즉시 정상 복귀!
-  if (mercenary.manaRechargeWait && !inSafe) {
-    let closestThreat = null;
-    let closestDist = 195;
-    monsterList.forEach(m => {
-      if (m.isDead || isInsideSafeZone(m.x, m.y)) return;
+  // 🌟 플레이어 주변 원형 궤도 회피 기동 헬퍼 (용병이 도망갈 때 멀리 이탈하지 않고 플레이어 주위를 원을 그리며 돌아 플레이어가 몬스터를 공격할 수 있게 유도!)
+  const orbitEvadeAroundPlayer = (threatEntity, orbitRadius = 86, speedMult = 1.06) => {
+    const curAngFromPlayer = Math.atan2(mercenary.y - player.y, mercenary.x - player.x);
+    if (!mercenary.orbitDir) mercenary.orbitDir = 1;
+    if (threatEntity) {
+      // 위협 몬스터로부터 더 멀어지는 회전 방향(시계/반시계) 선택
+      const testAngPlus = curAngFromPlayer + 0.55;
+      const testAngMinus = curAngFromPlayer - 0.55;
+      const dPlus = Math.hypot((player.x + Math.cos(testAngPlus) * orbitRadius) - threatEntity.x, (player.y + Math.sin(testAngPlus) * orbitRadius) - threatEntity.y);
+      const dMinus = Math.hypot((player.x + Math.cos(testAngMinus) * orbitRadius) - threatEntity.x, (player.y + Math.sin(testAngMinus) * orbitRadius) - threatEntity.y);
+      if (Math.abs(dPlus - dMinus) > 14) {
+        mercenary.orbitDir = dPlus >= dMinus ? 1 : -1;
+      }
+    }
+    const nextOrbitAng = curAngFromPlayer + mercenary.orbitDir * 0.58;
+    const goalX = player.x + Math.cos(nextOrbitAng) * orbitRadius;
+    const goalY = player.y + Math.sin(nextOrbitAng) * orbitRadius;
+    const moveAng = Math.atan2(goalY - mercenary.y, goalX - mercenary.x);
+    const step = (player.speed || 1.90) * speedMult * delta;
+    let steer = findOpenSteerPoint(mercenary.x, mercenary.y, moveAng, step, true, mercenary);
+    if (!steer) {
+      mercenary.orbitDir = -mercenary.orbitDir;
+      const revAng = curAngFromPlayer + mercenary.orbitDir * 0.65;
+      const rGoalX = player.x + Math.cos(revAng) * orbitRadius;
+      const rGoalY = player.y + Math.sin(revAng) * orbitRadius;
+      steer = findOpenSteerPoint(mercenary.x, mercenary.y, Math.atan2(rGoalY - mercenary.y, rGoalX - mercenary.x), step, true, mercenary);
+    }
+    if (steer) {
+      mercenary.x = steer.x;
+      mercenary.y = steer.y;
+      mercenary.isWalking = true;
+      mercenary.dir = Math.cos(steer.angle) >= 0 ? 'right' : 'left';
+      return true;
+    }
+    return false;
+  };
+
+  // 용병 주위로 접근하는 가장 가까운 위협 몬스터 실시간 탐색
+  let closestApproachingMob = null;
+  let closestApproachDist = Infinity;
+  if (!inSafe) {
+    for (let i = 0; i < monsterList.length; i++) {
+      const m = monsterList[i];
+      if (!m || m.isDead || isInsideSafeZone(m.x, m.y)) continue;
       const d = Math.hypot(m.x - mercenary.x, m.y - mercenary.y);
-      if (d < closestDist) {
-        closestDist = d;
-        closestThreat = m;
+      if (d < closestApproachDist) {
+        closestApproachDist = d;
+        closestApproachingMob = m;
       }
-    });
-    if (closestThreat) {
-      const awayAng = Math.atan2(mercenary.y - closestThreat.y, mercenary.x - closestThreat.x) + 0.65;
-      const evadeStep = (player.speed || 1.90) * 1.02 * delta;
-      const steer = findOpenSteerPoint(mercenary.x, mercenary.y, awayAng, evadeStep, true, mercenary);
-      if (steer) {
-        mercenary.x = steer.x;
-        mercenary.y = steer.y;
-        mercenary.isWalking = true;
-        mercenary.dir = Math.cos(steer.angle) >= 0 ? 'right' : 'left';
+    }
+  }
+
+  // 5-B) 🚨 전 클래스 공통(전사·궁수·마법사 모두): 물약이 없고 체력이 20% 이하이면 사망 방지를 위해 플레이어 근처를 원을 돌며 회피기동(플레이어가 몬스터를 공격 가능하게 유도)!
+  const curHpRatioNow = mercenary.hp / Math.max(1, mercenary.maxHp);
+  const hasAnyHpPotNow = mercenary.inventory.some(it => it && window.itemDict[it.type]?.healHp > 0 && it.qty > 0);
+  if (!inSafe && !hasAnyHpPotNow && curHpRatioNow <= 0.20) {
+    if (closestApproachingMob && closestApproachDist <= 240) {
+      orbitEvadeAroundPlayer(closestApproachingMob, 82, 1.08);
+      if (now - (mercenary.lastLowHpEvadeNotice || 0) > 2200) {
+        mercenary.lastLowHpEvadeNotice = now;
+        floatingTexts.push({ x: mercenary.x, y: mercenary.y - 52, text: `🚨체력위기! 플레이어 주변 회피기동`, color: 0xf87171, fontSize: 11, life: 28 });
       }
+      window.updateMercHUD();
+      return;
+    } else if (Math.hypot(player.x - mercenary.x, player.y - mercenary.y) > 95) {
+      followPlayerMovement(delta);
+      window.updateMercHUD();
+      return;
+    }
+  }
+
+  // 6) 💧 마나 10% 미만일 때: 힐 대기 + 플레이어 주변 원형 회피기동 수행, 10% 이상 회복 즉시 정상 복귀!
+  if (mercenary.manaRechargeWait && !inSafe) {
+    if (closestApproachingMob && closestApproachDist < 195) {
+      orbitEvadeAroundPlayer(closestApproachingMob, 86, 1.04);
       if (now - (mercenary.lastEvadeNoticeTime || 0) > 2200) {
         mercenary.lastEvadeNoticeTime = now;
         floatingTexts.push({ x: mercenary.x, y: mercenary.y - 50, text: `💧MP회복 회피기동`, color: 0x93c5fd, fontSize: 11, life: 26 });
@@ -234,11 +295,11 @@ function updateMercenaryAI(delta, now, inSafe) {
   if (mercenary.stance === 'STANDBY') {
     target = mercenary.attackerMonster;
   } else {
-    // 플레이어를 때린 몬스터가 있으면 우선 협공 처치, 아니면 플레이어 타겟/보스 협공
-    if (player.lastHitByMonster && !player.lastHitByMonster.isDead && (now - (player.lastHitByTime || 0) < 4000) && !isInsideSafeZone(player.lastHitByMonster.x, player.lastHitByMonster.y)) {
-      target = player.lastHitByMonster;
-    } else if (playerTargetMob && !isInsideSafeZone(playerTargetMob.x, playerTargetMob.y)) {
+    // 🎯 플레이어와 같이 사냥할 때 플레이어 타겟을 최우선 점사(집중 공격)!
+    if (playerTargetMob && !isInsideSafeZone(playerTargetMob.x, playerTargetMob.y)) {
       target = playerTargetMob;
+    } else if (player.lastHitByMonster && !player.lastHitByMonster.isDead && (now - (player.lastHitByTime || 0) < 4000) && !isInsideSafeZone(player.lastHitByMonster.x, player.lastHitByMonster.y)) {
+      target = player.lastHitByMonster;
     } else if (nearbyBoss && !isInsideSafeZone(nearbyBoss.x, nearbyBoss.y)) {
       target = nearbyBoss;
     } else if (mercenary.attackerMonster) {
@@ -272,26 +333,26 @@ function updateMercenaryAI(delta, now, inSafe) {
   }
 
   const isRangedMerc = (mercenary.class === 'ranger' || mercenary.class === 'wizard');
-  const atkRange = isRangedMerc ? 235 : 70;
-  const evadeDist = isRangedMerc ? 120 : 34;
+  const atkRange = isRangedMerc ? 245 : 70;
   const distToTarget = Math.hypot(target.x - mercenary.x, target.y - mercenary.y);
 
   // 보스전 전력투구(All-Out Burst) 시 공격/스킬 템포 가속
   const isAllOutBoss = Boolean(target.isBoss || isBossFight);
   const atkInterval = Math.max(360, Math.floor(ms.atkSpeedSec * (isAllOutBoss ? 840 : 1000)));
-  const mercMoveSpeed = (player.speed || 1.90) * 1.02;
+  const mercMoveSpeed = (player.speed || 1.90) * 1.04;
 
-  if (distToTarget < evadeDist && now - mercenary.lastAttackTime < atkInterval * 0.85) {
-    let awayAng = Math.atan2(mercenary.y - target.y, mercenary.x - target.x) + 0.75;
-    let step = mercMoveSpeed * 0.92 * delta;
-    const steer = findOpenSteerPoint(mercenary.x, mercenary.y, awayAng, step, true, mercenary);
-    if (steer) {
-      mercenary.x = steer.x;
-      mercenary.y = steer.y;
-      mercenary.isWalking = true;
-      mercenary.dir = (target.x >= mercenary.x) ? 'right' : 'left';
-    }
-  } else if (distToTarget > atkRange) {
+  // 🏹🔮 궁수·마법사 전용 선제 원형 카이팅(Pre-Hit Orbit Kiting):
+  // 용병 주위로 어떤 몬스터든 접근(148px 이내, 몬스터가 때리기 전!)하면 플레이어 쪽으로 원을 돌면서 회피 기동하고,
+  // 공격 쿨타임이 돌아올 때마다 멈추지 않고 플레이어 타겟(target)을 계속 점사 공격!
+  const preHitThreat = (closestApproachingMob && closestApproachDist < (isRangedMerc ? 148 : 44)) ? closestApproachingMob : null;
+  let didPreHitKiteMove = false;
+
+  if (isRangedMerc && preHitThreat) {
+    didPreHitKiteMove = orbitEvadeAroundPlayer(preHitThreat, 90, 1.05);
+    mercenary.dir = (target.x >= mercenary.x) ? 'right' : 'left';
+  }
+
+  if (!didPreHitKiteMove && distToTarget > atkRange) {
     let ang = Math.atan2(target.y - mercenary.y, target.x - mercenary.x);
     let step = mercMoveSpeed * delta;
     const steer = findOpenSteerPoint(mercenary.x, mercenary.y, ang, step, false, mercenary);
@@ -302,10 +363,12 @@ function updateMercenaryAI(delta, now, inSafe) {
       mercenary.dir = Math.cos(steer.angle) >= 0 ? 'right' : 'left';
     }
   } else {
-    mercenary.isWalking = false;
+    if (!didPreHitKiteMove) {
+      mercenary.isWalking = false;
+    }
     mercenary.dir = (target.x >= mercenary.x) ? 'right' : 'left';
 
-    if (now - mercenary.lastAttackTime >= atkInterval) {
+    if (distToTarget <= atkRange + 25 && now - mercenary.lastAttackTime >= atkInterval) {
       mercenary.lastAttackTime = now;
       mercenary.lastCombatTime = now;
 
@@ -532,25 +595,44 @@ function calcMonsterDamageToDefender(rawMobAtk, defenderDef, mobLv = 1, isBoss =
 
   // 마법 공격 또는 보스 광역 마법 피격 시 마법방어력(defenderMDef)을 핵심 방어 스탯으로 반영!
   const effectiveDef = isMagicAtk
-    ? Math.max(0, Math.round((defenderMDef || 0) * 0.78 + (defenderDef || 0) * 0.32))
+    ? Math.max(0, Math.round((defenderMDef || 0) * 0.80 + (defenderDef || 0) * 0.35))
     : Math.max(0, defenderDef || 0);
 
-  // 비율 방어 감쇄율: 몬스터 레벨에 비례해 요구 방어력이 상승하며 최대 74%까지만 비율 감쇄
-  const defRatio = Math.min(0.74, effectiveDef / (effectiveDef + 140 + mobLv * 11.2));
-  // 고정 차감: 몬스터 공격력의 최대 22%까지만 고정 차감 허용
-  const flatReduce = Math.min(rawMobAtk * 0.22, effectiveDef * 0.20);
-  // 최소 관통 피해(Floor): 일반 몬스터는 원공격력의 최소 19%, 보스는 최소 28% 관통 보장
-  const minPenetration = Math.max(5, Math.floor(rawMobAtk * (isBoss ? 0.28 : 0.19) * unarmoredMult));
-  let mitigated = Math.floor(((rawMobAtk - flatReduce) * (1 - defRatio)) * unarmoredMult + (Math.random() * 4 - 2));
-  const totalPctRed = Math.min(38, (extraReducePct || 0) + (isBoss ? (bossReducePct || 0) : 0));
-  if (totalPctRed > 0) {
-    mitigated = Math.floor(mitigated * (1 - totalPctRed / 100));
+  const reqDefStandard = mobLv >= 30 ? Math.floor(mobLv * 2.15) : Math.floor(mobLv * 1.4);
+  const isWellGeared = effectiveDef >= reqDefStandard;
+
+  if (!isWellGeared && mobLv >= 30 && !isBoss) {
+    const deficitRatio = (reqDefStandard - effectiveDef) / Math.max(20, reqDefStandard);
+    unarmoredMult += Math.min(0.58, deficitRatio * 0.65);
   }
-  return Math.max(minPenetration, mitigated);
+
+  const maxDefCap = isWellGeared ? 0.86 : 0.72;
+  const defRatio = Math.min(maxDefCap, effectiveDef / (effectiveDef + 115 + mobLv * (isWellGeared ? 8.2 : 11.5)));
+  const flatReduce = Math.min(rawMobAtk * (isWellGeared ? 0.36 : 0.22), effectiveDef * (isWellGeared ? 0.34 : 0.20));
+  const floorRatio = isBoss ? (isWellGeared ? 0.16 : 0.26) : (isWellGeared ? 0.04 : 0.18);
+  const minPenetration = Math.max(2, Math.floor(rawMobAtk * floorRatio * unarmoredMult));
+
+  let mitigated = Math.max(minPenetration, Math.floor(((rawMobAtk - flatReduce) * (1 - defRatio)) * unarmoredMult));
+  const totalPctRed = Math.min(60, (extraReducePct || 0) + (isBoss ? (bossReducePct || 0) : 0));
+  if (totalPctRed > 0) {
+    mitigated = Math.max(1, Math.floor(mitigated * (1 - totalPctRed / 100)));
+  }
+  return mitigated;
 }
 
-function gameLoop(delta) {
+let _lastGameLoopPerfTs = 0;
+
+function gameLoop(rawDelta) {
   if (!app || !app.renderer) return;
+  const perfNow = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  if (!document.hidden && _lastGameLoopPerfTs > 0 && (perfNow - _lastGameLoopPerfTs) < 7) {
+    return;
+  }
+  const delta = document.hidden
+    ? Math.min(2.0, Math.max(0.5, Number(rawDelta) || 1))
+    : (_lastGameLoopPerfTs > 0 ? Math.min(1.12, Math.max(0.45, (perfNow - _lastGameLoopPerfTs) / 16.6667)) : 1.0);
+  _lastGameLoopPerfTs = perfNow;
+
   let now = Date.now();
   tick += delta;
 
@@ -657,7 +739,8 @@ function gameLoop(delta) {
   if (player.activeBuffs.HOLY_WALK > 0) speedBonusPct += (hwSk?.speedPct ?? 28);
   if (player.activeBuffs.ELIXIR > 0) speedBonusPct += 6;
   if ((player.activeBuffs.MERC_BLESS || 0) > 0) speedBonusPct += 8;
-  // 각종 이동속도 버프는 누적 적용되되 상용 MMORPG 표준 속도감을 해치지 않도록 소프트캡(최대 +62%) 적용
+  // 각종 이동속도 버프는 누적 적용되되 상용 MMORPG 표준 속도감을 해치지 않도록 소프트캡(최대 +45%) 적용
+  if (!player.isAdmin) player.gmSpeedMult = 1;
   const effSpeedMult = 1 + Math.min(0.45, speedBonusPct / 100);
   const baseSpd = CLASS_STATS[player.class]?.baseSpeed ?? 1.90;
   player.speed = baseSpd * effSpeedMult * (player.gmSpeedMult || 1);
@@ -728,10 +811,42 @@ function gameLoop(delta) {
     }
   }
 
-  // 5-A) 자동 사냥 중 가까운 드롭 아이템(380px 이내) 발견 시 우선 루팅
+  // 자동사냥 중 조이스틱 조작이나 수동 이동 경로가 끝났는데도 manualMoving 플래그가 남아 자동사냥이 멈추는 현상 원천 차단!
+  if (window.isAutoAttack && player.manualMoving && !joystickState.active && (!player.isMoving || !player.path || player.path.length === 0)) {
+    player.manualMoving = false;
+  }
+
+  const isPartyMemberNotLeader = Boolean(window.partyState && window.partyState.leaderCharId && window.partyState.leaderCharId !== activeCharacterId);
+  const partyLeaderOp = isPartyMemberNotLeader
+    ? (window.otherPlayers || []).find(o => o && o.charId === window.partyState.leaderCharId)
+    : null;
+  const pMode = window.partyAutoHuntMode || window.partyState?.partyMode || 'FREE';
+
+  // 파티 점사모드(FOCUS)에서 파티장의 현재 타겟 몬스터 실시간 해석 (서버 파티 스냅샷 + 리더 실시간 타겟 + 리더 교전 중인 근접 몬스터 폴백)
+  let activePartyFocusMob = null;
+  if (isPartyMemberNotLeader && pMode === 'FOCUS') {
+    const rawLdrMobId = window.partyState?.leaderTargetMobId || partyLeaderOp?.targetMobId || null;
+    if (rawLdrMobId) {
+      activePartyFocusMob = monsterList.find(m => !m.isDead && String(m.id) === String(rawLdrMobId) && !isInsideSafeZone(m.x, m.y)) || null;
+    }
+    // AI 파티장이 방금 몬스터를 처치하여 0.1~0.2초간 새 타겟 ID가 아직 도착하지 않았거나 루팅 중일 때, 리더 바로 옆(260px 이내)에서 교전 중인 몬스터를 즉시 점사 보조!
+    if (!activePartyFocusMob && partyLeaderOp && !isInsideSafeZone(partyLeaderOp.x, partyLeaderOp.y)) {
+      let bestNearLdrDist = 260;
+      monsterList.forEach(m => {
+        if (m.isDead || isInsideSafeZone(m.x, m.y)) return;
+        const dLdr = Math.hypot(m.x - partyLeaderOp.x, m.y - partyLeaderOp.y);
+        if (dLdr <= bestNearLdrDist) {
+          bestNearLdrDist = dLdr;
+          activePartyFocusMob = m;
+        }
+      });
+    }
+  }
+
+  // 5-A) 자동 사냥 중 가까운 드롭 아이템(380px 이내) 발견 시 우선 루팅 (단, 파티 점사모드에서 점사 타겟 교전 중에는 발밑 85px 이내만 즉시 줍고 점사 유지!)
   if (window.isAutoAttack && !inSafe && !player.manualMoving) {
     let nearestLoot = null;
-    let minLootDist = 380;
+    let minLootDist = activePartyFocusMob ? 85 : 380;
     for (let i = 0; i < itemList.length; i++) {
       const it = itemList[i];
       if (!shouldLootItem(it, window.itemDict)) continue;
@@ -745,41 +860,41 @@ function gameLoop(delta) {
     if (nearestLoot) {
       if (minLootDist < 72) {
         pickupItem(nearestLoot);
-      } else if (!player.targetEntity || player.targetEntity.type !== 'ITEM' || player.targetEntity.ref !== nearestLoot) {
+      } else if (!activePartyFocusMob && (!player.targetEntity || player.targetEntity.type !== 'ITEM' || player.targetEntity.ref !== nearestLoot)) {
         player.targetEntity = { type: 'ITEM', ref: nearestLoot };
         player.path = window.findPath(player.x, player.y, nearestLoot.x, nearestLoot.y);
         player.isMoving = true;
       }
-    } else if (player.targetEntity && player.targetEntity.type === 'ITEM' && !itemList.includes(player.targetEntity.ref)) {
+    } else if (player.targetEntity && player.targetEntity.type === 'ITEM') {
       player.targetEntity = null;
     }
   }
 
   // 5-B) 자동 사냥 몬스터 탐색 (파티 모드[자유사냥/점사모드] 연동 + 기억해둔 보스/반격 우선)
   if (window.isAutoAttack && !inSafe && !player.manualMoving) {
-    const isPartyMemberNotLeader = Boolean(window.partyState && window.partyState.leaderCharId && window.partyState.leaderCharId !== activeCharacterId);
-    const partyLeaderOp = isPartyMemberNotLeader
-      ? (window.otherPlayers || []).find(o => o && o.charId === window.partyState.leaderCharId)
-      : null;
-    const pMode = window.partyAutoHuntMode || window.partyState?.partyMode || 'FREE';
-
     // [파티 점사모드]: 파티장이 타겟한 몬스터가 있으면 즉시 해당 몬스터로 타겟 고정 및 집중 공격!
     if (isPartyMemberNotLeader && pMode === 'FOCUS') {
-      const ldrMobId = window.partyState?.leaderTargetMobId;
-      const ldrMob = ldrMobId ? monsterList.find(m => !m.isDead && String(m.id) === String(ldrMobId) && !isInsideSafeZone(m.x, m.y)) : null;
-      if (ldrMob) {
-        if (!player.targetEntity || player.targetEntity.ref !== ldrMob) {
-          player.targetEntity = { type: 'MONSTER', ref: ldrMob };
-          player.path = window.findPath(player.x, player.y, ldrMob.x, ldrMob.y);
+      if (activePartyFocusMob) {
+        if (!player.targetEntity || player.targetEntity.type !== 'MONSTER' || player.targetEntity.ref !== activePartyFocusMob) {
+          player.targetEntity = { type: 'MONSTER', ref: activePartyFocusMob };
+          player.path = window.findPath(player.x, player.y, activePartyFocusMob.x, activePartyFocusMob.y);
           player.isMoving = true;
-          updateTopTargetUI(ldrMob);
+          updateTopTargetUI(activePartyFocusMob);
+        } else {
+          const distToFocus = Math.hypot(activePartyFocusMob.x - player.x, activePartyFocusMob.y - player.y);
+          if (distToFocus > getPlayerAttackRange() && (!player.isMoving || !player.path || player.path.length === 0)) {
+            player.path = window.findPath(player.x, player.y, activePartyFocusMob.x, activePartyFocusMob.y);
+            player.isMoving = true;
+          }
         }
       } else if (partyLeaderOp) {
         // 파티장이 타겟한 몬스터가 없으면 파티장 근처로 이동
-        const dLdr = Math.hypot(partyLeaderOp.x - player.x, partyLeaderOp.y - player.y);
-        if (dLdr > 130) {
+        if (player.targetEntity && player.targetEntity.type === 'MONSTER' && player.targetEntity.ref.isDead) {
           player.targetEntity = null;
           window.clearTarget();
+        }
+        const dLdr = Math.hypot(partyLeaderOp.x - player.x, partyLeaderOp.y - player.y);
+        if (dLdr > 125 && (!player.targetEntity || player.targetEntity.type !== 'MONSTER')) {
           const followPt = findSafeSpot(partyLeaderOp.x + 42, partyLeaderOp.y + 28);
           player.targetX = followPt.x;
           player.targetY = followPt.y;
@@ -787,7 +902,7 @@ function gameLoop(delta) {
           player.isMoving = true;
         }
       }
-    } else if (!player.targetEntity || (player.targetEntity.type === 'MONSTER' && player.targetEntity.ref.isDead)) {
+    } else if (!player.targetEntity || (player.targetEntity.type === 'MONSTER' && (player.targetEntity.ref.isDead || isInsideSafeZone(player.targetEntity.ref.x, player.targetEntity.ref.y)))) {
       let foundTarget = null;
       if (player.lastHitByMonster && !player.lastHitByMonster.isDead && (now - (player.lastHitByTime || 0) < 5000) && !isInsideSafeZone(player.lastHitByMonster.x, player.lastHitByMonster.y)) {
         foundTarget = player.lastHitByMonster;
@@ -1088,7 +1203,18 @@ function gameLoop(delta) {
         player.lastHitByMonster = m;
         player.lastHitByTime = now;
 
-        if (!player.manualMoving) {
+        const isLockedPartyFocus = Boolean(
+          window.isAutoAttack &&
+          window.partyState &&
+          window.partyState.leaderCharId &&
+          window.partyState.leaderCharId !== activeCharacterId &&
+          (window.partyAutoHuntMode || window.partyState.partyMode) === 'FOCUS' &&
+          player.targetEntity?.type === 'MONSTER' &&
+          player.targetEntity.ref &&
+          !player.targetEntity.ref.isDead
+        );
+
+        if (!player.manualMoving && !isLockedPartyFocus) {
           const curTargetMob = (player.targetEntity && player.targetEntity.type === 'MONSTER' && !player.targetEntity.ref.isDead)
             ? player.targetEntity.ref
             : null;
@@ -1305,6 +1431,7 @@ function gameLoop(delta) {
   } // end of offline local monster AI fallback
 
   // 9) 플레이어 타겟 추적 + 마법사/엘프궁수 원형 카이팅(Circle-Strafing) & 근접 회피 기동
+  let didPlayerMoveByKiting = false;
   if (player.targetEntity) {
     let t = player.targetEntity;
     if (t.type === 'MONSTER') {
@@ -1384,6 +1511,7 @@ function gameLoop(delta) {
               player.x = nx;
               player.y = ny;
               player.isWalking = true;
+              didPlayerMoveByKiting = true;
               if (now - (player.lastDirChangeTime || 0) > 180) {
                 player.lastDirChangeTime = now;
                 let dx = t.ref.x - player.x;
@@ -1434,6 +1562,26 @@ function gameLoop(delta) {
       } else if (!player.isMoving || player.path.length === 0) {
         player.path = window.findPath(player.x, player.y, t.ref.x, t.ref.y);
         player.isMoving = true;
+      }
+    }
+  }
+
+  // 9-B) 파티장이고 점사 모드(FOCUS)일 때 플레이어의 현재 타겟 몬스터가 변경되면 즉시 파티원(AI 포함)에게 브로드캐스트하여 딜레이 없는 일제 점사 보장!
+  if (window.partyState && window.partyState.partyId && window.partyState.leaderCharId === activeCharacterId) {
+    const curPtyMode = window.partyAutoHuntMode || window.partyState.partyMode || 'FREE';
+    const curLeaderMobId = (player.targetEntity?.type === 'MONSTER' && player.targetEntity.ref && !player.targetEntity.ref.isDead)
+      ? player.targetEntity.ref.id
+      : null;
+    if (window.partyState.leaderTargetMobId !== curLeaderMobId) {
+      window.partyState.leaderTargetMobId = curLeaderMobId;
+      if (curPtyMode === 'FOCUS' && now - (window._lastLeaderFocusSyncTs || 0) >= 75) {
+        window._lastLeaderFocusSyncTs = now;
+        sendCentralWsPacket({
+          type: 'PARTY_MODE_REQ',
+          charId: activeCharacterId,
+          partyMode: 'FOCUS',
+          leaderTargetMobId: curLeaderMobId
+        });
       }
     }
   }
@@ -1553,7 +1701,7 @@ function gameLoop(delta) {
         player.isWalking = true;
       }
     }
-  } else if (player.isMoving && player.path.length > 0) {
+  } else if (!didPlayerMoveByKiting && player.isMoving && player.path.length > 0) {
     let nextPt = player.path[0];
     let dx = nextPt.x - player.x;
     let dy = nextPt.y - player.y;
@@ -1592,6 +1740,7 @@ function gameLoop(delta) {
         } else {
           player.isMoving = false;
           player.isWalking = false;
+          player.manualMoving = false;
           player.path = [];
         }
       }
@@ -2164,6 +2313,97 @@ function gameLoop(delta) {
     drawIsoSelectionRing(window.bottomMagicCircleG, player.x, player.y + 2, 24, 0xfacc15, 0xfef08a, tick, false, 'select');
   }
 
+  // 🧭 13-B) 퀘스트 해당 지역일 때 다음 퀘스트 장소(목표 몬스터 / 퀘스트 NPC / 던전 입구) 방향을 연한 화살표로 안내 (옵션에서 ON/OFF 가능)
+  if (bgLoaded && window.OptionState?.questGuideArrow !== false && GameDB?.Quests && player?.quests) {
+    let guidePt = null;
+    let guideCol = 0xfde047;
+    const regQuests = GameDB.Quests.filter(q => q && q.region === currentRegionKey);
+    if (regQuests.length > 0) {
+      const activeRegQuests = regQuests.filter(q => player.quests[q.id]?.status === 'ACTIVE');
+      const readyQuest = activeRegQuests.find(q => (player.quests[q.id]?.count || 0) >= q.reqCount);
+      const huntingQuest = activeRegQuests.find(q => (player.quests[q.id]?.count || 0) < q.reqCount);
+      const isDungMap = String(currentMapKey || '').endsWith('_dungeon');
+
+      if (readyQuest) {
+        guideCol = 0x4ade80;
+        if (isDungMap && portalBoxes.length > 0) {
+          guidePt = portalBoxes[0];
+        } else {
+          const qNpc = npcList.find(n => n && n.role === 'QUEST');
+          if (qNpc) guidePt = qNpc;
+        }
+      } else if (huntingQuest) {
+        guideCol = 0xfacc15;
+        const tName = (huntingQuest.targetName || '').trim();
+        let bestMob = null;
+        let bestDist = Infinity;
+        for (let i = 0; i < monsterList.length; i++) {
+          const m = monsterList[i];
+          if (!m || m.isDead) continue;
+          const mRaw = (m.rawName || m.name || '').trim();
+          if (tName && (mRaw === tName || mRaw.includes(tName) || (m.name && m.name.includes(tName)))) {
+            const d = Math.hypot(m.x - player.x, m.y - player.y);
+            if (d < bestDist) {
+              bestDist = d;
+              bestMob = m;
+            }
+          }
+        }
+        if (bestMob) {
+          guidePt = bestMob;
+        } else if (portalBoxes.length > 0) {
+          guidePt = portalBoxes[0];
+        }
+      } else if (!isDungMap) {
+        const nextAvailQuest = regQuests.find(q => {
+          const st = player.quests[q.id]?.status;
+          return !st || st === 'AVAILABLE' || st === 'ABANDONED';
+        });
+        if (nextAvailQuest) {
+          const qNpc = npcList.find(n => n && n.role === 'QUEST');
+          if (qNpc) {
+            guidePt = qNpc;
+            guideCol = 0x93c5fd;
+          }
+        }
+      }
+    }
+
+    if (guidePt && typeof guidePt.x === 'number' && typeof guidePt.y === 'number') {
+      const dxG = guidePt.x - player.x;
+      const dyG = guidePt.y - player.y;
+      const distG = Math.hypot(dxG, dyG);
+      if (distG > 95) {
+        const angG = Math.atan2(dyG, dxG);
+        const orbitR = 54 + Math.sin(tick * 0.08) * 3;
+        const ax = player.x + Math.cos(angG) * orbitR;
+        const ay = (player.y - 16) + Math.sin(angG) * orbitR;
+        const ux = Math.cos(angG);
+        const uy = Math.sin(angG);
+        const px = -uy;
+        const py = ux;
+        const tipX = ax + ux * 11;
+        const tipY = ay + uy * 11;
+        const leftX = ax - ux * 6 + px * 6.5;
+        const leftY = ay - uy * 6 + py * 6.5;
+        const backX = ax - ux * 2.5;
+        const backY = ay - uy * 2.5;
+        const rightX = ax - ux * 6 - px * 6.5;
+        const rightY = ay - uy * 6 - py * 6.5;
+        const softAlpha = 0.34 + 0.08 * Math.sin(tick * 0.08);
+
+        uiG.lineStyle(1.2, 0xffffff, softAlpha * 0.75);
+        uiG.beginFill(guideCol, softAlpha);
+        uiG.moveTo(tipX, tipY);
+        uiG.lineTo(leftX, leftY);
+        uiG.lineTo(backX, backY);
+        uiG.lineTo(rightX, rightY);
+        uiG.closePath();
+        uiG.endFill();
+      }
+    }
+  }
+
   // 🌟 [레이어 4: fxG] 2.5D 투사체 및 스킬·피격·물약·버프 파티클 렌더링 (마법진은 bottomMagicCircleG에만 그려져 절대 캐릭터를 가리지 않음!)
   const particleLayer = window.fxG || uiG;
   projectiles.forEach(p => {
@@ -2245,7 +2485,7 @@ function awardPickedItemToPlayer(it) {
   if (it.type === 'gold') {
     let amt = it.qty && it.qty > 1 ? it.qty : Math.floor(15 + Math.random() * 35);
     player.gold += amt;
-    window.addChat(`💰 ${amt} 골드를 획득했습니다.`, 'log-sys');
+    window.addChat(`💰 ${amt.toLocaleString()} 골드를 획득했습니다.`, 'log-sys');
   } else {
     const saved = giveItem(it.type, it.qty || 1, it.gradeIdx ?? null, it);
     let iName = window.itemDict[it.type]?.name || it.type;

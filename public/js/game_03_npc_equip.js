@@ -227,7 +227,7 @@ window.openNpcModal = function(npc) {
     window.addChat(`💬 [${npc.name}] "모험에 필요한 물약과 기본 장비를 구비하고 있네!"`, 'log-chat', 'chat');
     const shopItems = [...(GameDB.Shops?.generalItems || ['C_P01', 'C_P02', 'C_P03', 'C_P04', 'C_P05', 'S_RE01', 'W_SW01', 'W_SW02', 'W_BW01', 'W_BW02', 'W_ST01', 'W_ST02', 'W_SH01', 'A_HE01', 'A_TS01', 'A_AR01', 'A_AR02', 'A_GL01', 'A_BE01', 'A_SH01', 'A_CL01', 'AC_N01', 'AC_E01', 'AC_R01'])];
     if (isCamp) shopItems.push(...(GameDB.Shops?.campExtraItems || ['S_WE01', 'S_AR01']));
-    let html = `<div style="font-size:10.5px; color:#fde047; margin-bottom:5px;">보유 골드: 💰<span id="shop-gold-txt">${player.gold}</span> G</div><div class="shop-list">`;
+    let html = `<div style="font-size:10.5px; color:#fde047; margin-bottom:5px;">보유 골드: 💰<span id="shop-gold-txt">${Number(player.gold || 0).toLocaleString()}</span> G</div><div class="shop-list">`;
     shopItems.forEach(id => {
       const it = window.itemDict[id];
       if (!it || it.questOnly) return;
@@ -261,7 +261,7 @@ window.openNpcModal = function(npc) {
   else if (npc.role === 'SCROLL') {
     window.addChat(`💬 [${npc.name}] "무기는 +6까지, 방어구와 장신구는 +4까지 100% 안전하게 강화할 수 있는 마법 주문서라네!"`, 'log-chat', 'chat');
     const scrollItems = [...(GameDB.Shops?.scrollShopItems || ['S_RE01', 'S_WE01', 'S_AR01'])];
-    let html = `<div style="font-size:10.5px; color:#c084fc; margin-bottom:5px;">보유 골드: 💰<span id="shop-gold-txt">${player.gold}</span> G</div><div class="shop-list">`;
+    let html = `<div style="font-size:10.5px; color:#c084fc; margin-bottom:5px;">보유 골드: 💰<span id="shop-gold-txt">${Number(player.gold || 0).toLocaleString()}</span> G</div><div class="shop-list">`;
     scrollItems.forEach(id => {
       const it = window.itemDict[id];
       if (!it) return;
@@ -297,6 +297,7 @@ window.openNpcModal = function(npc) {
   else if (npc.role === 'QUEST') {
     window.addChat(`💬 [${npc.name}] "각 지역의 마지막 보스 임무를 완수하면 상점·드롭으로 구할 수 없는 [퀘스트전용] 고성능 무기를 하사하겠네!"`, 'log-chat', 'chat');
     bodyEl.innerHTML = buildQuestListHTML(true);
+    setTimeout(() => window.focusLastActiveQuestRow?.(), 40);
   }
 };
 
@@ -607,6 +608,7 @@ window.toggleQuestUI = function() {
     window.bringModalToFront?.(ui);
     window.renderQuestUI();
     window.centerModalOnScreen?.(ui);
+    setTimeout(() => window.focusLastActiveQuestRow?.(), 40);
   }
 };
 
@@ -627,7 +629,12 @@ function buildQuestListHTML(isFromNpc = false) {
       <span style="font-size:9px; color:#93c5fd;">※ 수락·보상 수령: 마을/야영지 퀘스트 NPC</span>
     </div>`;
 
-    const historyQuests = GameDB.Quests.filter(q => player.quests[q.id]?.everAccepted);
+    const seenHistIds = new Set();
+    const historyQuests = GameDB.Quests.filter(q => {
+      if (!q || !player.quests[q.id]?.everAccepted || seenHistIds.has(q.id)) return false;
+      seenHistIds.add(q.id);
+      return true;
+    });
     if (historyQuests.length === 0) {
       html += `<div style="padding:16px 10px; text-align:center; color:#9ca3af; font-size:10.5px; background:#141210; border:1px dashed #3d3020; border-radius:6px;">
         아직 수락한 퀘스트가 없습니다.<br>
@@ -663,13 +670,13 @@ function buildQuestListHTML(isFromNpc = false) {
 
       const rowBorder = st.status === 'ACTIVE' ? '#eab308' : (st.status === 'ABANDONED' ? '#7f1d1d' : '#3d3020');
       html += `
-        <div class="shop-row" style="border-color:${rowBorder};">
+        <div class="shop-row" ${st.status === 'ACTIVE' ? 'data-active-quest-row="true"' : ''} style="border-color:${rowBorder}; padding:5px 6px; margin-bottom:2px;">
           <div style="flex:1;">
             ${q.chapter ? `<div style="font-size:9px; color:#38bdf8; font-weight:bold;">📖 ${q.chapter}</div>` : ''}
-            <div style="font-weight:bold; color:${q.isRegionFinale ? '#e879f9' : '#facc15'}; font-size:11px;">[${q.id}] ${q.name}</div>
-            ${q.story ? `<div style="font-size:9.5px; color:#cbd5e1; margin:2px 0; line-height:1.3;">"${q.story}"</div>` : ''}
-            <div style="font-size:10px; color:#fff;">🎯 목표: ${q.objective}</div>
-            <div style="font-size:9px; color:${q.isRegionFinale ? '#fde047' : '#93c5fd'};">보상: EXP +${q.exp} / 💰${q.gold} / <b>${rItem}</b> x${q.rewardQty}</div>
+            <div style="font-weight:bold; color:${q.isRegionFinale ? '#e879f9' : '#facc15'}; font-size:12.5px; line-height:1.25;">[${q.id}] ${q.name}</div>
+            ${q.story ? `<div style="font-size:11px; color:#cbd5e1; margin:1px 0; line-height:1.25;">"${q.story}"</div>` : ''}
+            <div style="font-size:11.5px; color:#fff; line-height:1.25;">🎯 목표: ${q.objective}</div>
+            <div style="font-size:9px; color:${q.isRegionFinale ? '#fde047' : '#93c5fd'};">보상: EXP +${(Number(q.exp) || 0).toLocaleString()} / 💰${(Number(q.gold) || 0).toLocaleString()} G / <b>${rItem}</b> x${q.rewardQty}</div>
           </div>
           <div>${btnHtml}</div>
         </div>
@@ -681,7 +688,9 @@ function buildQuestListHTML(isFromNpc = false) {
 
   html += `<div style="font-size:10px; color:#4ade80; margin-bottom:5px;">지역 최종 보스 퀘스트 완수 시 <b>[퀘스트전용] 클래스 맞춤 무기</b>가 지급됩니다!</div>`;
   const regionQuests = GameDB.Quests.filter(q => q.region === currentRegionKey || player.quests[q.id]?.status === 'ACTIVE');
-  const displayQuests = regionQuests.length > 0 ? regionQuests : GameDB.Quests.filter(q => q.region === 'R01');
+  const rawQuests = regionQuests.length > 0 ? regionQuests : GameDB.Quests.filter(q => q.region === 'R01');
+  const seenQ = new Set();
+  const displayQuests = rawQuests.filter(q => { if (!q || seenQ.has(q.id)) return false; seenQ.add(q.id); return true; });
 
   html += `<div class="shop-list">`;
   displayQuests.forEach(q => {
@@ -704,13 +713,13 @@ function buildQuestListHTML(isFromNpc = false) {
 
     const rowBorder = st.status === 'ACTIVE' ? '#eab308' : '#3d3020';
     html += `
-      <div class="shop-row" style="border-color:${rowBorder};">
+      <div class="shop-row" ${st.status === 'ACTIVE' ? 'data-active-quest-row="true"' : ''} style="border-color:${rowBorder}; padding:5px 6px; margin-bottom:2px;">
         <div style="flex:1;">
           ${q.chapter ? `<div style="font-size:9px; color:#38bdf8; font-weight:bold;">📖 ${q.chapter}</div>` : ''}
-          <div style="font-weight:bold; color:${q.isRegionFinale ? '#e879f9' : '#facc15'}; font-size:11px;">[${q.id}] ${q.name} ${st.status === 'ACTIVE' ? '<span style="color:#4ade80; font-size:9px;">[진행중]</span>' : ''}</div>
-          ${q.story ? `<div style="font-size:9.5px; color:#cbd5e1; margin:2px 0; line-height:1.3;">"${q.story}"</div>` : ''}
-          <div style="font-size:10px; color:#fff;">🎯 목표: ${q.objective}</div>
-          <div style="font-size:9px; color:${q.isRegionFinale ? '#fde047' : '#93c5fd'};">보상: EXP +${q.exp} / 💰${q.gold} / <b>${rItem}</b> x${q.rewardQty}</div>
+          <div style="font-weight:bold; color:${q.isRegionFinale ? '#e879f9' : '#facc15'}; font-size:12.5px; line-height:1.25;">[${q.id}] ${q.name} ${st.status === 'ACTIVE' ? '<span style="color:#4ade80; font-size:9px;">[진행중]</span>' : ''}</div>
+          ${q.story ? `<div style="font-size:11px; color:#cbd5e1; margin:1px 0; line-height:1.25;">"${q.story}"</div>` : ''}
+          <div style="font-size:11.5px; color:#fff; line-height:1.25;">🎯 목표: ${q.objective}</div>
+          <div style="font-size:9px; color:${q.isRegionFinale ? '#fde047' : '#93c5fd'};">보상: EXP +${(Number(q.exp) || 0).toLocaleString()} / 💰${(Number(q.gold) || 0).toLocaleString()} G / <b>${rItem}</b> x${q.rewardQty}</div>
         </div>
         <div>${btnHtml}</div>
       </div>
@@ -735,6 +744,7 @@ window.renderQuestUI = function() {
 
   updateQuestTrackerHUD();
   updateQuestButtonBadge();
+  setTimeout(() => window.focusLastActiveQuestRow?.(), 30);
 };
 
 function updateQuestButtonBadge() {
@@ -818,7 +828,7 @@ window.completeQuest = function(qId) {
   giveItem(rewardId, q.rewardQty || 1, rewardDef?.fixedGrade ?? null);
   gainExp(q.exp || 100);
 
-  window.addChat(`🎉 [퀘스트 완료] '${q.name}' 달성! 보상: [${rewardDef?.name || rewardId}] 획득! (EXP +${q.exp}, 💰+${q.gold})`, 'log-kill');
+  window.addChat(`🎉 [퀘스트 완료] '${q.name}' 달성! 보상: [${rewardDef?.name || rewardId}] 획득! (EXP +${Number(q.exp || 0).toLocaleString()}, 💰+${Number(q.gold || 0).toLocaleString()} G)`, 'log-kill');
   if (q.completeDialog) {
     window.addChat(`💬 ${q.completeDialog}`, 'log-chat', 'chat');
   }
@@ -1240,8 +1250,23 @@ function calculateCombatStats(includePending = false) {
   const elixirAtkMult = 1 + ((elixirDef?.atkBoostPct ?? 12) / 100);
   const rageSk = findBuffSkill('RAGE');
   const rageAtkMult = 1 + ((rageSk?.atkMultPct ?? 32) / 100);
-  const rageDefMult = Math.max(0.1, 1 - ((rageSk?.defPenaltyPct ?? 18) / 100));
+  const rageDefMult = Math.max(0.1, 1 - ((rageSk?.defPenaltyPct ?? 10) / 100));
   const shieldSk = findBuffSkill('SHIELD');
+  const ironSkinSk = findBuffSkill('IRON_SKIN');
+  const guardianArmorSk = findBuffSkill('GUARDIAN_ARMOR');
+  if ((player.activeBuffs.IRON_SKIN || 0) > 0) {
+    passiveDefBonus += (ironSkinSk?.bonusDef ?? 16);
+    passiveMDefBonus += (ironSkinSk?.bonusMDef ?? 12);
+    dmgReducePct += (ironSkinSk?.dmgReducePct ?? 8);
+  }
+  if ((player.activeBuffs.GUARDIAN_ARMOR || 0) > 0) {
+    passiveDefBonus += (guardianArmorSk?.bonusDef ?? 32);
+    passiveMDefBonus += (guardianArmorSk?.bonusMDef ?? 24);
+    passiveBlockBonus += (guardianArmorSk?.bonusBlock ?? 12);
+    dmgReducePct += (guardianArmorSk?.dmgReducePct ?? 15);
+    bossDmgReducePct += (guardianArmorSk?.bossDmgReducePct ?? 10);
+    passiveMaxHpPct += (guardianArmorSk?.bonusMaxHpPct ?? 15);
+  }
 
   // ⚖️ [장비 의존도 및 맨손/무방비 밸런스 검증 반영]
   // - 무기를 장착하지 않은 맨손 상태에서는 스탯 공격력 효율이 38%로 제한되며 공속이 느려집니다.
@@ -1262,12 +1287,14 @@ function calculateCombatStats(includePending = false) {
   const weaponStatSynergy = hasAnyWeapon ? (0.86 + Math.min(0.65, (weaponAtk + enchantAtkBonus) / 115)) : 0.38;
   const magicWeaponSynergy = hasAnyWeapon ? (0.92 + Math.min(0.75, (magicAtk + enchantAtkBonus) / 110)) : 0.42;
 
-  let rawPAtk = Math.max(4, Math.floor(mainStatVal * weaponStatSynergy + weaponAtk * 1.15 + enchantAtkBonus + passiveAtkBonus));
+  const baseClassAtkMult = CLASS_STATS[player.class]?.atkMult ?? 1.0;
+  let rawPAtk = Math.max(4, Math.floor((mainStatVal * weaponStatSynergy + weaponAtk * 1.15 + enchantAtkBonus + passiveAtkBonus) * baseClassAtkMult));
   if (player.activeBuffs.ELIXIR > 0) rawPAtk = Math.floor(rawPAtk * elixirAtkMult);
   if ((player.activeBuffs.MERC_BLESS || 0) > 0) rawPAtk = Math.floor(rawPAtk * 1.10);
   if (player.activeBuffs.RAGE > 0) rawPAtk = Math.floor(rawPAtk * rageAtkMult);
 
-  let rawMAtk = Math.max(5, Math.floor(effScaledINT * magicWeaponSynergy + magicAtk * 1.18 + enchantAtkBonus + passiveMAtkBonus));
+  const baseClassMagicMult = CLASS_STATS[player.class]?.magicMult ?? 1.0;
+  let rawMAtk = Math.max(5, Math.floor((effScaledINT * magicWeaponSynergy + magicAtk * 1.18 + enchantAtkBonus + passiveMAtkBonus) * baseClassMagicMult));
   if (player.activeBuffs.ELIXIR > 0) rawMAtk = Math.floor(rawMAtk * elixirAtkMult);
   if ((player.activeBuffs.MERC_BLESS || 0) > 0) rawMAtk = Math.floor(rawMAtk * 1.10);
 
@@ -1331,8 +1358,8 @@ function calculateCombatStats(includePending = false) {
     armorPenPct: Math.min(55, armorPenPct),
     coolReducePct: Math.min(40, coolReducePct),
     bossDmgPct: Math.min(65, bossDmgPct),
-    dmgReducePct: Math.min(25, dmgReducePct),
-    bossDmgReducePct: Math.min(35, bossDmgReducePct),
+    dmgReducePct: Math.min(38, dmgReducePct),
+    bossDmgReducePct: Math.min(45, bossDmgReducePct),
     mpCostReducePct: Math.min(30, mpCostReducePct),
     weaponSpeedSec,
     calcMaxHp,
@@ -1409,7 +1436,11 @@ function setupTouchDragSource(el, payloadGetter) {
   let startY = 0;
   let lastMoveX = 0;
   let lastMoveY = 0;
+  let downTime = 0;
   let dragging = false;
+  let scrollingGrid = false;
+  let scrollContainer = null;
+  let startScrollTop = 0;
   const ghost = document.getElementById('touch-drag-ghost');
 
   el.addEventListener('pointerdown', (e) => {
@@ -1420,8 +1451,12 @@ function setupTouchDragSource(el, payloadGetter) {
     startY = e.clientY;
     lastMoveX = e.clientX;
     lastMoveY = e.clientY;
+    downTime = Date.now();
     dragging = false;
-    window._isTouchDraggingSlot = true;
+    scrollingGrid = false;
+    scrollContainer = el.closest('#inventory-grid, #skill-grid, .inventory-grid, .skill-grid');
+    startScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+    window._isTouchDraggingSlot = false;
 
     const cleanupListeners = () => {
       window._isTouchDraggingSlot = false;
@@ -1443,12 +1478,43 @@ function setupTouchDragSource(el, payloadGetter) {
     };
 
     const handleDragMoveCoords = (cx, cy, rawEv) => {
+      const dx = cx - startX;
+      const dy = cy - startY;
+      const dist = Math.hypot(dx, dy);
       lastMoveX = cx;
       lastMoveY = cy;
-      if (!dragging && Math.hypot(cx - startX, cy - startY) > 7) {
+
+      // 📱 스마트폰/터치 환경에서 인벤토리·스킬 그리드 상하 스크롤 제스처 우선 보장!
+      if (!dragging && scrollContainer && dist > 6) {
+        const heldMs = Date.now() - downTime;
+        const isVerticalSwipe = Math.abs(dy) >= Math.abs(dx) * 0.85;
+        const rect = scrollContainer.getBoundingClientRect();
+        const insideGrid = (cy >= rect.top - 12 && cy <= rect.bottom + 12);
+        if (scrollingGrid || (isVerticalSwipe && heldMs < 220 && insideGrid)) {
+          scrollingGrid = true;
+          window._lastInvTouchDragEndTime = Date.now();
+          // 브라우저 기본 스크롤과 함께 직접 scrollTop 보정도 수행하여 모든 모바일 브라우저에서 100% 상하 리스팅 작동 보장
+          const targetScroll = startScrollTop - dy;
+          if (Math.abs(scrollContainer.scrollTop - targetScroll) > 1) {
+            scrollContainer.scrollTop = targetScroll;
+          }
+          return;
+        }
+      }
+
+      if (scrollingGrid) {
+        window._lastInvTouchDragEndTime = Date.now();
+        if (scrollContainer) {
+          scrollContainer.scrollTop = startScrollTop - dy;
+        }
+        return;
+      }
+
+      if (!dragging && dist > 9) {
         touchDragPayload = payloadGetter();
         if (!touchDragPayload) return;
         dragging = true;
+        window._isTouchDraggingSlot = true;
         if (ghost) {
           ghost.innerHTML = touchDragPayload.html || '📦';
           ghost.style.left = `${cx}px`;
@@ -2308,8 +2374,9 @@ function checkUnitCollision(nx, ny, selfEntity = player, ignoreTargetRef = null)
 function resolveClientEntitySeparation(delta = 1) {
   if (!bgLoaded) return;
   const inSafeNow = isInsideSafeZone(player.x, player.y);
+  const isPlayerActivelyMoving = Boolean(player.isWalking || player.isMoving || joystickState?.active);
 
-  // A) 플레이어와 몬스터 간 겹침 해소
+  // A) 플레이어와 몬스터 간 겹침 해소 (플레이어 이동 중 뒤에서 밀려 이동속도가 가속되는 현상 원천 차단!)
   for (let i = 0; i < monsterList.length; i++) {
     const m = monsterList[i];
     if (!m || m.isDead) continue;
@@ -2318,13 +2385,15 @@ function resolveClientEntitySeparation(delta = 1) {
     const dy = player.y - m.y;
     const dist = Math.hypot(dx, dy);
     if (dist < minDist) {
-      const overlap = (minDist - Math.max(0.1, dist)) * 0.42 * Math.min(1.5, delta);
+      const overlap = Math.min(0.45, (minDist - Math.max(0.1, dist)) * 0.25) * Math.min(1.1, delta);
       const ang = dist > 0.1 ? Math.atan2(dy, dx) : ((i * 1.3) % (Math.PI * 2));
-      const pnx = player.x + Math.cos(ang) * overlap;
-      const pny = player.y + Math.sin(ang) * overlap;
-      if (!checkCollision(pnx, pny)) {
-        player.x = pnx;
-        player.y = pny;
+      if (!isPlayerActivelyMoving) {
+        const pnx = player.x + Math.cos(ang) * overlap;
+        const pny = player.y + Math.sin(ang) * overlap;
+        if (!checkCollision(pnx, pny)) {
+          player.x = pnx;
+          player.y = pny;
+        }
       }
       if (!isServerAuthoritativeMode()) {
         const mnx = m.x - Math.cos(ang) * overlap;
@@ -2339,13 +2408,13 @@ function resolveClientEntitySeparation(delta = 1) {
 
   // B) 내 용병과 플레이어 / 몬스터 / 타 플레이어 / 타 플레이어 용병 간 자리 겹침 완전 해소!
   if (mercenary.hired && !mercenary.isDead) {
-    // B-1) 내 용병 <-> 내 플레이어 분리
+    // B-1) 내 용병 <-> 내 플레이어 분리 (용병만 밀어내고 플레이어는 밀지 않음)
     const dxPM = mercenary.x - player.x;
     const dyPM = mercenary.y - player.y;
     const distPM = Math.hypot(dxPM, dyPM);
     const minPM = 28;
     if (distPM < minPM) {
-      const push = (minPM - Math.max(0.1, distPM)) * 0.45 * Math.min(1.5, delta);
+      const push = (minPM - Math.max(0.1, distPM)) * 0.45 * Math.min(1.1, delta);
       const ang = distPM > 0.1 ? Math.atan2(dyPM, dxPM) : 2.4;
       const mnx = mercenary.x + Math.cos(ang) * push;
       const mny = mercenary.y + Math.sin(ang) * push;
@@ -2363,7 +2432,7 @@ function resolveClientEntitySeparation(delta = 1) {
       const dy = mercenary.y - m.y;
       const dist = Math.hypot(dx, dy);
       if (dist < minDist) {
-        const push = (minDist - Math.max(0.1, dist)) * 0.42 * Math.min(1.5, delta);
+        const push = (minDist - Math.max(0.1, dist)) * 0.42 * Math.min(1.1, delta);
         const ang = dist > 0.1 ? Math.atan2(dy, dx) : (i * 1.1);
         const mnx = mercenary.x + Math.cos(ang) * push;
         const mny = mercenary.y + Math.sin(ang) * push;
@@ -2384,8 +2453,8 @@ function resolveClientEntitySeparation(delta = 1) {
       const dx = player.x - op.x;
       const dy = player.y - op.y;
       const dist = Math.hypot(dx, dy);
-      if (!inSafeNow && dist < minDist) {
-        const push = (minDist - Math.max(0.1, dist)) * 0.35 * Math.min(1.5, delta);
+      if (!inSafeNow && !isPlayerActivelyMoving && dist < minDist) {
+        const push = Math.min(0.4, (minDist - Math.max(0.1, dist)) * 0.25) * Math.min(1.1, delta);
         const ang = dist > 0.1 ? Math.atan2(dy, dx) : (i + 0.5);
         const pnx = player.x + Math.cos(ang) * push;
         const pny = player.y + Math.sin(ang) * push;
@@ -2592,3 +2661,17 @@ window.updateHotbarCooldowns = function() {
 
 
 
+
+window.focusLastActiveQuestRow = function() {
+  document.querySelectorAll('#quest-ui-body .shop-list, #npc-modal-body .shop-list').forEach(listEl => {
+    const rows = listEl.querySelectorAll('[data-active-quest-row="true"]');
+    if (rows.length > 0) {
+      rows[rows.length - 1].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } else {
+      const allRows = listEl.querySelectorAll('.shop-row');
+      if (allRows.length > 0) {
+        allRows[allRows.length - 1].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  });
+};

@@ -1027,15 +1027,19 @@ body.chat-is-transparent #chat-toggle-fab {
     display: grid; 
     gap: 3px; 
     overflow-y: auto !important; 
+    overflow-x: hidden !important;
     -webkit-overflow-scrolling: touch !important;
     touch-action: pan-y !important;
+    overscroll-behavior: contain;
     align-content: start; 
     grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); 
     grid-auto-rows: 38px;
     max-height: 168px;
+    min-height: 114px;
+    padding-right: 2px;
 }
 
-/* 🎒 인벤토리 슬롯: 등급은 배경색으로 구분하고 테두리는 선택/비선택만 명확히 표현 */
+/* 🎒 인벤토리 슬롯: 등급은 배경색으로 구분하고 테두리는 선택/비선택만 명확히 표현 (스마트폰 상하 터치 스크롤 지원!) */
 .inv-slot { 
     width: 100%; 
     height: 100%; 
@@ -1049,10 +1053,36 @@ body.chat-is-transparent #chat-toggle-fab {
     position: relative; 
     cursor: grab; 
     box-shadow: inset 0 0 4px rgba(0,0,0,0.85); 
-    touch-action: none !important;
-    -webkit-user-drag: element !important;
+    touch-action: pan-y !important;
     user-select: none;
     transition: border-color 0.1s, box-shadow 0.1s;
+}
+.inv-slot.unlearned-class-book {
+    border: 2px solid #22c55e !important;
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.75), inset 0 0 6px rgba(34, 197, 94, 0.35) !important;
+}
+.inv-slot .book-status-badge {
+    position: absolute;
+    bottom: 0px;
+    left: 1px;
+    font-size: 7.5px;
+    font-weight: 900;
+    padding: 0 2.5px;
+    border-radius: 2px;
+    line-height: 1.15;
+    pointer-events: none;
+    z-index: 7;
+}
+.inv-slot .book-status-badge.learnable {
+    color: #052e16;
+    background: #4ade80;
+    border: 0.5px solid #dcfce7;
+    box-shadow: 0 0 4px rgba(74, 222, 128, 0.9);
+}
+.inv-slot .book-status-badge.learned {
+    color: #9ca3af;
+    background: rgba(17, 24, 39, 0.88);
+    border: 0.5px solid #4b5563;
 }
 .inv-slot:active {
     cursor: grabbing;

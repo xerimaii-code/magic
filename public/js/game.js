@@ -2,6 +2,7 @@
 import { GameDB, HardcodedMapDB, OBJ, Renderer, DetailFieldRenderer, loadEnvConfig, calcRequiredExpForLevel, calcBalancedKillExp } from './data.js';
 import { drawPlayer, drawOtherPlayer, destroyOtherPlayerSprite, drawNPC, drawMonster, drawItem, drawProjectile, drawEffect, drawIsoSelectionRing, ISO_TILT, PixiCtx, PlayerSpriteManager, loadCustomSprites, loadItemSheetSprites, SoundSystem } from './data_image.js';
 import { initOptionSystem, GameOptions, shouldLootItem } from './ui_option.js';
+import { ImmersiveSystem } from './game_08_immersive_contents.js';
 
 Object.assign(window, {
   GameDB,
@@ -29,5 +30,6 @@ Object.assign(window, {
   SoundSystem,
   initOptionSystem,
   GameOptions,
-  shouldLootItem
+  shouldLootItem,
+  ImmersiveSystem
 });

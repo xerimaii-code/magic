@@ -596,8 +596,14 @@ function calculateMercCombatStats() {
   let buffAtk = ((mercenary.activeBuffs?.SHADOW_FANG || 0) > 0 ? 15 : 0) + ((mercenary.activeBuffs?.HOLY_WEAPON || 0) > 0 ? 12 : 0);
   let totalAtk = Math.floor(mainVal * 1.4 + weaponAtk + enchantAtkBonus + buffAtk + lv * 2.2 + 12);
   let totalMAtk = Math.floor(sINT * 1.7 + magicAtk + enchantAtkBonus + buffAtk + lv * 2.5 + 15);
-  let totalDef = Math.floor(sCON * 0.85 + sumDef + enchantDefBonus + ((mercenary.activeBuffs?.SHIELD || 0) > 0 ? 8 : 0) + ((mercenary.activeBuffs?.MERC_BLESS || 0) > 0 ? 10 : 0) + lv * 1.2 + (mercenary.class === 'knight' ? 8 : 3));
-  let totalMDef = Math.floor((bCfg.baseMDef || 6) + (lv - 1) * (bCfg.mDefPerLv || 1.2) + sINT * 0.55 + sCON * 0.35 + sumMDef + Math.floor(enchantDefBonus * 0.8) + ((mercenary.activeBuffs?.SHIELD || 0) > 0 ? 6 : 0) + ((mercenary.activeBuffs?.LIGHT || 0) > 0 ? 8 : 0) + ((mercenary.activeBuffs?.SOUL_BARRIER || 0) > 0 ? 22 : 0) + ((mercenary.activeBuffs?.MERC_BLESS || 0) > 0 ? 10 : 0));
+  const ironSkinDef = (mercenary.activeBuffs?.IRON_SKIN || 0) > 0 ? 16 : 0;
+  const ironSkinMDef = (mercenary.activeBuffs?.IRON_SKIN || 0) > 0 ? 12 : 0;
+  const guardArmorDef = (mercenary.activeBuffs?.GUARDIAN_ARMOR || 0) > 0 ? 32 : 0;
+  const guardArmorMDef = (mercenary.activeBuffs?.GUARDIAN_ARMOR || 0) > 0 ? 24 : 0;
+  if ((mercenary.activeBuffs?.IRON_SKIN || 0) > 0) dmgReducePct += 8;
+  if ((mercenary.activeBuffs?.GUARDIAN_ARMOR || 0) > 0) { dmgReducePct += 15; bossDmgReducePct += 10; }
+  let totalDef = Math.floor(sCON * 0.85 + sumDef + enchantDefBonus + ironSkinDef + guardArmorDef + ((mercenary.activeBuffs?.SHIELD || 0) > 0 ? 10 : 0) + ((mercenary.activeBuffs?.MERC_BLESS || 0) > 0 ? 10 : 0) + lv * 1.35 + (mercenary.class === 'knight' ? 12 : 4));
+  let totalMDef = Math.floor((bCfg.baseMDef || 6) + (lv - 1) * (bCfg.mDefPerLv || 1.2) + sINT * 0.55 + sCON * 0.35 + sumMDef + Math.floor(enchantDefBonus * 0.8) + ironSkinMDef + guardArmorMDef + ((mercenary.activeBuffs?.SHIELD || 0) > 0 ? 8 : 0) + ((mercenary.activeBuffs?.LIGHT || 0) > 0 ? 8 : 0) + ((mercenary.activeBuffs?.SOUL_BARRIER || 0) > 0 ? 22 : 0) + ((mercenary.activeBuffs?.MERC_BLESS || 0) > 0 ? 10 : 0));
 
   if ((mercenary.activeBuffs?.ELIXIR || 0) > 0) {
     totalAtk = Math.floor(totalAtk * 1.12);
@@ -615,6 +621,9 @@ function calculateMercCombatStats() {
   let maxHp = bCfg.baseHp + (lv - 1) * 32 + sCON * 14 + bonusHp;
   if (mercenary.class === 'knight') maxHp = Math.floor(maxHp * 1.18);
   let maxMp = bCfg.baseMp + (lv - 1) * 15 + sINT * 10 + bonusMp;
+  if ((mercenary.activeBuffs?.GUARDIAN_ARMOR || 0) > 0) {
+    maxHp = Math.floor(maxHp * 1.15);
+  }
   if ((mercenary.activeBuffs?.ADV_SPIRIT || 0) > 0) {
     maxHp = Math.floor(maxHp * 1.2);
     maxMp = Math.floor(maxMp * 1.2);
@@ -686,10 +695,32 @@ function syncMercStats(fullHeal = false) {
   }
 }
 
-// 클래스별 기본 무기 및 기본 방어구 보장 헬퍼 (용병 생성/복원 시 무기가 없으면 클래스 맞춤 기본 무기 자동 지급 및 장착)
-function ensureMercDefaultEquipment(mercClass) {
-  const startWeapMap = GameDB.SystemConfig?.startWeaponsByClass || { knight: 'W_SW01', ranger: 'W_BW01', wizard: 'W_ST01' };
-  const defaultWeaponId = startWeapMap[mercClass] || (mercClass === 'wizard' ? 'W_ST01' : (mercClass === 'ranger' ? 'W_BW01' : 'W_SW01'));
+// 용병 레벨 및 클래스에 맞는 적정 기본 장비(무기/방패/투구/갑옷/장갑/신발/망토) 세트 산출 헬퍼
+function getMercStarterGearByLevel(mercClass, mercLv = 1) {
+  const lv = Math.max(1, Number(mercLv) || 1);
+  const wTier = lv >= 140 ? '05' : (lv >= 75 ? '04' : (lv >= 35 ? '03' : (lv >= 12 ? '02' : '01')));
+  const aTier = lv >= 150 ? '05' : (lv >= 80 ? '04' : (lv >= 40 ? '03' : (lv >= 15 ? '02' : '01')));
+  const sTier = lv >= 90 ? '03' : (lv >= 30 ? '02' : '01');
+
+  const weaponPrefix = mercClass === 'wizard' ? 'W_ST' : (mercClass === 'ranger' ? 'W_BW' : 'W_SW');
+  const gearList = [
+    { slot: 'weapon', id: `${weaponPrefix}${wTier}` },
+    { slot: 'armor',  id: `A_AR${aTier}` },
+    { slot: 'helmet', id: `A_HE${aTier}` },
+    { slot: 'gloves', id: `A_GL${aTier}` },
+    { slot: 'boots',  id: `A_SH${aTier}` },
+    { slot: 'cloak',  id: `A_CL${aTier}` }
+  ];
+  if (mercClass === 'knight') {
+    gearList.splice(1, 0, { slot: 'shield', id: `W_SH${sTier}` });
+  }
+  return gearList;
+}
+
+// 클래스별 · 레벨별 기본 무기 및 기본 방어구 보장 헬퍼 (용병 고용/복원 시 용병 레벨에 적당한 기본 장비 자동 지급 및 장착)
+function ensureMercDefaultEquipment(mercClass, forceUpgradeStarter = false) {
+  const mercLv = Math.max(1, Number(mercenary.level || player?.level) || 1);
+  const starterGear = getMercStarterGearByLevel(mercClass, mercLv);
 
   if (!Array.isArray(mercenary.inventory) || mercenary.inventory.length < 24) {
     mercenary.inventory = Array(24).fill(null);
@@ -698,65 +729,40 @@ function ensureMercDefaultEquipment(mercClass) {
     mercenary.equip = createEmptyEquipObj();
   }
 
-  // 현재 장착된 무기가 해당 클래스 착용 가능 무기인지 확인
-  let hasValidWeapon = false;
-  if (mercenary.equip.weapon !== null && mercenary.equip.weapon !== undefined) {
-    const eqInst = mercenary.inventory[mercenary.equip.weapon];
-    const eqDef = eqInst ? window.itemDict?.[eqInst.type] : null;
-    if (eqDef && canMercEquipItem(eqDef)) {
-      hasValidWeapon = true;
-    } else {
-      mercenary.equip.weapon = null;
-    }
-  }
+  starterGear.forEach(({ slot, id }) => {
+    const curEqIdx = mercenary.equip[slot];
+    const curInst = (curEqIdx !== null && curEqIdx !== undefined) ? mercenary.inventory[curEqIdx] : null;
+    const curDef = curInst ? window.itemDict?.[curInst.type] : null;
 
-  if (!hasValidWeapon) {
-    // 가방 내에 착용 가능한 무기가 있는지 탐색
-    let bagWeapIdx = mercenary.inventory.findIndex(inst => {
+    if (curInst && curDef && isItemMatchingSlot(curDef, slot) && canMercEquipItem(curDef)) {
+      if (forceUpgradeStarter && curInst.isMercStarter && (!curInst.plus || curInst.plus <= 0) && curInst.type !== id) {
+        const newInst = createItemInstance(id, 1, false, 0);
+        newInst.isMercStarter = true;
+        mercenary.inventory[curEqIdx] = newInst;
+      }
+      return;
+    }
+
+    mercenary.equip[slot] = null;
+    let bagIdx = mercenary.inventory.findIndex(inst => {
       if (!inst) return false;
       const def = window.itemDict?.[inst.type];
-      return def && (def.type?.includes('검') || def.type?.includes('활') || def.type?.includes('지팡이')) && canMercEquipItem(def);
+      return def && isItemMatchingSlot(def, slot) && canMercEquipItem(def);
     });
-    if (bagWeapIdx === -1) {
+    if (bagIdx === -1) {
       let emptyIdx = mercenary.inventory.findIndex(i => i === null);
-      if (emptyIdx === -1) emptyIdx = 0;
-      const wInst = createItemInstance(defaultWeaponId, 1, false, 1);
-      wInst.isMercStarter = true;
-      mercenary.inventory[emptyIdx] = wInst;
-      bagWeapIdx = emptyIdx;
-    }
-    mercenary.equip.weapon = bagWeapIdx;
-  }
-
-  // 기본 갑옷 보장
-  if (mercenary.equip.armor === null || !mercenary.inventory[mercenary.equip.armor]) {
-    let bagArmorIdx = mercenary.inventory.findIndex(inst => inst && window.itemDict?.[inst.type]?.type?.includes('갑옷'));
-    if (bagArmorIdx === -1) {
-      const emptyIdx = mercenary.inventory.findIndex(i => i === null);
+      if (emptyIdx === -1 && slot === 'weapon') emptyIdx = 0;
       if (emptyIdx > -1) {
-        const aInst = createItemInstance('A_AR01', 1, false, 1);
-        aInst.isMercStarter = true;
-        mercenary.inventory[emptyIdx] = aInst;
-        bagArmorIdx = emptyIdx;
+        const gInst = createItemInstance(id, 1, false, 0);
+        gInst.isMercStarter = true;
+        mercenary.inventory[emptyIdx] = gInst;
+        bagIdx = emptyIdx;
       }
     }
-    if (bagArmorIdx > -1) mercenary.equip.armor = bagArmorIdx;
-  }
-
-  // 전사 클래스 기본 방패 보장
-  if (mercClass === 'knight' && (mercenary.equip.shield === null || !mercenary.inventory[mercenary.equip.shield])) {
-    let bagShieldIdx = mercenary.inventory.findIndex(inst => inst && window.itemDict?.[inst.type]?.type?.includes('방패'));
-    if (bagShieldIdx === -1) {
-      const emptyIdx = mercenary.inventory.findIndex(i => i === null);
-      if (emptyIdx > -1) {
-        const sInst = createItemInstance('W_SH01', 1, false, 1);
-        sInst.isMercStarter = true;
-        mercenary.inventory[emptyIdx] = sInst;
-        bagShieldIdx = emptyIdx;
-      }
+    if (bagIdx > -1) {
+      mercenary.equip[slot] = bagIdx;
     }
-    if (bagShieldIdx > -1) mercenary.equip.shield = bagShieldIdx;
-  }
+  });
 }
 
 // 용병 고용 확인 모달 요청 (클릭 시 바로 골드가 나가지 않고 반드시 확인 단계를 거침)
@@ -788,14 +794,14 @@ window.requestHireMercenary = function(mercClass) {
     return;
   }
 
-  const startWeapMap = GameDB.SystemConfig?.startWeaponsByClass || { knight: 'W_SW01', ranger: 'W_BW01', wizard: 'W_ST01' };
-  const weapId = startWeapMap[mercClass] || 'W_SW01';
-  const weapName = window.itemDict?.[weapId]?.name || '클래스 기본 무기';
+  const targetLv = Math.max(1, player.level || 1);
+  const starterList = getMercStarterGearByLevel(mercClass, targetLv);
+  const starterNames = starterList.map(g => window.itemDict?.[g.id]?.name || g.id).join(' + ');
 
   window.showSystemAlertModal(
     '🤝 정예 용병 고용 확인',
-    `[${meta.icon} ${meta.name} (${meta.roleName})]
-• 기본 지급 무장: ${weapName}${mercClass === 'knight' ? ' + 나무 방패' : ''} + 가죽갑옷
+    `[${meta.icon} ${meta.name} (${meta.roleName} · Lv.${targetLv})]
+• 레벨 맞춤 기본 지급 무장: ${starterNames}
 • 고용 비용: 💰 ${cost.toLocaleString()} G (고용 후 잔액: ${(player.gold - cost).toLocaleString()} G)
 
 정말로 이 용병을 고용하시겠습니까?`,
@@ -831,10 +837,12 @@ window.confirmHireMercenary = function(mercClass) {
   mercenary.activeBuffs = { ELIXIR: 0, SHIELD: 0, HASTE: 0 };
   mercenary.manaRechargeWait = false;
 
-  // 클래스별 기본 무기 및 방어구 장착 보장
-  ensureMercDefaultEquipment(mercClass);
-  giveItemToMerc('C_P01', 10);
-  giveItemToMerc('C_P03', 10);
+  // 용병 레벨 및 클래스에 맞는 적정 기본 장비 풀세트 자동 지급 및 장착
+  ensureMercDefaultEquipment(mercClass, true);
+  const hpPotType = mercenary.level >= 25 ? 'C_P02' : 'C_P01';
+  const mpPotType = mercenary.level >= 25 ? 'C_P04' : 'C_P03';
+  giveItemToMerc(hpPotType, 15);
+  giveItemToMerc(mpPotType, 15);
   giveItemToMerc('C_P05', 2);
   autoEquipMercBestItems();
 
@@ -1624,16 +1632,42 @@ window.renderPartyControlModal = function() {
   `;
 };
 
+let _partyInviteExpireTimer = null;
+let _partyInviteCountdownInterval = null;
+
+function clearPartyInviteTimers() {
+  if (_partyInviteExpireTimer) {
+    clearTimeout(_partyInviteExpireTimer);
+    _partyInviteExpireTimer = null;
+  }
+  if (_partyInviteCountdownInterval) {
+    clearInterval(_partyInviteCountdownInterval);
+    _partyInviteCountdownInterval = null;
+  }
+}
+
 window.showPartyInvitePopup = function(msg) {
+  clearPartyInviteTimers();
+
+  // 파티 요청이 도착해도 자동사냥이 절대 풀리거나 멈추지 않도록 보장!
+  if (window.isAutoAttack && typeof player !== 'undefined' && player) {
+    player.manualMoving = false;
+  }
+
   let pop = document.getElementById('party-invite-popup');
   if (!pop) {
     pop = document.createElement('div');
     pop.id = 'party-invite-popup';
-    pop.style.cssText = 'position:fixed; top:56px; left:50%; transform:translateX(-50%); z-index:9600; width:min(88vw, 290px); background:rgba(15, 23, 42, 0.96); border:2px solid #38bdf8; border-radius:8px; padding:10px; box-shadow:0 8px 25px rgba(0,0,0,0.9); color:#fff;';
+    pop.style.cssText = 'position:fixed; top:56px; left:50%; transform:translateX(-50%); z-index:9600; width:min(88vw, 290px); background:rgba(15, 23, 42, 0.96); border:2px solid #38bdf8; border-radius:8px; padding:10px; box-shadow:0 8px 25px rgba(0,0,0,0.9); color:#fff; pointer-events:auto;';
     document.body.appendChild(pop);
   }
+
+  let remainSec = 10;
   pop.innerHTML = `
-    <div style="font-size:12px; font-weight:bold; color:#38bdf8; margin-bottom:4px;">🎗️ 파티 초대 도착</div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <span style="font-size:12px; font-weight:bold; color:#38bdf8;">🎗️ 파티 초대 도착</span>
+      <span id="party-invite-countdown" style="font-size:10px; font-weight:bold; color:#fde047; background:rgba(0,0,0,0.55); padding:1px 6px; border-radius:999px;">⏳ ${remainSec}초 후 닫힘</span>
+    </div>
     <div style="font-size:11px; color:#e5e7eb; margin-bottom:8px;">
       <b style="color:#fde047;">${msg.inviterName}</b> (Lv.${msg.inviterLevel || 1})님이 파티에 초대했습니다.
     </div>
@@ -1643,11 +1677,41 @@ window.showPartyInvitePopup = function(msg) {
     </div>
   `;
   pop.style.display = 'block';
+
+  _partyInviteCountdownInterval = setInterval(() => {
+    remainSec = Math.max(0, remainSec - 1);
+    const cdEl = document.getElementById('party-invite-countdown');
+    if (cdEl) cdEl.innerText = `⏳ ${remainSec}초 후 닫힘`;
+  }, 1000);
+
+  // 10초 이상 반응이 없으면 수락창 자동 닫기 (자동사냥은 그대로 계속 진행!)
+  _partyInviteExpireTimer = setTimeout(() => {
+    clearPartyInviteTimers();
+    const curPop = document.getElementById('party-invite-popup');
+    if (curPop && curPop.style.display !== 'none') {
+      curPop.style.display = 'none';
+      if (window.isAutoAttack && typeof player !== 'undefined' && player) {
+        player.manualMoving = false;
+      }
+      sendCentralWsPacket({
+        type: 'PARTY_INVITE_RESP',
+        charId: activeCharacterId,
+        inviterCharId: msg.inviterCharId,
+        accept: false,
+        isTimeout: true
+      });
+      window.addChat?.(`⌛ [파티 초대 만료] 10초 동안 응답이 없어 '${msg.inviterName}'님의 파티 초대창을 자동으로 닫았습니다.`, 'log-sys');
+    }
+  }, 10000);
 };
 
 window.respondPartyInvite = function(inviterCharId, accept) {
+  clearPartyInviteTimers();
   const pop = document.getElementById('party-invite-popup');
   if (pop) pop.style.display = 'none';
+  if (window.isAutoAttack && typeof player !== 'undefined' && player) {
+    player.manualMoving = false;
+  }
   sendCentralWsPacket({
     type: 'PARTY_INVITE_RESP',
     charId: activeCharacterId,
@@ -1998,23 +2062,147 @@ window.quickSupplyMercPotions = function() {
   if (!mercenary.hired) return;
   let supplied = 0;
   ['C_P01', 'C_P02', 'C_P03', 'C_P04', 'C_P05'].forEach(pId => {
-    const pIdx = player.inventory.findIndex(it => it && it.type === pId && it.qty > 0);
-    if (pIdx > -1) {
-      const moveCnt = Math.min(player.inventory[pIdx].qty, 5);
+    for (let i = 0; i < player.inventory.length; i++) {
+      const it = player.inventory[i];
+      if (!it || it.type !== pId || it.qty <= 0) continue;
+      const moveCnt = Math.min(it.qty, pId === 'C_P05' ? 3 : 15);
       if (giveItemToMerc(pId, moveCnt)) {
-        player.inventory[pIdx].qty -= moveCnt;
-        if (player.inventory[pIdx].qty <= 0) player.inventory[pIdx] = null;
+        it.qty -= moveCnt;
+        if (it.qty <= 0) player.inventory[i] = null;
         supplied += moveCnt;
+        break;
       }
     }
   });
   if (supplied > 0) {
-    window.addChat(`🧪 [물약 자동 보급] 플레이어 가방에서 물약 ${supplied}개를 용병 인벤토리로 보급했습니다!`, 'log-sys');
+    window.addChat(`🧪 [물약 자동 보급] 플레이어 가방에서 물약 ${supplied}개를 가져와 용병 가방으로 보급했습니다!`, 'log-sys');
     renderHotbarSlots();
     if (!document.getElementById('inventory-ui').classList.contains('hidden')) renderInventory();
     window.renderMercUI();
+    window.triggerAutoSave?.('merc_supply_pot', false);
   } else {
-    window.addChat(`⚠️ 플레이어 가방에 전달할 물약이 없습니다.`, 'log-hit');
+    window.addChat(`⚠️ 플레이어 가방에 용병에게 전달할 물약이 없거나 용병 가방이 가득 찼습니다.`, 'log-hit');
+  }
+};
+
+// 🎁 플레이어 가방에 있는 미장착 장비 중 현재 용병 착용 장비보다 더 좋은 장비를 모두 가져와 즉시 장착!
+window.quickSupplyMercBestEquipFromPlayer = function() {
+  if (!mercenary.hired) return;
+  window.migrateAndNormalizeEquip(mercenary.equip, mercenary.inventory);
+  const playerEquipped = new Set(Object.values(player.equip || {}).filter(v => v !== null && v !== undefined).map(Number));
+  const suppliedNames = [];
+
+  const singleSlots = ['weapon', 'shield', 'helmet', 'tshirt', 'armor', 'cloak', 'gloves', 'belt', 'boots', 'necklace'];
+  singleSlots.forEach(slotKey => {
+    if (slotKey === 'shield' && mercenary.class !== 'knight') return;
+    const curMercEqIdx = mercenary.equip[slotKey];
+    const curMercInst = (curMercEqIdx !== null && curMercEqIdx !== undefined) ? mercenary.inventory[curMercEqIdx] : null;
+    let bestScore = curMercInst ? getEquipItemPowerScore(curMercInst, mercenary.class, 'mercenary') : -1;
+    let bestPlayerInvIdx = -1;
+
+    player.inventory.forEach((inst, pIdx) => {
+      if (!inst || playerEquipped.has(pIdx)) return;
+      const def = window.itemDict?.[inst.type];
+      if (!def || !isItemMatchingSlot(def, slotKey) || !canMercEquipItem(def)) return;
+      const sc = getEquipItemPowerScore(inst, mercenary.class, 'mercenary');
+      if (sc > bestScore + 0.2) {
+        bestScore = sc;
+        bestPlayerInvIdx = pIdx;
+      }
+    });
+
+    if (bestPlayerInvIdx > -1) {
+      const winInst = player.inventory[bestPlayerInvIdx];
+      const winDef = window.itemDict?.[winInst.type];
+      if (curMercEqIdx !== null && curMercEqIdx !== undefined && mercenary.inventory[curMercEqIdx]) {
+        const oldMercInst = mercenary.inventory[curMercEqIdx];
+        const isUnupgradedStarter = oldMercInst.isMercStarter && (!oldMercInst.plus || oldMercInst.plus <= 0);
+        // 기존 장비가 기본 무상 지급품이면 덮어쓰고, 플레이어가 준 장비라면 플레이어 가방 해당 자리와 맞교환!
+        player.inventory[bestPlayerInvIdx] = isUnupgradedStarter ? null : oldMercInst;
+        mercenary.inventory[curMercEqIdx] = { ...winInst, qty: 1 };
+      } else {
+        let emptyMercIdx = mercenary.inventory.findIndex(x => x === null);
+        if (emptyMercIdx === -1) {
+          // 빈 슬롯이 없으면 미장착 기본 스타터 아이템 슬롯을 찾아 교체
+          const mercEqSetNow = new Set(Object.values(mercenary.equip).filter(v => v !== null && v !== undefined).map(Number));
+          emptyMercIdx = mercenary.inventory.findIndex((x, idx) => x && x.isMercStarter && !mercEqSetNow.has(idx));
+        }
+        if (emptyMercIdx > -1) {
+          player.inventory[bestPlayerInvIdx] = null;
+          mercenary.inventory[emptyMercIdx] = { ...winInst, qty: 1 };
+          mercenary.equip[slotKey] = emptyMercIdx;
+        } else {
+          return;
+        }
+      }
+      if (winDef) {
+        suppliedNames.push(`${winInst.plus > 0 ? '+' + winInst.plus + ' ' : ''}${winDef.name}`);
+      }
+    }
+  });
+
+  // 쌍귀걸이(earring1, earring2) 및 쌍반지(ring1, ring2) 비교 및 보급
+  [['earring1', 'earring2', '귀걸이'], ['ring1', 'ring2', '반지']].forEach(([s1, s2, typeKeyword]) => {
+    [s1, s2].forEach(slotKey => {
+      const curMercEqIdx = mercenary.equip[slotKey];
+      const curMercInst = (curMercEqIdx !== null && curMercEqIdx !== undefined) ? mercenary.inventory[curMercEqIdx] : null;
+      let bestScore = curMercInst ? getEquipItemPowerScore(curMercInst, mercenary.class, 'mercenary') : -1;
+      let bestPlayerInvIdx = -1;
+
+      player.inventory.forEach((inst, pIdx) => {
+        if (!inst || playerEquipped.has(pIdx)) return;
+        const def = window.itemDict?.[inst.type];
+        if (!def || !def.type?.includes(typeKeyword)) return;
+        const sc = getEquipItemPowerScore(inst, mercenary.class, 'mercenary');
+        if (sc > bestScore + 0.2) {
+          bestScore = sc;
+          bestPlayerInvIdx = pIdx;
+        }
+      });
+
+      if (bestPlayerInvIdx > -1) {
+        const winInst = player.inventory[bestPlayerInvIdx];
+        const winDef = window.itemDict?.[winInst.type];
+        if (curMercEqIdx !== null && curMercEqIdx !== undefined && mercenary.inventory[curMercEqIdx]) {
+          const oldMercInst = mercenary.inventory[curMercEqIdx];
+          const isUnupgradedStarter = oldMercInst.isMercStarter && (!oldMercInst.plus || oldMercInst.plus <= 0);
+          player.inventory[bestPlayerInvIdx] = isUnupgradedStarter ? null : oldMercInst;
+          mercenary.inventory[curMercEqIdx] = { ...winInst, qty: 1 };
+        } else {
+          const emptyMercIdx = mercenary.inventory.findIndex(x => x === null);
+          if (emptyMercIdx > -1) {
+            player.inventory[bestPlayerInvIdx] = null;
+            mercenary.inventory[emptyMercIdx] = { ...winInst, qty: 1 };
+            mercenary.equip[slotKey] = emptyMercIdx;
+          } else {
+            return;
+          }
+        }
+        if (winDef) {
+          suppliedNames.push(`${winInst.plus > 0 ? '+' + winInst.plus + ' ' : ''}${winDef.name}`);
+        }
+      }
+    });
+  });
+
+  // 용병 가방 내부에 이미 있던 더 좋은 장비도 함께 최적 장착
+  const bagUpgrades = autoEquipMercBestItems(false);
+  bagUpgrades.forEach(nm => {
+    if (!suppliedNames.includes(nm)) suppliedNames.push(nm);
+  });
+
+  syncMercStats(false);
+  window.updateMercHUD();
+  updateStatusHUD();
+  renderHotbarSlots();
+  if (!document.getElementById('inventory-ui').classList.contains('hidden')) renderInventory();
+  window.renderMercUI();
+
+  if (suppliedNames.length > 0) {
+    window.addChat(`⚔️ [용병 아이템보급 완료] 플레이어 가방에서 현재 용병 장비보다 우수한 장비 ${suppliedNames.length}종(${suppliedNames.join(', ')})을 가져와 장착했습니다!`, 'log-kill');
+    window.triggerAutoSave?.('merc_supply_equip', true);
+  } else {
+    window.addChat(`ℹ️ [용병 아이템보급] 플레이어 가방에 현재 용병의 착용 장비보다 더 좋은(${MERC_CLASS_META[mercenary.class]?.roleName || '용병'} 착용 가능) 장비가 없습니다.`, 'log-sys');
   }
 };
 
@@ -2128,8 +2316,9 @@ window.renderMercUI = function() {
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
         <span style="font-size:10px; color:#facc15; font-weight:bold;">🎒 용병 가방 (터치:상세 / 더블터치:장착)</span>
         <div style="display:flex; gap:3px;">
-          <button class="shop-buy-btn" style="padding:2px 4px; font-size:9px; background:#065f46;" onclick="sortMercInventory()">정렬</button>
-          <button class="shop-buy-btn" style="padding:2px 4px; font-size:9px; background:#15803d;" onclick="quickSupplyMercPotions()">물약보급</button>
+          <button class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#065f46;" onclick="sortMercInventory()">정렬</button>
+          <button class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#1d4ed8; border-color:#60a5fa;" onclick="quickSupplyMercBestEquipFromPlayer()" title="플레이어 가방에서 현재 용병 장비보다 좋은 장비를 모두 가져와 자동 장착">아이템보급</button>
+          <button class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#15803d;" onclick="quickSupplyMercPotions()" title="플레이어 가방에서 물약 보급">물약보급</button>
         </div>
       </div>
       ${invGridHtml}
@@ -2224,18 +2413,22 @@ function useMercPotionIndex(mercIdx) {
 
   if (def.healHp) {
     mercenary.lastHpPotionTime = now;
-    mercenary.hp = Math.min(mercenary.maxHp, mercenary.hp + def.healHp);
-    floatingTexts.push({ x: mercenary.x, y: mercenary.y - 45, text: `+${def.healHp} HP`, color: 0x4ade80, life: 28 });
+    const pctBonus = inst.type === 'C_P02' ? Math.floor((mercenary.maxHp || 300) * 0.14) : Math.floor((mercenary.maxHp || 300) * 0.08);
+    const totalHealHp = def.healHp + pctBonus;
+    mercenary.hp = Math.min(mercenary.maxHp, mercenary.hp + totalHealHp);
+    floatingTexts.push({ x: mercenary.x, y: mercenary.y - 45, text: `+${totalHealHp} HP`, color: 0x4ade80, life: 28 });
     activeEffects.push({ type: 'potion', subType: 'hp', x: mercenary.x, y: mercenary.y, targetRef: mercenary, life: 30, maxLife: 30, skillName: def.name || '체력 물약' });
-    window.broadcastMultiplayerActionFx?.('potion', { subType: 'hp', isMerc: true, x: Math.round(mercenary.x), y: Math.round(mercenary.y), amount: def.healHp, skillName: def.name || '체력 물약' });
+    window.broadcastMultiplayerActionFx?.('potion', { subType: 'hp', isMerc: true, x: Math.round(mercenary.x), y: Math.round(mercenary.y), amount: totalHealHp, skillName: def.name || '체력 물약' });
   }
   if (def.healMp) {
     mercenary.lastMpPotionTime = now;
-    mercenary.mp = Math.min(mercenary.maxMp, mercenary.mp + def.healMp);
+    const pctMpBonus = inst.type === 'C_P04' ? Math.floor((mercenary.maxMp || 150) * 0.14) : Math.floor((mercenary.maxMp || 150) * 0.08);
+    const totalHealMp = def.healMp + pctMpBonus;
+    mercenary.mp = Math.min(mercenary.maxMp, mercenary.mp + totalHealMp);
     if (mercenary.mp / mercenary.maxMp > 0.15) mercenary.manaRechargeWait = false;
-    floatingTexts.push({ x: mercenary.x, y: mercenary.y - 45, text: `+${def.healMp} MP`, color: 0x60a5fa, life: 28 });
+    floatingTexts.push({ x: mercenary.x, y: mercenary.y - 45, text: `+${totalHealMp} MP`, color: 0x60a5fa, life: 28 });
     activeEffects.push({ type: 'potion', subType: 'mp', x: mercenary.x, y: mercenary.y, targetRef: mercenary, life: 30, maxLife: 30, skillName: def.name || '마나 물약' });
-    window.broadcastMultiplayerActionFx?.('potion', { subType: 'mp', isMerc: true, x: Math.round(mercenary.x), y: Math.round(mercenary.y), amount: def.healMp, skillName: def.name || '마나 물약' });
+    window.broadcastMultiplayerActionFx?.('potion', { subType: 'mp', isMerc: true, x: Math.round(mercenary.x), y: Math.round(mercenary.y), amount: totalHealMp, skillName: def.name || '마나 물약' });
   }
   if (inst.type === 'C_P05' || def.type === '버프물약') {
     const addDur = ((def.dur || 600) * 1000);

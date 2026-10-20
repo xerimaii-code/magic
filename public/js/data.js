@@ -157,11 +157,11 @@ export const GameDB = {
     HUMAN_WARRIOR: {
       key: "knight", name: "인간전사", icon: "🛡️", mainStat: "STR",
       str: 13, dex: 3, int: 1, con: 3,
-      baseHp: 240, baseMp: 95, hpPerLv: 22, mpPerLv: 13, hpPerCon: 11, mpPerInt: 10,
-      baseMDef: 6, mDefPerLv: 1.0,
-      atkMult: 1.05, magicMult: 0.2, attackRange: 64, baseSpeed: 1.90,
+      baseHp: 280, baseMp: 105, hpPerLv: 27, mpPerLv: 13, hpPerCon: 14, mpPerInt: 10,
+      baseMDef: 9, mDefPerLv: 1.25,
+      atkMult: 1.12, magicMult: 0.2, attackRange: 66, baseSpeed: 1.92,
       statPerLv: 3, resetUnlockLv: 50, resetStepLv: 50,
-      desc: "높은 체력과 근접 방어력, 단일·광역 검술에 특화된 최전방 클래스"
+      desc: "높은 체력과 근접 방어력, 방어 버프 및 단일·광역 검술에 특화된 최전방 클래스"
     },
     ELF_ARCHER: {
       key: "ranger", name: "엘프궁수", icon: "🏹", mainStat: "DEX",
@@ -383,10 +383,10 @@ export const GameDB = {
       { id: "AC_R05", name: "절대 반지", type: "반지", reqLv: 150, def: 10, mDef: 32, effect: "마방+32 · 올스탯+4 · 치명+4%", bonusStats: { STR: 4, DEX: 4, INT: 4, CON: 4, crit: 4 }, price: 30000 }
     ],
     Consumables: [
-      { id: "C_P01", name: "하급 체력 물약", type: "물약", healHp: 95, price: 30, effect: "HP +95 회복", cool: 0.5 },
-      { id: "C_P02", name: "상급 체력 물약", type: "물약", healHp: 330, price: 120, effect: "HP +330 회복", cool: 0.5 },
-      { id: "C_P03", name: "하급 마나 물약", type: "물약", healMp: 60, price: 40, effect: "MP +60 회복", cool: 0.5 },
-      { id: "C_P04", name: "상급 마나 물약", type: "물약", healMp: 185, price: 150, effect: "MP +185 회복", cool: 0.5 },
+      { id: "C_P01", name: "하급 체력 물약", type: "물약", healHp: 185, price: 30, effect: "HP +185 (+최대HP 8%) 회복", cool: 0.5 },
+      { id: "C_P02", name: "상급 체력 물약", type: "물약", healHp: 520, price: 120, effect: "HP +520 (+최대HP 14%) 회복", cool: 0.5 },
+      { id: "C_P03", name: "하급 마나 물약", type: "물약", healMp: 120, price: 40, effect: "MP +120 (+최대MP 8%) 회복", cool: 0.5 },
+      { id: "C_P04", name: "상급 마나 물약", type: "물약", healMp: 320, price: 150, effect: "MP +320 (+최대MP 14%) 회복", cool: 0.5 },
       { id: "C_P05", name: "용사의 비약", type: "버프물약", price: 300, dur: 600, atkBoostPct: 12, speedBoostPct: 8, effect: "10분간 공격력+12% · 공속+8%", cool: 0.5 },
       { id: "S_RE01", name: "귀환 주문서", type: "주문서", price: 100, effect: "현재 지역 안전지대로 즉시 귀환", cool: 2 },
       { id: "S_WE01", name: "무기 마법 주문서", type: "주문서", price: 1500, safeLimit: 6, effect: "무기 강화 (+6까지 안전)", cool: 0 },
@@ -415,14 +415,14 @@ export const GameDB = {
       { id: "M04", circle: 1, reqLv: 4, npcLearn: true, learnGold: 200, name: "윈드 컷", type: "공격", range: "광역", mp: 8,  cool: 1.6, mult: 1.25, maxTargets: 3, effect: "마공 125% 칼바람 (광역 3명)", dur: 0 },
       { id: "M05", circle: 1, reqLv: 3, npcLearn: true, learnGold: 150, name: "라이트", type: "버프", buffKey: "LIGHT", bonusHit: 5, bonusMDef: 5, allyCast: true, range: "아군/본인", mp: 4,  cool: 2.0, effect: "대상(본인/용병/타플레이어) 명중률 +5% · 마법방어 +5 증가 (600초)", dur: 600 },
       { id: "M06", circle: 1, reqLv: 5, npcLearn: true, learnGold: 250, name: "쉴드", type: "버프", buffKey: "SHIELD", bonusDef: 8, bonusMDef: 8, allyCast: true, range: "아군/본인", mp: 10, cool: 3.5, effect: "대상(본인/용병/타플레이어) 물리·마법 방어력 +8 (300초)", dur: 300 },
-      { id: "M07", circle: 1, reqLv: 4, npcLearn: true, learnGold: 250, name: "힐링", type: "힐링", allyCast: true, range: "아군/본인", mp: 10, cool: 1.8, healFixed: 95, effect: "대상(본인/용병/타플레이어)의 HP를 즉시 회복", dur: 0 },
+      { id: "M07", circle: 1, reqLv: 4, npcLearn: true, learnGold: 250, name: "힐링", type: "힐링", allyCast: true, range: "아군/본인", mp: 10, cool: 1.6, healFixed: 220, effect: "대상(본인/용병/타플레이어)의 HP를 즉시 대량 회복 (기본 220 + 지능·최대HP 비례)", dur: 0 },
       { id: "M08", circle: 1, reqLv: 6, npcLearn: true, learnGold: 300, name: "텔레포트", type: "유틸", range: "본인", mp: 10, cool: 1.5, effect: "주변 안전 위치로 공간 도약", dur: 0 },
       // 2서클 (M09 ~ M16)
       { id: "M09", circle: 2, reqLv: 10, npcLearn: true, learnGold: 600, name: "파이어 볼", type: "공격", range: "광역", mp: 14, cool: 2.2, mult: 1.90, maxTargets: 5, effect: "마공 190% 화염 폭발 (광역 5명)", dur: 0 },
       { id: "M10", circle: 2, reqLv: 9,  npcLearn: true, learnGold: 500, name: "콜드 빔", type: "공격", range: "단일", mp: 12, cool: 1.5, mult: 2.05, effect: "마공 205% 극저온 냉기 광선", dur: 0 },
       { id: "M11", circle: 2, reqLv: 10, npcLearn: true, learnGold: 550, name: "라이트닝", type: "공격", skyDrop: true, range: "단일", mp: 14, cool: 1.8, mult: 2.25, effect: "마공 225% 하늘에서 내리꽂히는 콜라이트닝 낙뢰 강타", dur: 0 },
       { id: "M12", circle: 2, reqLv: 11, npcLearn: true, learnGold: 500, name: "커스 포이즌", type: "디버프", range: "단일", mp: 10, cool: 3.2, mult: 1.65, effect: "마공 165% 맹독 저주 (15초)", dur: 15 },
-      { id: "M13", circle: 2, reqLv: 12, npcLearn: true, learnGold: 700, name: "그레이트 힐", type: "힐링", allyCast: true, range: "아군/본인", mp: 20, cool: 2.2, healFixed: 225, effect: "고위 성마법으로 대상(본인/용병/타플레이어) HP 대량 회복", dur: 0 },
+      { id: "M13", circle: 2, reqLv: 12, npcLearn: true, learnGold: 700, name: "그레이트 힐", type: "힐링", allyCast: true, range: "아군/본인", mp: 20, cool: 2.0, healFixed: 480, effect: "고위 성마법으로 대상(본인/용병/타플레이어) HP 대폭 회복 (기본 480 + 지능·최대HP 비례)", dur: 0 },
       { id: "M14", circle: 2, reqLv: 12, npcLearn: true, learnGold: 650, name: "인챈트 스탯", type: "버프", buffKey: "ENCHANT_STAT", bonusAllStat: 2, allyCast: true, range: "아군/본인", mp: 25, cool: 4.0, effect: "대상(본인/용병/타플레이어) STR, DEX, INT +2 (300초)", dur: 300 },
       { id: "M15", circle: 2, reqLv: 13, npcLearn: true, learnGold: 650, name: "멘탈 포커스", type: "버프", buffKey: "MENTAL_FOCUS", bonusMpRegen: 8, allyCast: true, range: "아군/본인", mp: 20, cool: 5.0, effect: "대상 마나 자연 회복량 +8 (300초)", dur: 300 },
       { id: "M16", circle: 2, reqLv: 11, npcLearn: true, learnGold: 500, name: "블라인드", type: "디버프", range: "단일", mp: 14, cool: 3.5, mult: 1.45, effect: "암흑 구체 + 적 명중률 감소 (10초)", dur: 10 },
@@ -472,7 +472,7 @@ export const GameDB = {
       { id: "AS5", circle: 0, reqLv: 28, npcLearn: true, learnGold: 800, name: "데들리 포커스", type: "패시브", range: "-", mp: 0, cool: 0, bonusCritDmgPct: 32, bonusArmorPen: 10, effect: "[요구 Lv.28] 치명타 피해 +32%, 방어관통 +10% 상시 증가", dur: -1 },
       { id: "A04", circle: 1, reqLv: 1,  npcLearn: true, learnGold: 0,   name: "파이어 샷", type: "공격", range: "단일", mp: 6,  cool: 1.2, mult: 1.70, effect: "물공 170% 화염 화살 사격 + 화상(3초)", dur: 3 },
       { id: "AS2", circle: 1, reqLv: 1,  npcLearn: true, learnGold: 0,   name: "더블 샷", type: "액티브", range: "단일", mp: 9,  cool: 1.5, mult: 1.18, hits: 2, effect: "연속 2회 초고속 사격 (118% x 2타 = 236%)", dur: 0 },
-      { id: "A01", circle: 1, reqLv: 3,  npcLearn: true, learnGold: 200, name: "네이처스 터치", type: "힐링", allyCast: true, range: "아군/본인", mp: 10, cool: 1.8, healFixed: 150, effect: "자연의 치유력으로 대상(본인/용병/타플레이어) HP 즉시 대량 회복", dur: 0 },
+      { id: "A01", circle: 1, reqLv: 3,  npcLearn: true, learnGold: 200, name: "네이처스 터치", type: "힐링", allyCast: true, range: "아군/본인", mp: 10, cool: 1.6, healFixed: 310, effect: "자연의 치유력으로 대상(본인/용병/타플레이어) HP 즉시 대량 회복 (기본 310 + 민첩·최대HP 비례)", dur: 0 },
       { id: "A02", circle: 1, reqLv: 4,  npcLearn: true, learnGold: 200, name: "인탱글", type: "디버프", range: "단일", mp: 10, cool: 3.5, mult: 1.75, stunSec: 2.2, defDown: true, effect: "덩굴 속박 물공 175% + 2.2초 속박 및 방어약화", dur: 4 },
       { id: "A03", circle: 1, reqLv: 5,  npcLearn: true, learnGold: 250, name: "이글 아이", type: "버프", buffKey: "EAGLE_EYE", bonusRange: 65, bonusHit: 8, bonusCrit: 6, bonusAtk: 10, allyCast: true, range: "아군/본인", mp: 14, cool: 3.5, effect: "사거리+65 · 명중+8% · 치명+6% · 공격력+10 (300초)", dur: 300 },
       { id: "A05", circle: 1, reqLv: 6,  npcLearn: true, learnGold: 250, name: "윈드 워크", type: "버프", buffKey: "WIND_WALK", speedPct: 25, atkSpeedPct: 12, allyCast: true, range: "아군/본인", mp: 12, cool: 3.5, effect: "대상 이동속도 25% · 공격속도 12% 증가 (300초)", dur: 300 },
@@ -492,18 +492,20 @@ export const GameDB = {
     ],
     Warrior: [
       // 패시브(0서클) & 1서클
-      { id: "W01", circle: 0, reqLv: 1,  npcLearn: true, learnGold: 0,   name: "소드 마스터리", type: "패시브", range: "-", mp: 0, cool: 0, reqWeapon: "sword", bonusAtk: 12, bonusHit: 3, effect: "[요구 Lv.1] 검 착용 시 물리공격력 +12, 명중 +3% 상시 증가", dur: -1 },
-      { id: "W03", circle: 0, reqLv: 12, npcLearn: true, learnGold: 300, name: "디펜스 오라", type: "패시브", range: "-", mp: 0, cool: 0, bonusDef: 8, bonusMDef: 6, bonusBlock: 6, effect: "[요구 Lv.12] 물리방어 +8, 마법방어 +6, 방패 블록률 +6% 상시 증가", dur: -1 },
-      { id: "W08", circle: 0, reqLv: 28, npcLearn: true, learnGold: 800, name: "터프니스", type: "패시브", range: "-", mp: 0, cool: 0, bonusMaxHpPct: 18, bossDmgReducePct: 5, effect: "[요구 Lv.28] 최대 HP +18%, 보스 피격 피해 -5% 상시 적용", dur: -1 },
-      { id: "W02", circle: 1, reqLv: 1,  npcLearn: true, learnGold: 0,   name: "배쉬", type: "액티브", range: "단일", mp: 8,  cool: 2.2, mult: 1.75, stunSec: 1.2, effect: "물공 175% 강타 + 기절 1.2초", dur: 0 },
-      { id: "W04", circle: 1, reqLv: 1,  npcLearn: true, learnGold: 0,   name: "실드 스트라이크", type: "액티브", range: "단일", mp: 12, cool: 3.2, mult: 1.55, stunSec: 2.0, reqShield: true, effect: "방패 장착 시 물공 155% + 기절 2초", dur: 0 },
-      // 2서클 (W05 ~ W07)
-      { id: "W05", circle: 2, npcLearn: false, dropMinLv: 15, dropMaxLv: 85, name: "휠윈드", type: "액티브", range: "광역", mp: 22, cool: 4.0, mult: 1.25, hits: 3, maxTargets: 5, effect: "주변 광역 회전베기 물공 125% x 3타", dur: 0 },
-      { id: "W06", circle: 2, npcLearn: false, dropMinLv: 22, dropMaxLv: 95, name: "레이지", type: "버프", buffKey: "RAGE", atkMultPct: 32, defPenaltyPct: 18, range: "본인", mp: 0, hpCostPct: 6, cool: 14.0, effect: "HP 6% 소모, 물공 32% 증가 (35초)", dur: 35 },
-      { id: "W07", circle: 2, npcLearn: false, dropMinLv: 20, dropMaxLv: 90, name: "차지", type: "액티브", range: "단일", mp: 16, cool: 4.5, mult: 2.10, dash: true, stunSec: 1.5, effect: "대상에게 즉시 돌진 타격(210%) + 기절 1.5초", dur: 0 },
+      { id: "W01", circle: 0, reqLv: 1,  npcLearn: true, learnGold: 0,   name: "소드 마스터리", type: "패시브", range: "-", mp: 0, cool: 0, reqWeapon: "sword", bonusAtk: 15, bonusHit: 4, effect: "[요구 Lv.1] 검 착용 시 물리공격력 +15, 명중 +4% 상시 증가", dur: -1 },
+      { id: "W03", circle: 0, reqLv: 12, npcLearn: true, learnGold: 300, name: "디펜스 오라", type: "패시브", range: "-", mp: 0, cool: 0, bonusDef: 12, bonusMDef: 10, bonusBlock: 8, effect: "[요구 Lv.12] 물리방어 +12, 마법방어 +10, 방패 블록률 +8% 상시 증가", dur: -1 },
+      { id: "W08", circle: 0, reqLv: 28, npcLearn: true, learnGold: 800, name: "터프니스", type: "패시브", range: "-", mp: 0, cool: 0, bonusMaxHpPct: 20, bossDmgReducePct: 8, effect: "[요구 Lv.28] 최대 HP +20%, 보스 피격 피해 -8% 상시 적용", dur: -1 },
+      { id: "W02", circle: 1, reqLv: 1,  npcLearn: true, learnGold: 0,   name: "배쉬", type: "액티브", range: "단일", mp: 8,  cool: 2.0, mult: 1.85, stunSec: 1.3, effect: "물공 185% 강타 + 기절 1.3초", dur: 0 },
+      { id: "W04", circle: 1, reqLv: 1,  npcLearn: true, learnGold: 0,   name: "실드 스트라이크", type: "액티브", range: "단일", mp: 12, cool: 3.0, mult: 1.65, stunSec: 2.0, reqShield: true, effect: "방패 장착 시 물공 165% + 기절 2초", dur: 0 },
+      { id: "W11", circle: 1, reqLv: 5,  npcLearn: true, learnGold: 250, name: "아이언 스킨", type: "버프", buffKey: "IRON_SKIN", bonusDef: 16, bonusMDef: 12, dmgReducePct: 8, allyCast: true, range: "아군/본인", mp: 12, cool: 4.0, effect: "강철 피부로 물리방어+16 · 마법방어+12 · 받는 피해 감쇄+8% (300초)", dur: 300 },
+      // 2서클 (W05 ~ W07, W12)
+      { id: "W05", circle: 2, npcLearn: false, dropMinLv: 15, dropMaxLv: 85, name: "휠윈드", type: "액티브", range: "광역", mp: 22, cool: 3.8, mult: 1.32, hits: 3, maxTargets: 5, effect: "주변 광역 회전베기 물공 132% x 3타", dur: 0 },
+      { id: "W06", circle: 2, npcLearn: false, dropMinLv: 22, dropMaxLv: 95, name: "레이지", type: "버프", buffKey: "RAGE", atkMultPct: 34, defPenaltyPct: 8, range: "본인", mp: 0, hpCostPct: 5, cool: 14.0, effect: "HP 5% 소모, 물공 34% 폭발 증가 (방어 감쇄 8%, 45초)", dur: 45 },
+      { id: "W07", circle: 2, npcLearn: false, dropMinLv: 20, dropMaxLv: 90, name: "차지", type: "액티브", range: "단일", mp: 16, cool: 4.2, mult: 2.20, dash: true, stunSec: 1.5, effect: "대상에게 즉시 돌진 타격(220%) + 기절 1.5초", dur: 0 },
+      { id: "W12", circle: 2, npcLearn: false, dropMinLv: 24, dropMaxLv: 115, name: "가디언 아머", type: "버프", buffKey: "GUARDIAN_ARMOR", bonusDef: 32, bonusMDef: 24, bonusBlock: 12, dmgReducePct: 15, bossDmgReducePct: 10, bonusMaxHpPct: 15, allyCast: true, range: "아군/본인", mp: 26, cool: 8.0, effect: "수호기사의 갑주로 방어+32 · 마방+24 · 블록+12% · 최대HP+15% · 피해감쇄+15% (240초)", dur: 240 },
       // 3서클 (W09 ~ W10)
-      { id: "W09", circle: 3, npcLearn: false, dropMinLv: 55, dropMaxLv: 999, name: "카운터 어택", type: "버프", buffKey: "COUNTER", range: "본인", mp: 22, cool: 7.5, effect: "5초간 다음 피격 무시 후 250% 치명 반격", dur: 5 },
-      { id: "W10", circle: 3, npcLearn: false, dropMinLv: 65, dropMaxLv: 999, name: "워크라이", type: "디버프", range: "광역", mp: 28, cool: 8.5, mult: 1.85, maxTargets: 6, defDown: true, effect: "전장의 포효 광역 185% + 적 방어력 약화(12초)", dur: 12 }
+      { id: "W09", circle: 3, npcLearn: false, dropMinLv: 55, dropMaxLv: 999, name: "카운터 어택", type: "버프", buffKey: "COUNTER", range: "본인", mp: 22, cool: 7.0, effect: "5초간 다음 피격 무시 후 260% 치명 반격", dur: 5 },
+      { id: "W10", circle: 3, npcLearn: false, dropMinLv: 65, dropMaxLv: 999, name: "워크라이", type: "디버프", range: "광역", mp: 28, cool: 8.0, mult: 1.95, maxTargets: 6, defDown: true, effect: "전장의 포효 광역 195% + 적 방어력 약화(12초)", dur: 12 }
     ]
   },
 

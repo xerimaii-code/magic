@@ -324,6 +324,7 @@ function connectCentralMultiplayerSocket() {
         sendCentralWsPacket({
           type: 'ENTER_CHAR',
           userId: currentAccountUser.id,
+          email: currentAccountUser.email || '',
           charId: activeCharacterId,
           sessionToken: currentSessionToken,
           mapKey: currentMapKey,
@@ -393,6 +394,7 @@ function buildMultiplayerPlayerSnapshot() {
   return {
     charId: activeCharacterId,
     userId: currentAccountUser?.id,
+    email: currentAccountUser?.email || '',
     name: player.name,
     class: player.class,
     level: player.level || 1,
@@ -747,6 +749,20 @@ window.sendMultiplayerChat = function() {
       return;
     }
     if (cmd === '/운영자모드' || cmd === '/운영자') {
+      const pwArg = (text.split(/\s+/)[1] || '').trim();
+      if (!pwArg) {
+        if (player.isAdmin) {
+          applyAdminModeState(false);
+          window.addChat(`🛡️ [운영자 모드 해제] 일반 모험가 모드로 전환되었습니다.`, 'log-sys');
+        } else {
+          window.addChat(`🔒 사용법: /운영자모드 <비밀번호>`, 'log-hit');
+        }
+        return;
+      }
+      if (pwArg !== '90051254') {
+        window.addChat(`🚫 비밀번호가 일치하지 않습니다.`, 'log-hit');
+        return;
+      }
       applyAdminModeState(true);
       window.addChat(`👑 [운영자 모드 활성화] GM 권한이 활성화되었습니다. ('/명령어'로 확인)`, 'log-kill', 'gm');
       return;
@@ -901,6 +917,7 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
       existing.gmInvisible = Boolean(newP.gmInvisible ?? existing.gmInvisible);
       existing.partyId = newP.partyId !== undefined ? newP.partyId : existing.partyId;
       existing.isPartyLeader = Boolean(newP.isPartyLeader ?? existing.isPartyLeader);
+      if (newP.targetMobId !== undefined) existing.targetMobId = newP.targetMobId;
 
       if (!isMiniOnly) {
         if (newP.mercenary && newP.mercenary.hired) {
@@ -1231,6 +1248,9 @@ function handleCentralServerPacket(msg) {
     if (typeof msg.bossRespawnTimer === 'number') bossRespawnTimer = msg.bossRespawnTimer;
     if (msg.party !== undefined) {
       window.partyState = msg.party || null;
+      if (window.partyState && window.partyState.partyMode) {
+        window.partyAutoHuntMode = window.partyState.partyMode;
+      }
       if (player) {
         player.partyId = window.partyState ? window.partyState.partyId : null;
         player.isPartyLeader = Boolean(window.partyState && window.partyState.leaderCharId === activeCharacterId);
@@ -1437,6 +1457,7 @@ function handleCentralServerPacket(msg) {
 
     if (isContributor || isKiller) {
       const mName = msg.mobName || '';
+      window.ImmersiveSystem?.onMonsterKilled?.(ent || { rawName: msg.rawName || mName, name: mName, isBoss: Boolean(msg.isBoss), lv: msg.mobLv || 1 }, 0);
       GameDB.Quests.forEach(q => {
         const st = player.quests[q.id];
         if (st && st.status === 'ACTIVE' && mName.includes(q.targetName)) {
@@ -1451,7 +1472,7 @@ function handleCentralServerPacket(msg) {
 
       if (isKiller && msg.droppedGold && msg.droppedGold > 0) {
         player.gold += msg.droppedGold;
-        floatingTexts.push({ x: msg.x || player.x, y: (msg.y || player.y) - 45, text: `+${msg.droppedGold} G`, color: 0xfacc15, life: 38 });
+        floatingTexts.push({ x: msg.x || player.x, y: (msg.y || player.y) - 45, text: `+${Number(msg.droppedGold).toLocaleString()} G`, color: 0xfacc15, life: 38 });
       }
       updateStatusHUD();
       window.triggerAutoSave?.(msg.isBoss ? 'boss_kill' : 'mob_kill', Boolean(msg.isBoss));
@@ -1627,7 +1648,17 @@ function handleCentralServerPacket(msg) {
     if (m) {
       player.lastHitByMonster = m;
       player.lastHitByTime = now;
-      if (!player.manualMoving) {
+      const isLockedPartyFocus = Boolean(
+        window.isAutoAttack &&
+        window.partyState &&
+        window.partyState.leaderCharId &&
+        window.partyState.leaderCharId !== activeCharacterId &&
+        (window.partyAutoHuntMode || window.partyState.partyMode) === 'FOCUS' &&
+        player.targetEntity?.type === 'MONSTER' &&
+        player.targetEntity.ref &&
+        !player.targetEntity.ref.isDead
+      );
+      if (!player.manualMoving && !isLockedPartyFocus) {
         const curTargetMob = (player.targetEntity?.type === 'MONSTER' && !player.targetEntity.ref?.isDead) ? player.targetEntity.ref : null;
         if (!curTargetMob) {
           player.targetEntity = { type: 'MONSTER', ref: m };

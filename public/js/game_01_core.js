@@ -463,6 +463,8 @@ const SKILL_SVG_PROFILES = {
   "레이지":         { c1: "#dc2626", c2: "#450a0a", bd: "#fca5a5", glyph: "rage", badge: "2" },
   "차지":           { c1: "#d97706", c2: "#451a03", bd: "#fde047", glyph: "charge", badge: "2" },
   "터프니스":       { c1: "#be123c", c2: "#4c0519", bd: "#fda4af", glyph: "heart", badge: "P" },
+  "아이언 스킨":     { c1: "#334155", c2: "#0f172a", bd: "#94a3b8", glyph: "shield", badge: "1" },
+  "가디언 아머":     { c1: "#0284c7", c2: "#082f49", bd: "#fde047", glyph: "immune_dome", badge: "2" },
   "카운터 어택":     { c1: "#7c3aed", c2: "#2e1065", bd: "#c4b5fd", glyph: "counter", badge: "3" },
   "워크라이":       { c1: "#c2410c", c2: "#431407", bd: "#fdba74", glyph: "roar", badge: "3" },
 
@@ -1263,9 +1265,9 @@ function ensureAllGameModals() {
         70% { transform: translate(-50%, -50%) scale(1.2); box-shadow: 0 0 0 8px rgba(74, 222, 128, 0); }
         100% { transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
       }
-      .rpg-overlay-modal { position:fixed !important; inset:0 !important; background:transparent !important; backdrop-filter:none !important; z-index:19999 !important; display:none; align-items:center !important; justify-content:center !important; padding:8px !important; }
+      .rpg-overlay-modal { position:fixed !important; inset:0 !important; width:100vw !important; height:100dvh !important; background:rgba(0,0,0,0.45) !important; backdrop-filter:none !important; z-index:25000 !important; display:none; align-items:center !important; justify-content:center !important; padding:8px !important; pointer-events:auto !important; }
       .rpg-overlay-modal.active-modal { display:flex !important; }
-      .rpg-modal-box { position:relative; background:#141210; border:2px solid #b45309; border-radius:10px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 0 35px #000; color:#fff; }
+      .rpg-modal-box { position:relative; width:min(92vw, 460px); height:min(86dvh, 820px); flex:0 0 auto; background:#141210; border:2px solid #b45309; border-radius:10px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 0 35px #000; color:#fff; }
       .rpg-close-floating { position:absolute; top:8px; right:8px; background:rgba(153,27,27,0.9); color:#fff; border:1px solid #f87171; border-radius:6px; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:12px; z-index:60; box-shadow:0 2px 6px #000; }
       .rpg-close-floating:hover { background:#dc2626; }
 
@@ -1561,11 +1563,11 @@ function ensureAllGameModals() {
   if (!wm) {
     wm = document.createElement('div');
     wm.id = 'world-map-ui';
-    document.body.appendChild(wm);
+    (document.getElementById('game-wrapper') || document.body).appendChild(wm);
   }
   wm.className = 'rpg-overlay-modal';
   wm.innerHTML = `
-    <div class="rpg-modal-box" style="height:90vh; aspect-ratio:768/1376; max-width:95vw;" onclick="event.stopPropagation()">
+    <div class="rpg-modal-box" style="width:min(92vw, 460px); height:min(86dvh, 820px); flex:0 0 auto;" onclick="event.stopPropagation()">
       <button class="rpg-close-floating" onclick="closeWorldMapUI()">✕ 닫기</button>
       <div id="world-map-bg-box" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden;">
         <img src="./map/worldmap.jpg" style="width:100%; height:100%; object-fit:fill; display:block; pointer-events:none; user-select:none;" />
@@ -1579,14 +1581,16 @@ function ensureAllGameModals() {
   if (!sm) {
     sm = document.createElement('div');
     sm.id = 'shire-map-ui';
-    document.body.appendChild(sm);
+    (document.getElementById('game-wrapper') || document.body).appendChild(sm);
   }
   sm.className = 'rpg-overlay-modal';
   sm.innerHTML = `
-    <div class="rpg-modal-box" style="height:90vh; aspect-ratio:768/1376; max-width:95vw;" onclick="event.stopPropagation()">
+    <div class="rpg-modal-box" style="width:min(92vw, 460px); height:min(86dvh, 820px); flex:0 0 auto;" onclick="event.stopPropagation()">
+      <div id="detail-map-title-badge" style="position:absolute; top:8px; left:10px; z-index:60; background:rgba(15,23,42,0.88); border:1px solid #facc15; border-radius:6px; padding:4px 10px; font-size:12px; font-weight:bold; color:#fde047; pointer-events:none; box-shadow:0 2px 6px rgba(0,0,0,0.85);">🗺️ 지역 상세 지도</div>
       <button class="rpg-close-floating" onclick="closeShireMapUI()">✕ 닫기</button>
       <div id="detail-map-canvas-wrap" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden;">
-        <img id="detail-map-img-el" src="./map/altria.jpg" onerror="this.src='./altria.jpg'" style="width:100%; height:100%; object-fit:fill; display:block; pointer-events:none; user-select:none;" />
+        <canvas id="detail-map-fallback-canvas" width="400" height="720" style="position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none;"></canvas>
+        <img id="detail-map-img-el" src="./map/altria.jpg" onerror="this.style.opacity='0'" onload="this.style.opacity='1'" style="position:relative; z-index:5; width:100%; height:100%; object-fit:fill; display:block; pointer-events:none; user-select:none; transition:opacity 0.15s;" />
         <div id="region-detail-overlay" style="position:absolute; inset:0; z-index:20;"></div>
       </div>
     </div>
@@ -1928,11 +1932,17 @@ window.openWorldMapUI = async function() {
   const modal = document.getElementById('world-map-ui');
   if (!modal) return;
 
+  const hostParent = document.fullscreenElement || document.webkitFullscreenElement || document.getElementById('game-wrapper') || document.body;
+  if (modal.parentElement !== hostParent) {
+    hostParent.appendChild(modal);
+  }
+
   window._mapModalOpenedAt = Date.now();
   renderWorldMapHotspots();
   modal.classList.remove('hidden');
   modal.classList.add('active-modal');
   modal.style.display = 'flex';
+  modal.style.zIndex = '25000';
 };
 
 window.closeWorldMapUI = function() {
@@ -2015,7 +2025,7 @@ function renderWorldMapHotspots() {
 }
 
 window.openRegionDetailMap = async function() {
-  if (window.isUiTouchDebounced?.('openRegionDetailMap', 320)) return;
+  if (window.isUiTouchDebounced?.('openRegionDetailMap', 240)) return;
   ensureAllGameModals();
   const mapData = HardcodedMapDB[currentMapKey];
   if (!mapData) return;
@@ -2028,13 +2038,36 @@ window.openRegionDetailMap = async function() {
   const ui = document.getElementById('shire-map-ui');
   if (!ui) return;
 
-  const { jpgUrls } = getRegionMapAssets(currentRegionKey);
+  const hostParent = document.fullscreenElement || document.webkitFullscreenElement || document.getElementById('game-wrapper') || document.body;
+  if (ui.parentElement !== hostParent) {
+    hostParent.appendChild(ui);
+  }
+
+  const { reg, jpgUrls } = getRegionMapAssets(currentRegionKey);
+  const titleBadge = document.getElementById('detail-map-title-badge');
+  if (titleBadge && reg) {
+    titleBadge.innerText = `🗺️ ${reg.name} (${reg.lvRange || '전 구간'}) · 터치하여 이동`;
+  }
+
+  const fbCanvas = document.getElementById('detail-map-fallback-canvas');
+  if (fbCanvas && typeof minimapOffscreenCanvas !== 'undefined' && minimapOffscreenCanvas) {
+    try {
+      const fbCtx = fbCanvas.getContext('2d');
+      fbCtx.clearRect(0, 0, fbCanvas.width, fbCanvas.height);
+      fbCtx.drawImage(minimapOffscreenCanvas, 0, 0, fbCanvas.width, fbCanvas.height);
+    } catch (e) {}
+  }
+
   const imgEl = document.getElementById('detail-map-img-el');
   if (imgEl) {
+    imgEl.style.opacity = '1';
     imgEl.src = jpgUrls[0];
     imgEl.onerror = () => {
-      if (jpgUrls[1] && imgEl.src !== jpgUrls[1]) imgEl.src = jpgUrls[1];
-      else imgEl.src = './altria.jpg';
+      if (jpgUrls[1] && !imgEl.src.endsWith(jpgUrls[1].replace('./', ''))) {
+        imgEl.src = jpgUrls[1];
+      } else {
+        imgEl.style.opacity = '0';
+      }
     };
   }
 
@@ -2044,6 +2077,7 @@ window.openRegionDetailMap = async function() {
   ui.classList.remove('hidden');
   ui.classList.add('active-modal');
   ui.style.display = 'flex';
+  ui.style.zIndex = '25000';
   renderRegionDetailOverlay();
 };
 

@@ -11,7 +11,9 @@ export const OptionState = {
   cameraStage: GameDB?.SystemConfig?.camera?.defaultStage || 2,
   cameraAutoZoom: GameDB?.SystemConfig?.camera?.autoZoomEnabled !== false,
   vibrationOn: false,
-  powerSaveOn: false
+  powerSaveOn: false,
+  keepScreenAwake: true,
+  questGuideArrow: true
 };
 
 export const GameOptions = OptionState;
@@ -89,7 +91,9 @@ export function getSerializedOptions() {
     cameraAutoZoom: Boolean(OptionState.cameraAutoZoom),
     lootGrade: Math.max(0, Math.min(4, Number(OptionState.lootGrade) || 0)),
     vibrationOn: Boolean(OptionState.vibrationOn),
-    powerSaveOn: Boolean(OptionState.powerSaveOn)
+    powerSaveOn: Boolean(OptionState.powerSaveOn),
+    keepScreenAwake: OptionState.keepScreenAwake !== false,
+    questGuideArrow: OptionState.questGuideArrow !== false
   };
 }
 
@@ -112,6 +116,9 @@ export function loadCharacterOptions(charRecordOrOpts) {
   if (typeof opts.lootGrade === 'number') OptionState.lootGrade = Math.max(0, Math.min(4, opts.lootGrade));
   if (typeof opts.vibrationOn === 'boolean') OptionState.vibrationOn = opts.vibrationOn;
   if (typeof opts.powerSaveOn === 'boolean') OptionState.powerSaveOn = opts.powerSaveOn;
+  if (typeof opts.keepScreenAwake === 'boolean') OptionState.keepScreenAwake = opts.keepScreenAwake;
+  if (typeof opts.questGuideArrow === 'boolean') OptionState.questGuideArrow = opts.questGuideArrow;
+  window.syncGameWakeLock?.();
 
   if (window.player) {
     window.player.options = getSerializedOptions();
@@ -166,13 +173,92 @@ export function initOptionSystem() {
     }
   };
 
+  // 💡 크롬 브라우저 전체화면 및 스마트폰 화면 꺼짐(절전모드) 방지 Wake Lock 제어기
+  let _wakeLockSentinel = null;
+  const isWakeLockSupported = () => Boolean(typeof navigator !== 'undefined' && 'wakeLock' in navigator && typeof navigator.wakeLock?.request === 'function');
+  window.isWakeLockSupported = isWakeLockSupported;
+
+  window.requestGameWakeLock = async function() {
+    if (!isWakeLockSupported() || !OptionState.keepScreenAwake) return false;
+    if (document.visibilityState !== 'visible') return false;
+    if (_wakeLockSentinel && !_wakeLockSentinel.released) return true;
+    try {
+      _wakeLockSentinel = await navigator.wakeLock.request('screen');
+      _wakeLockSentinel.addEventListener('release', () => {
+        if (OptionState.keepScreenAwake && document.visibilityState === 'visible') {
+          setTimeout(() => { window.requestGameWakeLock?.(); }, 400);
+        }
+      });
+      return true;
+    } catch (err) {
+      return false;
+    }
+  };
+
+  window.releaseGameWakeLock = async function() {
+    if (_wakeLockSentinel) {
+      try { await _wakeLockSentinel.release(); } catch (err) {}
+      _wakeLockSentinel = null;
+    }
+  };
+
+  window.syncGameWakeLock = function() {
+    if (!isWakeLockSupported()) return;
+    if (OptionState.keepScreenAwake) {
+      window.requestGameWakeLock();
+    } else {
+      window.releaseGameWakeLock();
+    }
+  };
+
+  window.toggleKeepScreenAwakeOption = async function(forceVal) {
+    if (!isWakeLockSupported()) {
+      window.addChat?.(`⚠️ 현재 브라우저/스마트폰 정책상 화면 항상 켜기(Wake Lock) 기능을 지원하지 않습니다.`, 'log-hit');
+      return;
+    }
+    OptionState.keepScreenAwake = typeof forceVal === 'boolean' ? forceVal : !OptionState.keepScreenAwake;
+    persistOptionPrefs();
+    if (OptionState.keepScreenAwake) {
+      await window.requestGameWakeLock();
+      window.addChat?.(`💡 [화면 항상 켜기 ON] 전체화면 및 자동사냥 중 화면 절전모드(꺼짐) 진입을 방지합니다.`, 'log-sys');
+    } else {
+      await window.releaseGameWakeLock();
+      window.addChat?.(`💡 [화면 항상 켜기 OFF] 기기 기본 절전모드 정책을 따릅니다.`, 'log-sys');
+    }
+    renderOptionUI();
+  };
+
+  if (isWakeLockSupported() && !window._wakeLockEventsBound) {
+    window._wakeLockEventsBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && OptionState.keepScreenAwake) {
+        window.requestGameWakeLock();
+      }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      if (OptionState.keepScreenAwake) {
+        window.requestGameWakeLock();
+      }
+    });
+    window.addEventListener('pointerdown', () => {
+      if (OptionState.keepScreenAwake && (!_wakeLockSentinel || _wakeLockSentinel.released)) {
+        window.requestGameWakeLock();
+      }
+    }, { passive: true });
+    window.syncGameWakeLock();
+  }
+
   window.toggleFullScreen = function() {
     try {
       if (!document.fullscreenElement && !document.webkitFullscreenElement) {
         const docEl = document.documentElement;
-        if (docEl.requestFullscreen) docEl.requestFullscreen();
-        else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
-        window.addChat?.(`🖥️ [화면 설정] 전체화면 모드로 전환되었습니다.`, 'log-sys');
+        const p = docEl.requestFullscreen ? docEl.requestFullscreen() : (docEl.webkitRequestFullscreen ? docEl.webkitRequestFullscreen() : null);
+        if (p && typeof p.then === 'function') {
+          p.then(() => { if (OptionState.keepScreenAwake) window.requestGameWakeLock?.(); }).catch(() => {});
+        } else if (OptionState.keepScreenAwake) {
+          window.requestGameWakeLock?.();
+        }
+        window.addChat?.(`🖥️ [화면 설정] 전체화면 모드로 전환되었습니다.${OptionState.keepScreenAwake && isWakeLockSupported() ? ' (절전방지 항상켜기 활성)' : ''}`, 'log-sys');
       } else {
         if (document.exitFullscreen) document.exitFullscreen();
         else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
@@ -207,6 +293,18 @@ export function initOptionSystem() {
       window.addChat?.(`🎥 [카메라 시야 배율] '${stInfo ? stInfo.name : stageNum + '단계'}' 시야로 설정되었습니다.`, 'log-sys');
     }
     persistOptionPrefs();
+    renderOptionUI();
+  };
+
+  window.toggleQuestGuideArrowOption = function(forceVal) {
+    OptionState.questGuideArrow = typeof forceVal === 'boolean' ? forceVal : !OptionState.questGuideArrow;
+    persistOptionPrefs();
+    window.addChat?.(
+      OptionState.questGuideArrow
+        ? `🧭 [퀘스트 방향 화살표 ON] 퀘스트 해당 지역에서 다음 목표(몬스터·NPC·던전) 방향을 연한 화살표로 안내합니다.`
+        : `🧭 [퀘스트 방향 화살표 OFF] 퀘스트 방향 안내 화살표를 숨깁니다.`,
+      'log-sys'
+    );
     renderOptionUI();
   };
 
@@ -348,6 +446,22 @@ export function renderOptionUI() {
           </button>
           <button class="shop-buy-btn" style="flex:0.85; background:#374151; border-color:#6b7280; padding:4px 5px; font-size:9.5px;" onclick="toggleFullScreen()">⛶ 전체화면</button>
         </div>
+        ${(typeof window.isWakeLockSupported === 'function' ? window.isWakeLockSupported() : ('wakeLock' in navigator)) ? `
+        <label style="display:flex; align-items:center; justify-content:space-between; gap:6px; background:#0c0e14; border:1px solid ${OptionState.keepScreenAwake ? '#34d399' : '#2d3748'}; border-radius:5px; padding:5px 7px; cursor:pointer; user-select:none;">
+          <div style="display:flex; align-items:center; gap:5px;">
+            <input type="checkbox" ${OptionState.keepScreenAwake ? 'checked' : ''} onchange="toggleKeepScreenAwakeOption(this.checked)" style="width:14px; height:14px; accent-color:#10b981; cursor:pointer; margin:0;">
+            <span style="font-size:9.5px; font-weight:bold; color:${OptionState.keepScreenAwake ? '#6ee7b7' : '#d1d5db'};">💡 화면 항상 켜기 (전체화면·자동사냥 절전방지)</span>
+          </div>
+          <span style="font-size:8.5px; color:${OptionState.keepScreenAwake ? '#4ade80' : '#9ca3af'}; font-weight:bold;">${OptionState.keepScreenAwake ? '켜짐' : '꺼짐'}</span>
+        </label>
+        ` : ''}
+        <label style="display:flex; align-items:center; justify-content:space-between; gap:6px; background:#0c0e14; border:1px solid ${OptionState.questGuideArrow !== false ? '#facc15' : '#2d3748'}; border-radius:5px; padding:5px 7px; cursor:pointer; user-select:none;">
+          <div style="display:flex; align-items:center; gap:5px;">
+            <input type="checkbox" ${OptionState.questGuideArrow !== false ? 'checked' : ''} onchange="toggleQuestGuideArrowOption(this.checked)" style="width:14px; height:14px; accent-color:#eab308; cursor:pointer; margin:0;">
+            <span style="font-size:9.5px; font-weight:bold; color:${OptionState.questGuideArrow !== false ? '#fde047' : '#d1d5db'};">🧭 퀘스트 해당지역 방향 화살표 연하게 표시</span>
+          </div>
+          <span style="font-size:8.5px; color:${OptionState.questGuideArrow !== false ? '#facc15' : '#9ca3af'}; font-weight:bold;">${OptionState.questGuideArrow !== false ? '켜짐' : '꺼짐'}</span>
+        </label>
       </div>
 
       <!-- 💎 자동사냥 장비 루팅 등급 -->

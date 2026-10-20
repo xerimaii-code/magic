@@ -28,12 +28,42 @@ window.onload = async () => {
   GameDB.Items.QuestItems.forEach(i => window.itemDict[i.id] = i);
 
   app = new PIXI.Application({ 
+    width: Math.max(wrapper?.clientWidth || 0, window.innerWidth || 360),
+    height: Math.max(wrapper?.clientHeight || 0, window.innerHeight || 640),
     resizeTo: wrapper, 
     backgroundColor: 0x0a0c10, 
     resolution: window.devicePixelRatio || 1, 
     autoDensity: true,
     powerPreference: "high-performance" 
   });
+
+  window.forceResizePixiApp = function() {
+    if (!app || !app.renderer) return;
+    const wrapEl = document.getElementById('game-wrapper') || wrapper;
+    const w = Math.max(wrapEl?.clientWidth || 0, window.innerWidth || 360);
+    const h = Math.max(wrapEl?.clientHeight || 0, window.innerHeight || 640);
+    if (w > 0 && h > 0) {
+      app.renderer.resize(w, h);
+      if (typeof app.resize === 'function' && (wrapEl?.clientWidth || 0) > 0 && (wrapEl?.clientHeight || 0) > 0) {
+        try { app.resize(); } catch (e) {}
+      }
+      if (cameraContainer && player && typeof currentWorldWidth === 'number' && typeof currentWorldHeight === 'number') {
+        const halfW = w / 2;
+        const halfH = h / 2;
+        const camX = currentWorldWidth > w
+          ? Math.max(halfW, Math.min(currentWorldWidth - halfW, player.x || 0))
+          : currentWorldWidth / 2;
+        const camY = currentWorldHeight > h
+          ? Math.max(halfH, Math.min(currentWorldHeight - halfH, player.y || 0))
+          : currentWorldHeight / 2;
+        cameraContainer.x = Math.round(halfW - camX);
+        cameraContainer.y = Math.round(halfH - camY);
+      }
+      if (window.MapChunkManager && player && typeof window.MapChunkManager.updateActiveChunks === 'function') {
+        window.MapChunkManager.updateActiveChunks(player.y || 0, true);
+      }
+    }
+  };
 
 
 
@@ -72,17 +102,44 @@ cameraContainer.addChild(window.bottomMagicCircleG);
   await loadCustomSprites();
 
   window.addEventListener('resize', () => {
-    if (app && wrapper) app.renderer.resize(wrapper.clientWidth, wrapper.clientHeight);
+    window.forceResizePixiApp?.();
     ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui'].forEach(id => {
       const el = document.getElementById(id);
       if (el && !el.classList.contains('hidden')) window.centerModalOnScreen?.(el);
     });
   });
 
-  mCanvas.addEventListener('click', (e) => {
-    e.stopPropagation();
-    window.openRegionDetailMap();
+  document.addEventListener('fullscreenchange', () => {
+    window.forceResizePixiApp?.();
+    setTimeout(() => window.forceResizePixiApp?.(), 80);
   });
+
+  if (typeof ResizeObserver !== 'undefined' && wrapper) {
+    const ro = new ResizeObserver(() => {
+      window.forceResizePixiApp?.();
+    });
+    ro.observe(wrapper);
+  }
+
+  let _lastMinimapOpenTs = 0;
+  const handleMinimapOpen = (e) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    const now = Date.now();
+    if (now - _lastMinimapOpenTs < 250) return;
+    _lastMinimapOpenTs = now;
+    window.openRegionDetailMap?.();
+  };
+  const minimapContainerEl = document.getElementById('minimap-container');
+  if (minimapContainerEl) {
+    minimapContainerEl.addEventListener('click', handleMinimapOpen);
+    minimapContainerEl.addEventListener('pointerup', handleMinimapOpen);
+  }
+  if (mCanvas) {
+    mCanvas.addEventListener('click', handleMinimapOpen);
+    mCanvas.addEventListener('pointerup', handleMinimapOpen);
+  }
 
   bindQuickSlotEvents();
   app.ticker.add(gameLoop);
@@ -118,13 +175,15 @@ window.startGame = function(selectedClass, customCharName = null, savedCharRecor
 
   player.inventory = Array(100).fill(null);
   player.equip = createEmptyEquipObj();
+  player.gmSpeedMult = 1;
   player.activeBuffs = {
     SHIELD: 0, WIND_WALK: 0, RAGE: 0, HASTE: 0, ELIXIR: 0,
     HOLY_WEAPON: 0, ENCHANT_STAT: 0, MENTAL_FOCUS: 0, MANA_SHIELD: 0,
     HOLY_WALK: 0, SHADOW_FANG: 0, IMMUNE: 0, ABSOLUTE_BARRIER: 0,
     ADV_SPIRIT: 0, SUMMON_GOLEM: 0, ARCHMAGE: 0, EAGLE_EYE: 0,
     LIGHT: 0, MERC_BLESS: 0,
-    ELVEN_GRACE: 0, NATURES_FURY: 0, SOUL_BARRIER: 0, COUNTER: 0
+    ELVEN_GRACE: 0, NATURES_FURY: 0, SOUL_BARRIER: 0, COUNTER: 0,
+    IRON_SKIN: 0, GUARDIAN_ARMOR: 0
   };
   mercenary.hired = false;
   mercenary.isDead = false;
@@ -174,7 +233,11 @@ window.startGame = function(selectedClass, customCharName = null, savedCharRecor
     document.getElementById('game-wrapper').style.display = 'flex';
   }
 
-  setTimeout(() => { if (app && wrapper) app.renderer.resize(wrapper.clientWidth, wrapper.clientHeight); }, 50);
+  window.forceResizePixiApp?.();
+  requestAnimationFrame(() => window.forceResizePixiApp?.());
+  setTimeout(() => window.forceResizePixiApp?.(), 50);
+  setTimeout(() => window.forceResizePixiApp?.(), 200);
+  setTimeout(() => window.forceResizePixiApp?.(), 450);
 
   const targetMap = savedCharRecord?.map_key || sysCfg.startMap || 'R01_sub1';
   const targetPos = (savedCharRecord && savedCharRecord.pos_x && savedCharRecord.pos_y)
@@ -204,7 +267,7 @@ function updateStatusHUD() {
   let expPercent = Math.min(100, Math.floor((player.exp / player.maxExp) * 100));
   document.getElementById('btm-lv').innerText = player.level;
   document.getElementById('btm-exp').innerText = `${expPercent}%`;
-  document.getElementById('btm-gold').innerText = player.gold;
+  document.getElementById('btm-gold').innerText = Number(player.gold || 0).toLocaleString();
   document.getElementById('exp-bar-fill').style.width = `${expPercent}%`;
 
   const cStats = calculateCombatStats(false);
@@ -258,7 +321,9 @@ const BUFF_META = {
   ELVEN_GRACE:      { label: '그레이스', border: '#4ade80', svg: `<svg width="20" height="20" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12" fill="#064e3b" stroke="#4ade80" stroke-width="1.8"/><path d="M21 7 C12 7 7 12 7 21 C16 21 21 16 21 7 Z" fill="#10b981" stroke="#a7f3d0" stroke-width="1.5"/><path d="M8 20 L18 10" stroke="#fef08a" stroke-width="1.5" stroke-linecap="round"/></svg>` },
   NATURES_FURY:     { label: '퓨리', border: '#22c55e', svg: `<svg width="20" height="20" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12" fill="#14532d" stroke="#22c55e" stroke-width="1.8"/><line x1="6" y1="19" x2="20" y2="7" stroke="#fde047" stroke-width="2"/><polygon points="22,5 17,6 20,10" fill="#4ade80"/><line x1="8" y1="22" x2="22" y2="10" stroke="#a7f3d0" stroke-width="2"/><polygon points="24,8 19,9 22,13" fill="#fde047"/></svg>` },
   SOUL_BARRIER:     { label: '소울배리어', border: '#2dd4bf', svg: `<svg width="20" height="20" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12" fill="#042f2e" stroke="#2dd4bf" stroke-width="1.8"/><path d="M14 5 A9 9 0 1 1 5 14" fill="none" stroke="#5eead4" stroke-width="2.4" stroke-linecap="round"/><path d="M14 23 A9 9 0 0 1 14 5" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="3 2"/><circle cx="14" cy="14" r="4" fill="#ccfbf1"/></svg>` },
-  COUNTER:          { label: '카운터', border: '#f59e0b', svg: `<svg width="20" height="20" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12" fill="#451a03" stroke="#f59e0b" stroke-width="1.8"/><line x1="6" y1="21" x2="21" y2="6" stroke="#e2e8f0" stroke-width="2.5" stroke-linecap="round"/><line x1="22" y1="21" x2="7" y2="6" stroke="#fde047" stroke-width="2.5" stroke-linecap="round"/><circle cx="14" cy="13.5" r="3" fill="#ffffff"/></svg>` }
+  COUNTER:          { label: '카운터', border: '#f59e0b', svg: `<svg width="20" height="20" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12" fill="#451a03" stroke="#f59e0b" stroke-width="1.8"/><line x1="6" y1="21" x2="21" y2="6" stroke="#e2e8f0" stroke-width="2.5" stroke-linecap="round"/><line x1="22" y1="21" x2="7" y2="6" stroke="#fde047" stroke-width="2.5" stroke-linecap="round"/><circle cx="14" cy="13.5" r="3" fill="#ffffff"/></svg>` },
+  IRON_SKIN:        { label: '아이언스킨', border: '#94a3b8', svg: `<svg width="20" height="20" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12" fill="#1e293b" stroke="#94a3b8" stroke-width="1.8"/><path d="M14 4 L23 8 V14.5 C23 20 19 23.8 14 25.5 C9 23.8 5 20 5 14.5 V8 Z" fill="#475569" stroke="#e2e8f0" stroke-width="1.6"/><path d="M14 7 V22" stroke="#cbd5e1" stroke-width="2"/></svg>` },
+  GUARDIAN_ARMOR:   { label: '가디언아머', border: '#fde047', svg: `<svg width="20" height="20" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12" fill="#0c4a6e" stroke="#fde047" stroke-width="2"/><path d="M14 4 L23 8 V14.5 C23 20 19 23.8 14 25.5 C9 23.8 5 20 5 14.5 V8 Z" fill="#0284c7" stroke="#fef08a" stroke-width="1.8"/><path d="M14 8 V21 M9 14 H19" stroke="#fde047" stroke-width="2.4" stroke-linecap="round"/></svg>` }
 };
 
 window.updateBuffUI = function() {
@@ -426,6 +491,17 @@ window.buildConciseItemDetailHTML = function(item, index, mode = 'inventory', sl
     </div>
     <div style="font-size:12px; font-weight:bold; line-height:1.4;">${statParts.join(' <span style="color:#4b5563;">|</span> ') || '<span style="color:#9ca3af;">특수 아이템</span>'}</div>
     ${(() => {
+      if (item.type && item.type.startsWith('BOOK_')) {
+        const isMyClass = iData.reqClass === player.class;
+        const learned = iData.skillId ? isSkillLearned(iData.skillId) : false;
+        if (isMyClass && !learned) {
+          return `<div style="font-size:11.5px; font-weight:900; color:#4ade80; margin-top:3px; background:rgba(6,95,70,0.45); border:1px solid #34d399; padding:2px 6px; border-radius:4px;">✨ [내 클래스 미습득 기술서/마법서] 사용(더블터치) 시 즉시 습득 가능!</div>`;
+        } else if (isMyClass && learned) {
+          return `<div style="font-size:11px; font-weight:bold; color:#9ca3af; margin-top:2px;">✔️ 이미 습득한 내 클래스 기술서/마법서입니다.</div>`;
+        } else if (iData.reqClass) {
+          return `<div style="font-size:11px; font-weight:bold; color:#fca5a5; margin-top:2px;">🔒 [${iData.reqClassLabel || '타 클래스'}] 전용 비전서입니다.</div>`;
+        }
+      }
       if (mode !== 'inventory' || isEq || !(isWeapon || isArmorOrAcc)) return '';
       const cmp = compareBagItemWithEquipped(item, index);
       if (cmp.isBetter) {
@@ -506,13 +582,20 @@ function renderInventory() {
       const gName = iData.questOnly ? '퀘스트전용' : (item.gradeName || '일반');
       const itemPlus = getItemPlusValue(item, null, 'player');
       const gradeClass = iData.questOnly ? 'grade-bg-quest' : `grade-bg-${item.gradeIdx || 0}`;
+      const isBookItem = Boolean(item.type && item.type.startsWith('BOOK_'));
+      const isMyClassBook = Boolean(isBookItem && iData.reqClass === player.class);
+      const isBookLearned = Boolean(isBookItem && iData.skillId && isSkillLearned(iData.skillId));
       cls += ` ${gradeClass}`;
+      if (isMyClassBook && !isBookLearned) {
+        cls += ' unlearned-class-book';
+      }
       div.className = cls;
 
       const unitBuyPrice = (iData.price && iData.price > 0) ? iData.price : (iData.questOnly ? 1800 : 100);
       const cmpInfo = !eqSet.has(index) ? compareBagItemWithEquipped(item, index) : { isBetter: false };
       div.innerHTML = window.getItemIconHTML(item.type);
-      div.title = `[${gName}] ${itemPlus > 0 ? '+' + itemPlus + ' ' : ''}${iData.name} (💰${unitBuyPrice.toLocaleString()}G)${cmpInfo.isBetter ? ' [▲현재 착용 장비보다 우수]' : ''}`;
+      const bookStatusTitle = isMyClassBook ? (isBookLearned ? ' [✔️습득완료]' : ' [✨내 클래스 미습득 비전서!]') : '';
+      div.title = `[${gName}] ${itemPlus > 0 ? '+' + itemPlus + ' ' : ''}${iData.name} (💰${unitBuyPrice.toLocaleString()}G)${cmpInfo.isBetter ? ' [▲현재 착용 장비보다 우수]' : ''}${bookStatusTitle}`;
       if (eqSet.has(index)) {
         let eMark = document.createElement('div');
         eMark.className = 'e-mark';
@@ -525,6 +608,12 @@ function renderInventory() {
         upMark.style.right = 'auto';
         upMark.innerText = '▲';
         div.appendChild(upMark);
+      }
+      if (isMyClassBook) {
+        const bBadge = document.createElement('div');
+        bBadge.className = `book-status-badge ${isBookLearned ? 'learned' : 'learnable'}`;
+        bBadge.innerText = isBookLearned ? '습득' : '미습득';
+        div.appendChild(bBadge);
       }
       if (itemPlus > 0) {
         let pMark = document.createElement('div');
@@ -696,10 +785,12 @@ function consumeInventoryItem(index, isAutoTrigger = false) {
         return false;
       }
       lastHpPotionTime = now;
-      player.hp = Math.min(player.maxHp, player.hp + iData.healHp);
-      floatingTexts.push({ x: player.x, y: player.y - 45, text: `+${iData.healHp} HP`, color: 0x4ade80, life: 30 });
+      const hpPctBonus = item.type === 'C_P02' ? Math.floor((player.maxHp || 300) * 0.14) : Math.floor((player.maxHp || 300) * 0.08);
+      const totalHealHp = iData.healHp + hpPctBonus;
+      player.hp = Math.min(player.maxHp, player.hp + totalHealHp);
+      floatingTexts.push({ x: player.x, y: player.y - 45, text: `+${totalHealHp} HP`, color: 0x4ade80, life: 30 });
       activeEffects.push({ type: 'potion', subType: 'hp', x: player.x, y: player.y, targetRef: player, life: 32, maxLife: 32, skillName: iData.name || '체력 물약' });
-      window.broadcastMultiplayerActionFx?.('potion', { subType: 'hp', x: Math.round(player.x), y: Math.round(player.y), amount: iData.healHp, skillName: iData.name || '체력 물약' });
+      window.broadcastMultiplayerActionFx?.('potion', { subType: 'hp', x: Math.round(player.x), y: Math.round(player.y), amount: totalHealHp, skillName: iData.name || '체력 물약' });
     }
 
     if (iData.healMp) {
@@ -711,10 +802,12 @@ function consumeInventoryItem(index, isAutoTrigger = false) {
         return false;
       }
       lastMpPotionTime = now;
-      player.mp = Math.min(player.maxMp, player.mp + iData.healMp);
-      floatingTexts.push({ x: player.x, y: player.y - 45, text: `+${iData.healMp} MP`, color: 0x60a5fa, life: 30 });
+      const mpPctBonus = item.type === 'C_P04' ? Math.floor((player.maxMp || 150) * 0.14) : Math.floor((player.maxMp || 150) * 0.08);
+      const totalHealMp = iData.healMp + mpPctBonus;
+      player.mp = Math.min(player.maxMp, player.mp + totalHealMp);
+      floatingTexts.push({ x: player.x, y: player.y - 45, text: `+${totalHealMp} MP`, color: 0x60a5fa, life: 30 });
       activeEffects.push({ type: 'potion', subType: 'mp', x: player.x, y: player.y, targetRef: player, life: 32, maxLife: 32, skillName: iData.name || '마나 물약' });
-      window.broadcastMultiplayerActionFx?.('potion', { subType: 'mp', x: Math.round(player.x), y: Math.round(player.y), amount: iData.healMp, skillName: iData.name || '마나 물약' });
+      window.broadcastMultiplayerActionFx?.('potion', { subType: 'mp', x: Math.round(player.x), y: Math.round(player.y), amount: totalHealMp, skillName: iData.name || '마나 물약' });
     }
 
     if (item.type === 'C_P05' || iData.type === '버프물약') {
@@ -830,21 +923,181 @@ function executeEnchant(targetIdx) {
   window.triggerAutoSave?.('enchant', true);
 }
 
+// 💰 단일 선택 판매 시 화면 암전(배경 어두워짐) 없이 수량을 물어보고 판매하는 플로팅 수량 선택창
+window.openSellQuantityPopup = function(invIdx) {
+  const idx = Number(invIdx);
+  const inst = player.inventory[idx];
+  if (!inst) return;
+  const eqSet = new Set(Object.values(player.equip).filter(v => v !== null && v !== undefined).map(Number));
+  if (eqSet.has(idx)) {
+    window.addChat(`⚠️ 장착 중인 장비는 먼저 해제한 뒤 판매할 수 있습니다.`, 'log-hit');
+    return;
+  }
+  const def = window.itemDict[inst.type] || { name: inst.type };
+  const maxQty = Math.max(1, Number(inst.qty) || 1);
+  const basePrice = (def?.price && def.price > 0) ? def.price : (def?.questOnly ? 1800 : 100);
+  const unitSell = Math.max(25, Math.floor(basePrice * 0.35 * (inst.mult || 1)));
+
+  let pop = document.getElementById('sell-qty-floating-popup');
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.id = 'sell-qty-floating-popup';
+    // 🌟 배경 암전(dimming backdrop)을 일절 사용하지 않는 독립 플로팅 팝업!
+    pop.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); z-index:9750; width:min(88vw, 295px); background:#111827; border:2px solid #facc15; border-radius:10px; padding:12px; box-shadow:0 6px 20px rgba(0,0,0,0.65); color:#f9fafb; pointer-events:auto;';
+    document.body.appendChild(pop);
+  }
+
+  pop.dataset.invIdx = String(idx);
+  pop.dataset.unitSell = String(unitSell);
+  pop.dataset.maxQty = String(maxQty);
+
+  const itemPlus = getItemPlusValue(inst, null, 'player');
+  const plusTxt = itemPlus > 0 ? `+${itemPlus} ` : '';
+
+  pop.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #374151; padding-bottom:6px; margin-bottom:8px;">
+      <span style="font-size:12.5px; font-weight:bold; color:#fde047;">💰 아이템 판매 ${maxQty > 1 ? '수량 선택' : '확인'}</span>
+      <button type="button" onclick="closeSellQuantityPopup()" style="background:none; border:none; color:#9ca3af; font-size:14px; cursor:pointer; padding:0 4px;">✖</button>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; background:#1f2937; border:1px solid #374151; border-radius:7px; padding:7px 9px; margin-bottom:8px;">
+      <div style="flex-shrink:0;">${window.getItemIconHTML ? window.getItemIconHTML(inst.type) : '📦'}</div>
+      <div style="min-width:0; flex:1;">
+        <div style="font-size:12px; font-weight:bold; color:${inst.gradeColor || '#fff'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${plusTxt}${def.name}</div>
+        <div style="font-size:10.5px; color:#93c5fd;">보유 수량: <b>${maxQty}개</b> · 개당 <b>${unitSell.toLocaleString()} G</b></div>
+      </div>
+    </div>
+    ${maxQty > 1 ? `
+    <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:9px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:4px;">
+        <button type="button" class="auth-sub-btn" style="padding:5px 7px; font-size:11px;" onclick="adjustSellQtyInput(-10)">-10</button>
+        <button type="button" class="auth-sub-btn" style="padding:5px 8px; font-size:11px;" onclick="adjustSellQtyInput(-1)">-1</button>
+        <input id="sell-qty-number-input" type="number" min="1" max="${maxQty}" value="${maxQty}" oninput="onSellQtyInputChange(this.value)" style="width:68px; text-align:center; background:#090b10; color:#fde047; border:1.5px solid #6b5535; border-radius:6px; padding:5px 4px; font-size:13px; font-weight:bold;">
+        <button type="button" class="auth-sub-btn" style="padding:5px 8px; font-size:11px;" onclick="adjustSellQtyInput(1)">+1</button>
+        <button type="button" class="auth-sub-btn" style="padding:5px 7px; font-size:11px;" onclick="adjustSellQtyInput(10)">+10</button>
+        <button type="button" class="shop-buy-btn" style="padding:5px 7px; font-size:10.5px; background:#b45309; border-color:#facc15;" onclick="adjustSellQtyInput(999999)">최대</button>
+      </div>
+      <input id="sell-qty-range-input" type="range" min="1" max="${maxQty}" value="${maxQty}" oninput="onSellQtyInputChange(this.value)" style="width:100%; accent-color:#facc15; cursor:pointer; margin:0;">
+    </div>
+    ` : `<input id="sell-qty-number-input" type="hidden" value="1">`}
+    <div style="display:flex; justify-content:space-between; align-items:center; background:#090b10; border:1px solid #4b5563; border-radius:6px; padding:6px 9px; margin-bottom:9px; font-size:11.5px;">
+      <span style="color:#d1d5db;">판매 획득 골드</span>
+      <b id="sell-qty-total-gold" style="color:#fde047; font-size:13px;">💰 ${(unitSell * maxQty).toLocaleString()} G</b>
+    </div>
+    <div style="display:flex; gap:6px;">
+      <button type="button" class="auth-sub-btn" style="flex:1; padding:7px;" onclick="closeSellQuantityPopup()">취소</button>
+      <button type="button" class="auth-primary-btn" style="flex:1.2; padding:7px; background:linear-gradient(180deg, #ca8a04, #854d0e); border-color:#fde047;" onclick="confirmSellSingleItemWithQty()">💰 판매하기</button>
+    </div>
+  `;
+  pop.style.display = 'block';
+};
+
+window.closeSellQuantityPopup = function() {
+  const pop = document.getElementById('sell-qty-floating-popup');
+  if (pop) pop.style.display = 'none';
+};
+
+window.onSellQtyInputChange = function(rawVal) {
+  const pop = document.getElementById('sell-qty-floating-popup');
+  if (!pop) return;
+  const maxQty = Math.max(1, Number(pop.dataset.maxQty) || 1);
+  const unitSell = Math.max(1, Number(pop.dataset.unitSell) || 25);
+  const clamped = Math.max(1, Math.min(maxQty, parseInt(rawVal, 10) || 1));
+  const numEl = document.getElementById('sell-qty-number-input');
+  const rngEl = document.getElementById('sell-qty-range-input');
+  const goldEl = document.getElementById('sell-qty-total-gold');
+  if (numEl && Number(numEl.value) !== clamped) numEl.value = clamped;
+  if (rngEl && Number(rngEl.value) !== clamped) rngEl.value = clamped;
+  if (goldEl) goldEl.innerText = `💰 ${(unitSell * clamped).toLocaleString()} G`;
+};
+
+window.adjustSellQtyInput = function(delta) {
+  const pop = document.getElementById('sell-qty-floating-popup');
+  if (!pop) return;
+  const maxQty = Math.max(1, Number(pop.dataset.maxQty) || 1);
+  const numEl = document.getElementById('sell-qty-number-input');
+  const cur = parseInt(numEl?.value, 10) || maxQty;
+  const next = delta >= 99999 ? maxQty : Math.max(1, Math.min(maxQty, cur + delta));
+  if (numEl) numEl.value = next;
+  window.onSellQtyInputChange(next);
+};
+
+window.confirmSellSingleItemWithQty = function() {
+  const pop = document.getElementById('sell-qty-floating-popup');
+  if (!pop) return;
+  const idx = Number(pop.dataset.invIdx);
+  const inst = player.inventory[idx];
+  if (!inst) {
+    window.closeSellQuantityPopup();
+    return;
+  }
+  const eqSet = new Set(Object.values(player.equip).filter(v => v !== null && v !== undefined).map(Number));
+  if (eqSet.has(idx)) {
+    window.closeSellQuantityPopup();
+    return;
+  }
+  const def = window.itemDict[inst.type] || { name: inst.type };
+  const curQty = Math.max(1, Number(inst.qty) || 1);
+  const numEl = document.getElementById('sell-qty-number-input');
+  const sellQty = Math.max(1, Math.min(curQty, parseInt(numEl?.value, 10) || curQty));
+  const basePrice = (def?.price && def.price > 0) ? def.price : (def?.questOnly ? 1800 : 100);
+  const unitSell = Math.max(25, Math.floor(basePrice * 0.35 * (inst.mult || 1)));
+  const earnedGold = unitSell * sellQty;
+
+  if (sellQty >= curQty) {
+    player.inventory[idx] = null;
+    selectedInvIndices.delete(idx);
+  } else {
+    inst.qty = curQty - sellQty;
+  }
+
+  player.gold += earnedGold;
+  window.closeSellQuantityPopup();
+  window.addChat(`💰 [아이템 판매] '${def.name}' x${sellQty}개를 판매하여 ${earnedGold.toLocaleString()} G를 획득했습니다.`, 'log-sys');
+  window.triggerAutoSave?.('shop_sell', true);
+  updateStatusHUD();
+  renderHotbarSlots();
+  renderInventory();
+  const detailBox = document.getElementById('item-detail');
+  if (detailBox) {
+    if (player.inventory[idx]) {
+      detailBox.innerHTML = window.buildConciseItemDetailHTML(player.inventory[idx], idx, 'inventory');
+    } else {
+      detailBox.innerHTML = `<span style="color:#9ca3af;">아이템을 터치하면 상세 정보가 표시됩니다.</span>`;
+    }
+  }
+};
+
 window.invAction = function(actionType) {
   if (selectedInvIndices.size === 0) return;
   const eqSet = new Set(Object.values(player.equip).filter(v => v !== null && v !== undefined).map(Number));
+  const isMultiChecked = Boolean(document.getElementById('multi-select-toggle')?.checked);
+
+  // 🌟 단일 선택 상태에서 판매('sell')를 누르면 암전 없는 수량 선택/확인 팝업을 띄워 물어보고 판매!
+  if (actionType === 'sell' && !isMultiChecked && selectedInvIndices.size === 1) {
+    const onlyIdx = Array.from(selectedInvIndices)[0];
+    if (player.inventory[onlyIdx]) {
+      window.openSellQuantityPopup(onlyIdx);
+      return;
+    }
+  }
+
+  // 🌟 다중선택(Multi-select) 시 한 상품에 여러 개 수량이 겹쳐 있어도 선택한 모든 슬롯의 전체 수량을 한 번에 일괄 판매!
   let soldGold = 0;
+  let soldItemStacks = 0;
+  let soldTotalUnits = 0;
 
   selectedInvIndices.forEach(idx => {
     const inst = player.inventory[idx];
     if (!inst || eqSet.has(Number(idx))) return;
     const def = window.itemDict[inst.type];
-    
+    const itemQty = Math.max(1, Number(inst.qty) || 1);
 
     if (actionType === 'sell') {
       const basePrice = (def?.price && def.price > 0) ? def.price : (def?.questOnly ? 1800 : 100);
       const unitSell = Math.max(25, Math.floor(basePrice * 0.35 * (inst.mult || 1)));
-      soldGold += unitSell * (inst.qty || 1);
+      soldGold += unitSell * itemQty;
+      soldItemStacks++;
+      soldTotalUnits += itemQty;
     } else if (actionType === 'drop') {
       if (isServerAuthoritativeMode()) {
         sendCentralWsPacket({
@@ -864,7 +1117,7 @@ window.invAction = function(actionType) {
 
   if (actionType === 'sell' && soldGold > 0) {
     player.gold += soldGold;
-    window.addChat(`💰 [아이템 판매] 선택한 아이템을 처분하여 ${soldGold} G를 획득했습니다.`, 'log-sys');
+    window.addChat(`💰 [다중 일괄 판매] 선택한 ${soldItemStacks}슬롯(총 ${soldTotalUnits}개) 아이템을 한 번에 처분하여 ${soldGold.toLocaleString()} G를 획득했습니다!`, 'log-sys');
     window.triggerAutoSave?.('shop_sell', true);
   }
   selectedInvIndices.clear();
@@ -882,9 +1135,12 @@ window.quickSellSingleItem = function(idx) {
     window.addChat(`⚠️ 장착 중인 장비는 해제 후 판매할 수 있습니다.`, 'log-hit');
     return;
   }
-  selectedInvIndices.clear();
-  selectedInvIndices.add(Number(idx));
-  window.invAction('sell');
+  const isMultiChecked = Boolean(document.getElementById('multi-select-toggle')?.checked);
+  if (isMultiChecked && selectedInvIndices.size > 1) {
+    window.invAction('sell');
+    return;
+  }
+  window.openSellQuantityPopup(Number(idx));
 };
 
 // ============================================================================
@@ -1361,9 +1617,11 @@ window.useSlot = function(num, isAutoTrigger = false) {
   if (sInfo.type === '힐링' || sInfo.name.includes("터치") || sInfo.name.includes("힐") || sInfo.name.includes("큐어")) {
     if (sInfo.name !== "뱀파이어 터치" && !sInfo.name.includes("헬 파이어")) {
       player.mp -= effMpCost;
-      const baseHeal = sInfo.healFixed || 95;
-      const scaleStat = player.class === 'ranger' ? Math.floor(cStatsNow.effDEX * 3.2 + player.level * 2.8) : Math.floor(cStatsNow.effINT * 3.6 + player.level * 3.0);
-      const healAmt = baseHeal + scaleStat;
+      const baseHeal = sInfo.healFixed || 220;
+      const isGreatHeal = sInfo.id === 'M13' || sInfo.name.includes('그레이트');
+      const scaleStat = player.class === 'ranger'
+        ? Math.floor(cStatsNow.effDEX * 4.2 + (cStatsNow.totalAtk || 0) * 0.65 + player.level * 3.8)
+        : Math.floor(cStatsNow.effINT * 4.8 + (cStatsNow.totalMAtk || 0) * 0.85 + player.level * 4.2);
 
       let healTargetType = 'SELF';
       if (isAutoTrigger) {
@@ -1377,6 +1635,11 @@ window.useSlot = function(num, isAutoTrigger = false) {
           healTargetType = 'PLAYER';
         }
       }
+      const refMaxHp = healTargetType === 'MERC'
+        ? (mercenary.maxHp || 400)
+        : (healTargetType === 'PLAYER' ? (player.friendlyTarget?.ref?.maxHp || player.maxHp || 400) : (player.maxHp || 400));
+      const pctHealBonus = Math.floor(refMaxHp * (isGreatHeal ? 0.22 : 0.14));
+      const healAmt = baseHeal + scaleStat + pctHealBonus;
 
       skillCooldowns[sInfo.name] = now;
       SoundSystem.playSkill(sInfo.name, player.class, sInfo.circle || 1, false);
@@ -1429,7 +1692,7 @@ window.useSlot = function(num, isAutoTrigger = false) {
     skillCooldowns[sInfo.name] = now;
     SoundSystem.playSkill(sInfo.name, player.class, sInfo.circle || 1, false);
 
-    const canCastOnAlly = sInfo.allyCast || ['SHIELD', 'HASTE', 'ENCHANT_STAT', 'MENTAL_FOCUS', 'SHADOW_FANG', 'IMMUNE', 'ADV_SPIRIT', 'EAGLE_EYE', 'WIND_WALK', 'ELVEN_GRACE', 'NATURES_FURY', 'SOUL_BARRIER'].includes(buffKey);
+    const canCastOnAlly = sInfo.allyCast || ['SHIELD', 'HASTE', 'ENCHANT_STAT', 'MENTAL_FOCUS', 'SHADOW_FANG', 'IMMUNE', 'ADV_SPIRIT', 'EAGLE_EYE', 'WIND_WALK', 'ELVEN_GRACE', 'NATURES_FURY', 'SOUL_BARRIER', 'IRON_SKIN', 'GUARDIAN_ARMOR'].includes(buffKey);
 
     if (!isAutoTrigger && canCastOnAlly && player.friendlyTarget) {
       if (player.friendlyTarget.type === 'MERC' && mercenary.hired && !mercenary.isDead) {
@@ -1920,6 +2183,7 @@ window.applyDamage = function(ent, rawDmg, dmgType, opts = {}) {
 
   if (ent.hp <= 0) {
     ent.isDead = true;
+    window.ImmersiveSystem?.onMonsterKilled?.(ent, mitigated);
     SoundSystem.playMonsterDeath(ent.rawName || ent.name, ent.isBoss);
     if (ent.nameTag) ent.nameTag.visible = false;
     if (mercenary.targetMonster === ent) mercenary.targetMonster = null;
@@ -1952,7 +2216,7 @@ window.applyDamage = function(ent, rawDmg, dmgType, opts = {}) {
     if (ent.isBoss) {
       let bossGold = Math.floor((45 + mobLv * 15 + Math.random() * 80) * 10);
       player.gold += bossGold;
-      floatingTexts.push({ x: ent.x, y: ent.y - 45, text: `+${bossGold} G`, color: 0xfacc15, life: 40 });
+      floatingTexts.push({ x: ent.x, y: ent.y - 45, text: `+${bossGold.toLocaleString()} G`, color: 0xfacc15, life: 40 });
 
       const guaranteedEqId = pickMonsterTierDrop(ent, 'equip');
       const guaranteedEqInst = createItemInstance(guaranteedEqId, 1, true, null, mobLv);
@@ -1978,7 +2242,7 @@ window.applyDamage = function(ent, rawDmg, dmgType, opts = {}) {
         if (subRoll < 48) {
           let amt = Math.floor(14 + mobLv * 3.5 + Math.random() * 22);
           player.gold += amt;
-          floatingTexts.push({ x: ent.x, y: ent.y - 45, text: `+${amt} G`, color: 0xfacc15, life: 35 });
+          floatingTexts.push({ x: ent.x, y: ent.y - 45, text: `+${amt.toLocaleString()} G`, color: 0xfacc15, life: 35 });
         } else if (subRoll < 82) {
           const pickedCons = pickMonsterTierDrop(ent, 'consumable');
           spawnDroppedItemSafe(createItemInstance(pickedCons, 1, false), ent.x, ent.y);
@@ -2584,8 +2848,12 @@ function loadMapData(mapKey, customSpawn = null) {
       spawnAltriaMonsters(mapKey, mapData);
     }
     window.updateMercHUD();
+    window.forceResizePixiApp?.();
 
-    setTimeout(() => { if (fadeOverlay) fadeOverlay.style.opacity = '0'; }, 100);
+    setTimeout(() => {
+      window.forceResizePixiApp?.();
+      if (fadeOverlay) fadeOverlay.style.opacity = '0';
+    }, 100);
   }, 300);
 }
 

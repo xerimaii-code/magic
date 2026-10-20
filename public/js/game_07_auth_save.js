@@ -613,19 +613,20 @@ function renderCharacterSlots() {
     if (c) {
       const clsMeta = CLASS_STATS[c.class] || CLASS_STATS.knight;
       const regObj = GameDB.Regions.find(r => r.id === (c.region_key || 'R01')) || GameDB.Regions[0];
+      const isCharOnline = Boolean(c.isOnline || (c.id && typeof activeCharacterId !== 'undefined' && activeCharacterId === c.id));
       html += `
         <div class="char-slot-card">
           <div style="display:flex; align-items:center; gap:9px; min-width:0; flex:1;">
-            <div style="width:38px; height:38px; border-radius:8px; background:#090b10; border:1px solid #6b5535; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;">
+            <div style="position:relative; width:38px; height:38px; border-radius:8px; background:#090b10; border:1px solid #6b5535; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;">
               ${window.getClassIconHTML ? window.getClassIconHTML(c.class, 26) : (clsMeta.icon || '🛡️')}
             </div>
             <div style="min-width:0; flex:1; text-align:left;">
-              <div style="font-size:13.5px; font-weight:bold; color:#fde047; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:5px;">
+              <div style="font-size:13.5px; font-weight:bold; color:#fde047; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:6px;">
                 <span>Lv.${c.level || 1} ${c.name}</span>
-                ${c.isOnline ? `<span style="font-size:9.5px; background:#065f46; border:1px solid #34d399; color:#a7f3d0; padding:1px 5px; border-radius:999px;">🟢 접속중</span>` : ''}
+                ${isCharOnline ? `<span title="이미 접속중인 캐릭터" style="color:#22c55e; font-size:11px; line-height:1; flex-shrink:0; text-shadow:none; box-shadow:none;">●</span>` : ''}
               </div>
               <div style="font-size:10.5px; color:#93c5fd;">
-                ${clsMeta.name} · 📍 ${regObj.name} · 💰 ${(Number(c.gold) || 0).toLocaleString()} G
+                ${clsMeta.name} · 📍 ${regObj.name}
               </div>
             </div>
           </div>
@@ -900,6 +901,10 @@ window.confirmCreateCharacter = async function() {
   document.getElementById('auth-overlay-ui').style.display = 'none';
   document.getElementById('char-select-ui').style.display = 'none';
   document.getElementById('game-wrapper').style.display = 'flex';
+  window.forceResizePixiApp?.();
+  requestAnimationFrame(() => window.forceResizePixiApp?.());
+  setTimeout(() => window.forceResizePixiApp?.(), 80);
+  setTimeout(() => window.forceResizePixiApp?.(), 260);
 
   connectCentralMultiplayerSocket();
   await registerActiveGameSession(charId, prevCharId);
@@ -1016,6 +1021,10 @@ window.enterGameWithCharacter = async function(slotIdx) {
 
   // 수파베이스에서 방금 가져온 최신 캐릭터 레코드(c)로 게임 진입 (옵션 포함 복원)
   window.startGame(c.class || 'knight', c.name, c, false);
+  window.forceResizePixiApp?.();
+  requestAnimationFrame(() => window.forceResizePixiApp?.());
+  setTimeout(() => window.forceResizePixiApp?.(), 80);
+  setTimeout(() => window.forceResizePixiApp?.(), 260);
   connectCentralMultiplayerSocket();
   await registerActiveGameSession(c.id, prevCharId);
   window.addChat(`⚡ [접속 완료] '${c.name}' 캐릭터의 수파베이스 최신 데이터 및 환경설정을 불러왔습니다!`, 'log-kill');
@@ -1088,6 +1097,7 @@ async function registerActiveGameSession(charId, prevCharId = null) {
   sendCentralWsPacket({
     type: 'ENTER_CHAR',
     userId: currentAccountUser.id,
+    email: currentAccountUser.email || '',
     charId: charId,
     prevCharId: prevCharId && prevCharId !== charId ? prevCharId : null,
     sessionToken: currentSessionToken,
