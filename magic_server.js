@@ -479,8 +479,11 @@ function resolveServerMonsterSeparation(mapInst, mapPlayers = []) {
 
 function createServerMonsterInstance(id, baseMob, x, y, forceBoss = false) {
   const isBoss = forceBoss || String(baseMob.name || '').includes('(B)');
+  const isElite = !isBoss && Math.random() < 0.085;
   const isMagicMob = (baseMob.type === '마법' || baseMob.type === '혼합' || (baseMob.mp && baseMob.mp > 0));
   const maxMpVal = isMagicMob ? (baseMob.mp && baseMob.mp > 0 ? baseMob.mp : 100) : 0;
+  const baseHpVal = baseMob.hp || 50;
+  const maxHpVal = isElite ? Math.round(baseHpVal * 1.75) : baseHpVal;
   const rx = Math.round(x);
   const ry = Math.round(y);
   return {
@@ -490,8 +493,9 @@ function createServerMonsterInstance(id, baseMob, x, y, forceBoss = false) {
     name: baseMob.name,
     rawName: baseMob.name,
     type: baseMob.type || '물리',
-    hp: baseMob.hp,
-    maxHp: baseMob.hp,
+    baseMaxHp: baseHpVal,
+    hp: maxHpVal,
+    maxHp: maxHpVal,
     mp: maxMpVal,
     maxMp: maxMpVal,
     atk: baseMob.atk || 10,
@@ -501,7 +505,9 @@ function createServerMonsterInstance(id, baseMob, x, y, forceBoss = false) {
     drop: baseMob.drop || [],
     skill: baseMob.skill || null,
     isBoss: Boolean(isBoss),
-    isAggro: baseMob.aggro === 'Y',
+    isElite: Boolean(isElite),
+    scaleMult: isElite ? 1.42 : 1.0,
+    isAggro: baseMob.aggro === 'Y' || isElite,
     x: rx,
     y: ry,
     spawnX: rx,
@@ -3190,6 +3196,7 @@ function handleClientWsPacket(conn, msg) {
         });
 
         if (ent.hp <= 0) {
+          const wasElite = Boolean(ent.isElite);
           ent.isDead = true;
           ent.respawnTimer = ent.isBoss ? 300 : 12;
           if (ent.isBoss) mapInst.bossRespawnTimer = 300;
@@ -3218,6 +3225,14 @@ function handleClientWsPacket(conn, msg) {
             if (Math.random() < 0.50) {
               const bonusEqId = pickServerMonsterTierDrop(ent, 'equip', killerClass);
               newGroundItems.push(spawnServerGroundItem(mapInst, createServerItemInstance(bonusEqId, 1, true, null, mobLv), ent.x + 28, ent.y + 12));
+            }
+          } else if (wasElite) {
+            // 👑 [★거대정예] 이벤트 몬스터 처치 시 골드 2.4배 확정 지급 및 높은 확률로 장비/소모품 추가 드롭
+            droppedGold = Math.floor((24 + mobLv * 5.2 + Math.random() * 32) * 2.4);
+            if (Math.random() < 0.85) {
+              const isEqRoll = Math.random() < 0.42;
+              const pickedId = pickServerMonsterTierDrop(ent, isEqRoll ? 'equip' : 'consumable', killerClass);
+              newGroundItems.push(spawnServerGroundItem(mapInst, createServerItemInstance(pickedId, 1, false, null, mobLv), ent.x, ent.y));
             }
           } else {
             if (Math.random() < 0.50) {
@@ -3255,6 +3270,8 @@ function handleClientWsPacket(conn, msg) {
             if (idx > -1) mapInst.monsters.splice(idx, 1);
           }
 
+          const finalBaseExp = wasElite ? Math.round((ent.baseExp || 20) * 2.2) : (ent.baseExp || 20);
+
           broadcastToMap(mapInst.mapKey, {
             type: 'MONSTER_KILLED',
             mapKey: mapInst.mapKey,
@@ -3263,6 +3280,7 @@ function handleClientWsPacket(conn, msg) {
             mobName: ent.name,
             rawName: ent.rawName,
             isBoss: ent.isBoss,
+            isElite: wasElite,
             isGmSpawned: Boolean(ent.isGmSpawned),
             x: Math.round(ent.x),
             y: Math.round(ent.y),
@@ -3270,7 +3288,7 @@ function handleClientWsPacket(conn, msg) {
             respawnTimer: ent.respawnTimer,
             killerCharId: msg.charId,
             contributors,
-            baseExp: ent.baseExp || 20,
+            baseExp: finalBaseExp,
             droppedGold,
             newGroundItems
           });
@@ -3655,6 +3673,11 @@ setInterval(() => {
           m.respawnTimer = Math.max(0, m.respawnTimer - dtSec);
           if (m.respawnTimer <= 0) {
             const safeSpawn = findServerSafeSpot(mapInst, m.spawnX, m.spawnY);
+            const nextElite = !m.isBoss && Math.random() < 0.085;
+            const baseHp = m.baseMaxHp || m.maxHp || 50;
+            m.isElite = nextElite;
+            m.scaleMult = nextElite ? 1.42 : 1.0;
+            m.maxHp = nextElite ? Math.round(baseHp * 1.75) : baseHp;
             m.isDead = false;
             m.hp = m.maxHp;
             m.mp = m.maxMp;
@@ -3681,6 +3704,8 @@ setInterval(() => {
                   mp: m.mp,
                   maxMp: m.maxMp,
                   isBoss: m.isBoss,
+                  isElite: Boolean(m.isElite),
+                  scaleMult: m.scaleMult || 1.0,
                   name: m.name
                 },
                 bossRespawnTimer: Math.ceil(mapInst.bossRespawnTimer)
@@ -3859,6 +3884,10 @@ setInterval(() => {
 
       mapPlayers.forEach(receiver => {
         if (!receiver || !receiver.conn) return;
+        // 📶 스마트폰 LTE 음영/기지국 핸드오버 시 TCP 송신 버퍼 적체(Backpressure)로 인한 패킷 폭주 렉 방지
+        const bufferedBytes = receiver.conn?.bufferedAmount ?? receiver.conn?.socket?.writableLength ?? 0;
+        if (!isNearRefreshTick && bufferedBytes > 65536) return;
+
         if (!receiver._knownMobs) receiver._knownMobs = new Map();
         if (!receiver._knownPlayers) receiver._knownPlayers = new Map();
 
@@ -3923,7 +3952,8 @@ setInterval(() => {
                 m.maxHp,
                 (m.stunUntil && m.stunUntil > now) ? m.stunUntil : 0,
                 (m.defDownUntil && m.defDownUntil > now) ? m.defDownUntil : 0,
-                m.isDead ? Math.ceil(m.respawnTimer) : 0
+                m.isDead ? Math.ceil(m.respawnTimer) : 0,
+                m.isElite ? 1 : 0
               );
             }
             compactMobs.push(tuple);
