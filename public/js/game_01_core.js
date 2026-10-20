@@ -1224,17 +1224,17 @@ const HELP_CONTENTS = {
     `
   },
   immersive: {
-    title: "📖 에테르 도감 · 20대 몰입형 콘텐츠 도움말",
+    title: "📖 에테르 도감 · 자동형 10대 콘텐츠 도움말",
     body: `
-      • <b>1차 콘텐츠(1~10)</b>: 몬스터 생태 도감, 지역 수호 칭호, 에테르 보물 고블린, 균열 엘리트 챔피언, 무기 5대 원소 공명, 보스 기여도 전광판 & 파티 주사위, 에테르 연대기(15장), 모닥불 온기 & 음유시인 담화, 차원 마나 기류(실시간 날씨), 용병 유대감 & 전술 대사<br>
-      • <b>2차 콘텐츠(11~20)</b>: 왕립 일일 현상수배 게시판, 무기 숙련도 & 전장의 훈장, 고대 에테르 성물함, 차원 방랑 상인 아카샤, 에테르 12성좌 오늘의 운세, 모험가 길드 명예 등급, 보스 토벌전 전술 브리핑, 대장장이 토르딘의 명장 각인, 15차원 탐사 발자취 지도, 연속 사냥 콤보 & 각성 피버<br>
-      • <b>조작 안내</b>: 상단 탭을 눌러 각 콘텐츠 현황을 확인하고 원소 공명·칭호 장착·각인·보급 수령을 진행하세요.
+      • <b>관리 불필요(100% 자동 작동)</b>: 사냥과 탐험 중 별도로 버튼을 누르거나 관리하지 않아도 모든 성장·이벤트가 자동으로 작동하고 영구 능력치가 누적됩니다!<br>
+      • <b>사냥 이벤트(1~3)</b>: <b>👑 거대 정예 몬스터 출현</b>(일반 몬스터보다 거대한 정예 출현·보상 2.2배), <b>💰 황금 보물 고블린</b>(추가 골드), <b>🔥 연속 처치 콤보 & 피버</b>(자동 가속 오라)<br>
+      • <b>자동 성장·교감(4~10)</b>: 몬스터 생태 도감, 지역 수호 칭호, 무기 숙련도, 보스 전리품 성물, 15차원 탐사 발자취, 마을 모닥불 온기, 실시간 기류 & 용병 교감
     `
   },
   guide: {
     title: "🎓 초보자 마을 왕립 가이드 도움말",
     body: `
-      • <b>왕립 안내관 루시</b>: 초보자 마을(알트리아) 광장에서 모험가님께 조작법, 전투·자동사냥, 용병 보급·전술, 스킬 서클, 강화, 파티 점사, 에테르 도감 20종까지 게임의 모든 핵심 기능을 안내합니다.<br>
+      • <b>왕립 안내관 루시 / 아리아</b>: 초보자 마을(알트리아) 광장에서 모험가님께 조작법, 전투·자동사냥, 용병 보급·전술, 스킬 서클, 강화, 파티 점사, 에테르 도감(자동형 10선)까지 게임의 모든 핵심 기능을 안내합니다.<br>
       • 상단 분야별 탭을 눌러 궁금한 항목을 언제든 배경 암전 없이 선명하게 확인하세요!
     `
   },
@@ -1526,7 +1526,16 @@ function ensureAllGameModals() {
       regHud.id = 'current-region-hud';
       regHud.title = '클릭하여 지역 상세 지도 열기';
       regHud.innerText = '📍 알트리아';
-      regHud.onclick = (e) => { e.stopPropagation(); window.openRegionDetailMap(); };
+      const openMapFromHud = (e) => {
+        if (e) {
+          if (e.cancelable) e.preventDefault();
+          e.stopPropagation();
+        }
+        window._mapModalOpenedAt = Date.now();
+        window.openRegionDetailMap();
+      };
+      regHud.addEventListener('pointerup', openMapFromHud);
+      regHud.addEventListener('click', openMapFromHud);
       const safeBadge = document.getElementById('safe-zone-badge');
       if (safeBadge) rightHud.insertBefore(regHud, safeBadge);
       else rightHud.appendChild(regHud);
@@ -1639,14 +1648,17 @@ function ensureAllGameModals() {
   wm.className = 'rpg-overlay-modal';
   wm.innerHTML = `
     <div class="rpg-modal-box" style="width:min(92vw, 460px); height:min(86dvh, 820px); flex:0 0 auto;" onclick="event.stopPropagation()">
-      <button class="rpg-close-floating" onclick="closeWorldMapUI()">✕ 닫기</button>
-      <div id="world-map-bg-box" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden;">
+      <button class="rpg-close-floating" onclick="event.stopPropagation(); closeWorldMapUI(true)">✕ 닫기</button>
+      <div id="world-map-bg-box" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden; touch-action:manipulation;">
         <img src="./map/worldmap.jpg" style="width:100%; height:100%; object-fit:fill; display:block; pointer-events:none; user-select:none;" />
-        <div id="world-map-hotspots" style="position:absolute; inset:0; z-index:20;"></div>
+        <div id="world-map-hotspots" style="position:absolute; inset:0; z-index:20; touch-action:manipulation;"></div>
       </div>
     </div>
   `;
-  wm.onclick = () => window.closeWorldMapUI();
+  wm.onclick = (e) => {
+    if (e && e.target !== wm) return;
+    window.closeWorldMapUI(false);
+  };
 
   let sm = document.getElementById('shire-map-ui');
   if (!sm) {
@@ -1658,15 +1670,18 @@ function ensureAllGameModals() {
   sm.innerHTML = `
     <div class="rpg-modal-box" style="width:min(92vw, 460px); height:min(86dvh, 820px); flex:0 0 auto;" onclick="event.stopPropagation()">
       <div id="detail-map-title-badge" style="position:absolute; top:8px; left:10px; z-index:60; background:rgba(15,23,42,0.88); border:1px solid #facc15; border-radius:6px; padding:4px 10px; font-size:12px; font-weight:bold; color:#fde047; pointer-events:none; box-shadow:0 2px 6px rgba(0,0,0,0.85);">🗺️ 지역 상세 지도</div>
-      <button class="rpg-close-floating" onclick="closeShireMapUI()">✕ 닫기</button>
-      <div id="detail-map-canvas-wrap" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden;">
+      <button class="rpg-close-floating" onclick="event.stopPropagation(); closeShireMapUI(true)">✕ 닫기</button>
+      <div id="detail-map-canvas-wrap" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden; touch-action:manipulation;">
         <canvas id="detail-map-fallback-canvas" width="400" height="720" style="position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none;"></canvas>
         <img id="detail-map-img-el" src="./map/altria.jpg" onerror="this.style.opacity='0'" onload="this.style.opacity='1'" style="position:relative; z-index:5; width:100%; height:100%; object-fit:fill; display:block; pointer-events:none; user-select:none; transition:opacity 0.15s;" />
-        <div id="region-detail-overlay" style="position:absolute; inset:0; z-index:20;"></div>
+        <div id="region-detail-overlay" style="position:absolute; inset:0; z-index:20; touch-action:manipulation;"></div>
       </div>
     </div>
   `;
-  sm.onclick = () => window.closeShireMapUI();
+  sm.onclick = (e) => {
+    if (e && e.target !== sm) return;
+    window.closeShireMapUI(false);
+  };
 
   let nm = document.getElementById('npc-modal-ui');
   if (!nm) {
@@ -1992,11 +2007,53 @@ function getWorldMapRegionLevelColor(playerLv, reg) {
   return '#60a5fa';
 }
 
+const GAME_LOADING_TIPS = [
+  '💡 사냥 중 일반 몬스터보다 거대한 [★거대정예] 몬스터를 처치하면 경험치·골드 2.2배 및 희귀 장비 드롭률이 상승합니다!',
+  '💡 [📖 도감]의 10가지 몰입형 콘텐츠는 별도 관리나 버튼 클릭 없이 사냥만 해도 영구 능력치가 자동으로 누적됩니다!',
+  '💡 우측 상단 미니맵을 터치하면 현재 지역의 마을·사냥터·던전 입구·보스 성역으로 즉시 워프할 수 있습니다.',
+  '💡 마을 및 전초기지 안전지대에 머무르면 모닥불 온기가 스며들어 HP/MP 회복 속도와 사냥 경험치 축복이 자동 부여됩니다!',
+  '💡 용병 창에서 [⚡아이템보급] 버튼을 누르면 내 가방의 더 좋은 장비와 물약을 용병에게 자동으로 입혀줍니다.'
+];
+
+window.showGameLoadingScreen = function(titleText = '차원 지형 로딩 중...', subText = '지형 데이터 및 서버 동기화 준비 중...', progressPct = 65) {
+  const fadeOverlay = document.getElementById('fade-overlay');
+  if (!fadeOverlay) return;
+  fadeOverlay.classList.add('game-loading-overlay', 'active');
+  fadeOverlay.style.opacity = '1';
+  fadeOverlay.style.pointerEvents = 'auto';
+
+  const tEl = document.getElementById('loading-map-title');
+  const sEl = document.getElementById('loading-map-sub');
+  const bEl = document.getElementById('loading-map-bar');
+  const tipEl = document.getElementById('loading-map-tip');
+  if (tEl && titleText) tEl.innerText = titleText;
+  if (sEl && subText) sEl.innerText = subText;
+  if (bEl && typeof progressPct === 'number') bEl.style.width = `${Math.max(12, Math.min(100, progressPct))}%`;
+  if (tipEl && (!tipEl.dataset.lastTipAt || Date.now() - Number(tipEl.dataset.lastTipAt) > 2500)) {
+    tipEl.dataset.lastTipAt = String(Date.now());
+    tipEl.innerText = GAME_LOADING_TIPS[Math.floor(Math.random() * GAME_LOADING_TIPS.length)];
+  }
+};
+
+window.hideGameLoadingScreen = function(delayMs = 120) {
+  const fadeOverlay = document.getElementById('fade-overlay');
+  if (!fadeOverlay) return;
+  const bEl = document.getElementById('loading-map-bar');
+  if (bEl) bEl.style.width = '100%';
+  clearTimeout(window._hideLoadingTimer);
+  window._hideLoadingTimer = setTimeout(() => {
+    fadeOverlay.classList.remove('active');
+    fadeOverlay.style.opacity = '0';
+    fadeOverlay.style.pointerEvents = 'none';
+  }, Math.max(0, delayMs));
+};
+
 window.openWorldMapUI = async function() {
-  if (window.isUiTouchDebounced?.('openWorldMapUI', 320)) return;
+  if (window.isUiTouchDebounced?.('openWorldMapUI', 280)) return;
+  window._mapModalOpenedAt = Date.now();
   ensureAllGameModals();
   window.closeNpcModal();
-  window.closeShireMapUI();
+  window.closeShireMapUI(true);
 
   if (window.worldMapTmjZones.length === 0) await loadWorldMapTmj();
 
@@ -2016,14 +2073,40 @@ window.openWorldMapUI = async function() {
   modal.style.zIndex = '25000';
 };
 
-window.closeWorldMapUI = function() {
-  if (window.isUiTouchDebounced?.('closeWorldMapUI', 220)) return;
+window.closeWorldMapUI = function(force = false) {
+  // 스마트폰 터치 시 pointerup 직후 발생하는 합성 click이 창을 즉시 닫아버리는 현상 방지
+  if (Date.now() - (window._mapModalOpenedAt || 0) < (force ? 260 : 420)) return;
+  if (!force && window.isUiTouchDebounced?.('closeWorldMapUI', 200)) return;
   const modal = document.getElementById('world-map-ui');
   if (modal) {
     modal.classList.remove('active-modal');
     modal.style.display = 'none';
   }
 };
+
+function bindMapTapAction(el, callback) {
+  if (!el) return;
+  let downX = 0;
+  let downY = 0;
+  el.addEventListener('pointerdown', (e) => {
+    downX = e.clientX || 0;
+    downY = e.clientY || 0;
+  }, { passive: true });
+  const trigger = (e) => {
+    if (e) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }
+    if (Date.now() - (window._mapModalOpenedAt || 0) < 220) return;
+    if (e && e.type === 'pointerup' && downX && downY) {
+      const moved = Math.hypot((e.clientX || 0) - downX, (e.clientY || 0) - downY);
+      if (moved > 22) return;
+    }
+    callback(e);
+  };
+  el.addEventListener('pointerup', trigger);
+  el.addEventListener('click', trigger);
+}
 
 function renderWorldMapHotspots() {
   const container = document.getElementById('world-map-hotspots');
@@ -2053,14 +2136,13 @@ function renderWorldMapHotspots() {
         zoneEl.appendChild(dotEl);
       }
 
-      zoneEl.onclick = (e) => {
-        e.stopPropagation();
-        if (Date.now() - (window._mapModalOpenedAt || 0) < 420) return;
-        if (window.isUiTouchDebounced?.('worldMapWarp', 400)) return;
-        window.closeWorldMapUI();
+      bindMapTapAction(zoneEl, () => {
+        if (window.isUiTouchDebounced?.('worldMapWarp', 360)) return;
+        window._mapModalOpenedAt = 0;
+        window.closeWorldMapUI(true);
         loadMapData(`${z.regionId}_sub1`);
         window.addChat(`✈️ [월드맵 이동] '${z.regionName}' - ${z.subName} 안전지대로 이동했습니다!`, 'log-sys');
-      };
+      });
       container.appendChild(zoneEl);
     });
   } else {
@@ -2082,21 +2164,21 @@ function renderWorldMapHotspots() {
         zoneEl.appendChild(dotEl);
       }
 
-      zoneEl.onclick = (e) => {
-        e.stopPropagation();
-        if (Date.now() - (window._mapModalOpenedAt || 0) < 420) return;
-        if (window.isUiTouchDebounced?.('worldMapWarp', 400)) return;
-        window.closeWorldMapUI();
+      bindMapTapAction(zoneEl, () => {
+        if (window.isUiTouchDebounced?.('worldMapWarp', 360)) return;
+        window._mapModalOpenedAt = 0;
+        window.closeWorldMapUI(true);
         loadMapData(`${reg.id}_sub1`);
         window.addChat(`✈️ [월드맵 이동] '${reg.name}' - ${reg.sub1} 안전지대로 이동했습니다!`, 'log-sys');
-      };
+      });
       container.appendChild(zoneEl);
     });
   }
 }
 
 window.openRegionDetailMap = async function() {
-  if (window.isUiTouchDebounced?.('openRegionDetailMap', 240)) return;
+  if (window.isUiTouchDebounced?.('openRegionDetailMap', 220)) return;
+  window._mapModalOpenedAt = Date.now();
   ensureAllGameModals();
   const mapData = HardcodedMapDB[currentMapKey];
   if (!mapData) return;
@@ -2152,8 +2234,11 @@ window.openRegionDetailMap = async function() {
   renderRegionDetailOverlay();
 };
 
-window.closeShireMapUI = function() {
-  if (window.isUiTouchDebounced?.('closeShireMapUI', 220)) return;
+window.closeShireMapUI = function(force = false) {
+  // 스마트폰에서 우측 상단 미니맵 터치 직후 발생하는 브라우저 합성 click(30~80ms 뒤)이
+  // 동일한 우측 상단 좌표의 닫기 버튼이나 배경을 눌러 지도가 즉시 닫히는 현상을 원천 차단!
+  if (Date.now() - (window._mapModalOpenedAt || 0) < (force ? 260 : 420)) return;
+  if (!force && window.isUiTouchDebounced?.('closeShireMapUI', 200)) return;
   const ui = document.getElementById('shire-map-ui');
   if (ui) {
     ui.classList.remove('active-modal');
@@ -2192,27 +2277,41 @@ function renderRegionDetailOverlay() {
     zoneEl.style.width = `${zone.widthPct}%`;
     zoneEl.style.height = `${zone.heightPct}%`;
 
-    zoneEl.onclick = (e) => {
-      e.stopPropagation();
-      if (Date.now() - (window._mapModalOpenedAt || 0) < 420) return;
-      if (window.isUiTouchDebounced?.('detailMapMove', 380)) return;
+    bindMapTapAction(zoneEl, () => {
+      if (window.isUiTouchDebounced?.('detailMapMove', 340)) return;
+      window._mapModalOpenedAt = 0;
       movePlayerViaDetailMap(zone.worldX, zone.worldY, zone.zoneType, zone.label);
-    };
+    });
     overlay.appendChild(zoneEl);
   });
 
-  overlay.onclick = (e) => {
-    if (Date.now() - (window._mapModalOpenedAt || 0) < 420) return;
-    if (window.isUiTouchDebounced?.('detailMapMove', 380)) return;
+  let ovDownX = 0;
+  let ovDownY = 0;
+  overlay.onpointerdown = (e) => {
+    ovDownX = e.clientX || 0;
+    ovDownY = e.clientY || 0;
+  };
+  const handleOverlayTap = (e) => {
+    if (Date.now() - (window._mapModalOpenedAt || 0) < 220) return;
+    if (e && e.type === 'pointerup' && ovDownX && ovDownY) {
+      if (Math.hypot((e.clientX || 0) - ovDownX, (e.clientY || 0) - ovDownY) > 22) return;
+    }
+    if (window.isUiTouchDebounced?.('detailMapMove', 340)) return;
     const rect = overlay.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
+    if (!rect.width || !rect.height) return;
+    const clientX = e.clientX ?? (e.changedTouches && e.changedTouches[0]?.clientX) ?? 0;
+    const clientY = e.clientY ?? (e.changedTouches && e.changedTouches[0]?.clientY) ?? 0;
+    const clickX = clientX - rect.left;
+    const clickY = clientY - rect.top;
     const pctX = (clickX / rect.width) * 100;
     const pctY = (clickY / rect.height) * 100;
 
+    window._mapModalOpenedAt = 0;
     const resolved = resolveDetailMapWarpTarget(currentRegionKey, pctX, pctY, 0, 0, '', mapData);
     movePlayerViaDetailMap(resolved.worldX, resolved.worldY, resolved.zoneType, resolved.label);
   };
+  overlay.onpointerup = handleOverlayTap;
+  overlay.onclick = handleOverlayTap;
 }
 
 function updateRealtimeDetailMapMarker() {

@@ -124,21 +124,25 @@ cameraContainer.addChild(window.bottomMagicCircleG);
   let _lastMinimapOpenTs = 0;
   const handleMinimapOpen = (e) => {
     if (e) {
+      if (e.cancelable) e.preventDefault();
       e.stopPropagation();
     }
     const now = Date.now();
-    if (now - _lastMinimapOpenTs < 250) return;
+    if (now - _lastMinimapOpenTs < 240) return;
     _lastMinimapOpenTs = now;
+    window._mapModalOpenedAt = now;
     window.openRegionDetailMap?.();
   };
   const minimapContainerEl = document.getElementById('minimap-container');
   if (minimapContainerEl) {
-    minimapContainerEl.addEventListener('click', handleMinimapOpen);
+    minimapContainerEl.addEventListener('touchend', handleMinimapOpen, { passive: false });
     minimapContainerEl.addEventListener('pointerup', handleMinimapOpen);
+    minimapContainerEl.addEventListener('click', handleMinimapOpen);
   }
   if (mCanvas) {
-    mCanvas.addEventListener('click', handleMinimapOpen);
+    mCanvas.addEventListener('touchend', handleMinimapOpen, { passive: false });
     mCanvas.addEventListener('pointerup', handleMinimapOpen);
+    mCanvas.addEventListener('click', handleMinimapOpen);
   }
 
   bindQuickSlotEvents();
@@ -2505,25 +2509,28 @@ function spawnAltriaMonsters(mapKey, mapData) {
 }
 
 function createMonsterInstance(id, baseMob, x, y, forceBoss = false) {
-  const isBoss = forceBoss || baseMob.name.includes("(B)");
+  const isBoss = forceBoss || String(baseMob.name || '').includes("(B)");
+  const isElite = !isBoss && Boolean(baseMob.isElite);
   const isMagicMob = (baseMob.type === '마법' || baseMob.type === '혼합' || (baseMob.mp && baseMob.mp > 0));
   const maxMpVal = isMagicMob ? (baseMob.mp && baseMob.mp > 0 ? baseMob.mp : 100) : 0;
   return {
     id: id,
     lv: baseMob.lv || 1,
     name: baseMob.name,
-    rawName: baseMob.name,
+    rawName: baseMob.rawName || baseMob.name,
     type: baseMob.type,
     hp: baseMob.hp,
-    maxHp: baseMob.hp,
+    maxHp: baseMob.maxHp || baseMob.hp,
     mp: maxMpVal,
     maxMp: maxMpVal,
     atk: baseMob.atk || 10,
     def: baseMob.def || 2,
-    baseExp: baseMob.exp || 20,
+    baseExp: baseMob.exp || baseMob.baseExp || 20,
     drop: baseMob.drop || [],
     isBoss: isBoss,
-    isAggro: baseMob.aggro === 'Y',
+    isElite: isElite,
+    scaleMult: baseMob.scaleMult || (isElite ? 1.42 : 1.0),
+    isAggro: baseMob.aggro === 'Y' || isElite,
     x: x, y: y,
     spawnX: x, spawnY: y,
     targetX: x, targetY: y,
@@ -2564,10 +2571,15 @@ function loadMapData(mapKey, customSpawn = null) {
   player.path = [];
   window.clearTarget();
 
-  if (fadeOverlay) fadeOverlay.style.opacity = '1';
+  if ( window.showGameLoadingScreen ) {
+    window.showGameLoadingScreen(`🗺️ ${mapData.title || '차원 지역 이동'}`, '지형 오브젝트 및 충돌 영역 구성 중...', 38);
+  } else if (fadeOverlay) {
+    fadeOverlay.style.opacity = '1';
+  }
 
   setTimeout(async () => {
     window.addChat(`🗺️ [지역 진입] ${mapData.title}`, "log-sys");
+    window.showGameLoadingScreen?.(`🗺️ ${mapData.title || '차원 지역 이동'}`, '에테르 필드 지형 및 미니맵 렌더링 중...', 68);
     wallBoxes = [];
     portalBoxes = [];
 
@@ -2851,12 +2863,17 @@ function loadMapData(mapKey, customSpawn = null) {
     }
     window.updateMercHUD();
     window.forceResizePixiApp?.();
+    window.showGameLoadingScreen?.(`🗺️ ${mapData.title || '차원 지역 이동'}`, '서버 월드 실시간 동기화 완료!', 96);
 
     setTimeout(() => {
       window.forceResizePixiApp?.();
-      if (fadeOverlay) fadeOverlay.style.opacity = '0';
+      if (window.hideGameLoadingScreen) {
+        window.hideGameLoadingScreen(80);
+      } else if (fadeOverlay) {
+        fadeOverlay.style.opacity = '0';
+      }
     }, 100);
-  }, 300);
+  }, 120);
 }
 
 // 🕹️ 좌측 하단 플로팅 가상 조이스틱 상태
@@ -3036,7 +3053,7 @@ function processCanvasTap(e) {
     return;
   }
 
-  let clickedMon = monsterList.find(m => !m.isDead && Math.hypot(m.x - cx, m.y - cy) < (m.isBoss ? 70 : 48));
+  let clickedMon = monsterList.find(m => !m.isDead && Math.hypot(m.x - cx, m.y - cy) < (m.isBoss ? 70 : (m.isElite ? 62 : 48)));
   if (clickedMon) {
     player.targetEntity = { type: 'MONSTER', ref: clickedMon };
     player.isMoving = false; player.manualMoving = false; player.path = [];
@@ -3067,7 +3084,8 @@ function updateTopTargetUI(ent) {
   if (!tUI) return;
   if (!ent || ent.isDead) { tUI.style.display = 'none'; return; }
   tUI.style.display = 'flex';
-  document.getElementById('target-name').innerText = ent.name;
+  const prefix = ent.isElite && !String(ent.name || '').includes('거대정예') ? '👑[★거대정예] ' : '';
+  document.getElementById('target-name').innerText = `${prefix}${ent.name}`;
   document.getElementById('target-hp-bar').style.width = `${Math.max(0, (ent.hp / ent.maxHp) * 100)}%`;
 }
 

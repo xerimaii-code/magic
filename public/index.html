@@ -207,7 +207,7 @@
         </div>
 
         <div class="right-hud">
-            <div id="minimap-container"><canvas id="minimapCanvas" width="80" height="80"></canvas></div>
+            <div id="minimap-container" title="터치하여 지역 상세 지도 열기"><canvas id="minimapCanvas" width="80" height="80"></canvas></div>
             <div id="safe-zone-badge" class="safe-badge hidden">🛡️ 안전지대</div>
         </div>
     </div>
@@ -428,7 +428,23 @@
             <button class="menu-btn" onclick="toggleOptionUI()">⚙️ 옵션</button>
         </div>
     </div>
-    <div id="fade-overlay" style="position: absolute; top:0; left:0; width:100%; height:100%; background-color:#000; opacity:0; pointer-events:none; transition: opacity 0.4s ease-in-out; z-index: 9999;"></div>
+    <!-- ⏳ 맵 로딩 화면 (단순 검은 화면 대신 진행 상태·지역명·팁 표시) -->
+    <div id="fade-overlay" class="game-loading-overlay">
+        <div class="game-loading-card">
+            <div class="game-loading-spinner-wrap">
+                <div class="game-loading-ring-outer"></div>
+                <div class="game-loading-ring-inner"></div>
+                <div class="game-loading-core-icon">✨</div>
+            </div>
+            <div id="loading-map-badge" class="game-loading-badge">AETHER CHRONICLES</div>
+            <div id="loading-map-title" class="game-loading-title">차원 지형 로딩 중...</div>
+            <div id="loading-map-sub" class="game-loading-sub">맵 데이터와 서버 동기화를 준비하고 있습니다</div>
+            <div class="game-loading-bar-track">
+                <div id="loading-map-bar" class="game-loading-bar-fill"></div>
+            </div>
+            <div id="loading-map-tip" class="game-loading-tip">💡 사냥 중 일반 몬스터보다 거대한 [★거대정예] 몬스터를 처치하면 대량의 경험치와 골드를 획득합니다!</div>
+        </div>
+    </div>
 </div>
 
 <script>

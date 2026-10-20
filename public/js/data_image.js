@@ -1285,6 +1285,8 @@ export function drawMonster(ctx, x, y, m, tick) {
 
     const n = m.rawName || m.name || "";
     const isBoss = Boolean(m.isBoss);
+    const isElite = !isBoss && Boolean(m.isElite);
+    const eliteScale = isElite ? (Number(m.scaleMult) || 1.42) : 1.0;
     const now = Date.now();
 
     // 🌟 몬스터 공격 모션 (공격 후 280ms 동안 전방 런지 찌르기 및 반동 - 2.5D 각도 반영)
@@ -1293,7 +1295,7 @@ export function drawMonster(ctx, x, y, m, tick) {
     let atkLungeY = 0;
     if (isAttacking) {
         const progress = (now - m.lastAtkTime) / 280;
-        const lungeDist = isBoss ? 26 : 16;
+        const lungeDist = isBoss ? 26 : (isElite ? 21 : 16);
         const lungeFactor = Math.sin(progress * Math.PI);
         const ang = m.atkAngle || 0;
         atkLungeX = Math.cos(ang) * lungeDist * lungeFactor;
@@ -1301,15 +1303,20 @@ export function drawMonster(ctx, x, y, m, tick) {
     }
 
     // 🌟 2.5D 그림자 렌더링 (플레이어 그림자 기울기 비율 ISO_TILT 적용)
-    const shadowRx = isBoss ? 26 : 14;
+    const shadowRx = isBoss ? 26 : (isElite ? 20 : 14);
     const shadowRy = shadowRx * ISO_TILT;
     ctx.ellipse(0, 12, shadowRx, shadowRy, 'rgba(0,0,0,0.45)', null, 0);
 
-    // 보스 몬스터 바닥 위압감 왕관 오라 링 (2.5D 시점 기울기 적용)
+    // 보스 몬스터 바닥 위압감 왕관 오라 링 / ★거대정예 이벤트 몬스터 황금·자수정 오라 링
     if (isBoss) {
         const pulse = Math.sin(tick * 0.08) * 2.5;
         const bossRx = 29 + pulse;
         ctx.ellipse(0, 12, bossRx, bossRx * ISO_TILT, null, '#dc2626', 1.8);
+    } else if (isElite) {
+        const pulse = Math.sin(tick * 0.11) * 2.2;
+        const eliteRx = 23 + pulse;
+        ctx.ellipse(0, 12, eliteRx, eliteRx * ISO_TILT, 'rgba(250, 204, 21, 0.14)', '#facc15', 1.8);
+        ctx.ellipse(0, 12, (eliteRx - 4), (eliteRx - 4) * ISO_TILT, null, '#c084fc', 1.2);
     }
 
     const bounce = Math.sin(tick * 0.1 + x * 0.05) * (isBoss ? 1.5 : 2.5);
@@ -1323,7 +1330,7 @@ export function drawMonster(ctx, x, y, m, tick) {
     let hitSquashY = 1.0;
     if (hitElapsed >= 0 && hitElapsed < 185) {
         const hitFactor = Math.sin((hitElapsed / 185) * Math.PI);
-        const recoilDist = (m.lastHitCrit ? 11.5 : 7.5) * (isBoss ? 0.65 : 1.0);
+        const recoilDist = (m.lastHitCrit ? 11.5 : 7.5) * (isBoss ? 0.65 : (isElite ? 0.8 : 1.0));
         const hAng = typeof m.lastHitAngle === 'number' ? m.lastHitAngle : 0;
         hitRecoilX = Math.cos(hAng) * recoilDist * hitFactor;
         hitRecoilY = Math.sin(hAng) * recoilDist * hitFactor * 0.65;
@@ -1332,8 +1339,8 @@ export function drawMonster(ctx, x, y, m, tick) {
     }
 
     ctx.translate(atkLungeX + hitRecoilX, bounce + atkLungeY + hitRecoilY);
-    if (hitSquashX !== 1.0 || hitSquashY !== 1.0) {
-        ctx.scale(hitSquashX, hitSquashY);
+    if (eliteScale !== 1.0 || hitSquashX !== 1.0 || hitSquashY !== 1.0) {
+        ctx.scale(eliteScale * hitSquashX, eliteScale * hitSquashY);
     }
 
     if (hitElapsed >= 0 && hitElapsed < 150) {

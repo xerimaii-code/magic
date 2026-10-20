@@ -327,7 +327,7 @@ window.renderBeginnerGuideNpcBody = function(tabKey = 'basic') {
     { key: 'merc',  label: '🛡️ 용병·전술·보급' },
     { key: 'equip', label: '✨ 장비·강화·가방' },
     { key: 'party', label: '🎗️ 파티·보스·월드' },
-    { key: 'ether', label: '📖 에테르도감 20종' }
+    { key: 'ether', label: '📖 에테르도감 10선' }
   ];
 
   const tabBarHtml = `
@@ -426,14 +426,17 @@ window.renderBeginnerGuideNpcBody = function(tabKey = 'basic') {
     contentHtml = `
       <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.52; color:#f3f4f6;">
         <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
-          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">📖 1차 몰입형 콘텐츠 (1 ~ 10)</div>
-          1. <b>몬스터 생태 도감</b> · 2. <b>지역 수호 칭호 시스템</b> · 3. <b>에테르 보물 고블린</b> · 4. <b>균열 엘리트 챔피언</b> · 5. <b>무기 5대 원소 공명</b> · 6. <b>보스 기여도 전광판 & 파티 주사위</b> · 7. <b>에테르 연대기(15장)</b> · 8. <b>모닥불 온기 & 음유시인 담화</b> · 9. <b>차원 마나 기류(실시간 날씨)</b> · 10. <b>용병 유대감 & 전술 대사</b>
+          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">⚡ 사냥 돌발 이벤트 & 전투 가속 (1 ~ 3)</div>
+          1. <b>👑 거대 정예 몬스터 출현</b> (사냥 중 일반 몬스터보다 1.42배 거대한 정예 돌발 출현 · 보상 2.2배)<br>
+          2. <b>💰 황금 보물 고블린 조우</b> (차원 틈새 돌발 출현 · 추가 골드 주머니 자동 지급)<br>
+          3. <b>🔥 연속 사냥 콤보 & 각성 피버</b> (12초 내 연속 처치 시 각성 오라 & 자동 체력 회복)
         </div>
         <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
-          <div style="color:#38bdf8; font-weight:bold; font-size:12.5px; margin-bottom:3px;">🌟 2차 몰입형 콘텐츠 (11 ~ 20)</div>
-          11. <b>왕립 일일 현상수배 게시판</b> · 12. <b>무기 숙련도 & 전장의 훈장</b> · 13. <b>고대 에테르 성물함</b> · 14. <b>차원 방랑 상인 아카샤</b> · 15. <b>에테르 12성좌 오늘의 운세</b> · 16. <b>모험가 길드 명예 등급</b> · 17. <b>보스 토벌전 전술 브리핑</b> · 18. <b>대장장이 토르딘의 명장 각인</b> · 19. <b>15차원 탐사 발자취 지도</b> · 20. <b>연속 사냥 콤보 & 각성 피버</b>
+          <div style="color:#38bdf8; font-weight:bold; font-size:12.5px; margin-bottom:3px;">📖 자동 누적 성장 & 환경 교감 (4 ~ 10)</div>
+          4. <b>몬스터 생태 도감</b> · 5. <b>지역 수호 칭호</b> · 6. <b>무기 숙련도 & 훈장</b> · 7. <b>보스 성물함 & 전광판</b> · 8. <b>15차원 탐사 발자취</b> · 9. <b>마을 모닥불 온기</b> · 10. <b>실시간 기류 & 용병 교감</b><br>
+          <span style="color:#86efac; font-size:11.5px;">※ 모든 항목은 별도로 버튼을 누르거나 관리하지 않아도 사냥 중 100% 자동으로 작동하고 영구 능력치가 누적됩니다!</span>
         </div>
-        <button type="button" class="auth-primary-btn" style="padding:7px; font-size:12px;" onclick="closeNpcModal(); window.toggleImmersive20Modal && window.toggleImmersive20Modal();">📖 에테르 도감 (20종 통합 창) 바로 열기</button>
+        <button type="button" class="auth-primary-btn" style="padding:7px; font-size:12px;" onclick="closeNpcModal(); window.toggleImmersive20Modal && window.toggleImmersive20Modal();">📖 에테르 도감 (자동형 10선) 바로 열기</button>
       </div>
     `;
   }
@@ -1359,6 +1362,16 @@ function calculateCombatStats(includePending = false) {
   let passiveCritDmgPct = 0;
   let passiveMaxHpPct = 0;
   let passiveMaxMpPct = 0;
+
+  // 📘 에테르 도감(자동형 10선)에서 누적된 영구 능력치 자동 반영
+  if (window.ImmersiveSystem && typeof window.ImmersiveSystem.getPassiveBonusSummary === 'function') {
+    const immBon = window.ImmersiveSystem.getPassiveBonusSummary();
+    passiveAtkBonus += (immBon.atkBonus || 0);
+    passiveMAtkBonus += (immBon.atkBonus || 0);
+    passiveDefBonus += (immBon.defBonus || 0);
+    passiveMDefBonus += Math.floor((immBon.defBonus || 0) * 0.8);
+    bonusHp += (immBon.hpBonus || 0);
+  }
 
   const mySkillList = SKILLS_DB[player.class] || [];
   mySkillList.forEach(sk => {

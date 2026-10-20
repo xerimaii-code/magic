@@ -1001,12 +1001,14 @@ window.executeDeleteCharacter = async function() {
 window.enterGameWithCharacter = async function(slotIdx) {
   if (window.isUiTouchDebounced?.('enterGameWithCharacter', 500)) return;
   window.tryEnterFullscreenMode?.();
+  window.showGameLoadingScreen?.('⚡ 에테르 월드 접속 준비 중...', '수파베이스 DB에서 최신 캐릭터 데이터를 불러오고 있습니다...', 24);
 
   purgeBrowserLocalGameCache();
   await loadAccountCharacterSlots(true);
   await loadAccountSharedStorage(true);
   const c = accountCharacters[slotIdx];
   if (!c) {
+    window.hideGameLoadingScreen?.(0);
     renderCharacterSlots();
     window.showSystemAlertModal('⚠️ 캐릭터 슬롯 갱신됨', '다른 기기에서 캐릭터 상태가 변경되어 슬롯 목록을 최신으로 업데이트했습니다.');
     return;

@@ -1273,6 +1273,7 @@ function handleCentralServerPacket(msg) {
     syncAuthoritativeMonstersFull(msg.monsters || []);
     syncAuthoritativeGroundItems(msg.groundItems || []);
     syncAuthoritativePlayersList(msg.players || []);
+    window.hideGameLoadingScreen?.(60);
     return;
   }
 
@@ -1317,6 +1318,10 @@ function handleCentralServerPacket(msg) {
             m.stunUntil = tup[7] || 0;
             m.defDownUntil = tup[8] || 0;
             if (tup[9] !== undefined) m.respawnTimer = tup[9];
+            if (tup[10] !== undefined) {
+              m.isElite = !m.isBoss && Boolean(tup[10]);
+              m.scaleMult = m.isElite ? 1.42 : 1.0;
+            }
           } else {
             if (tup[5] !== undefined) m.respawnTimer = tup[5];
             m.stunUntil = tup[6] || 0;
@@ -1489,7 +1494,13 @@ function handleCentralServerPacket(msg) {
 
     if (isContributor || isKiller) {
       const mName = msg.mobName || '';
-      window.ImmersiveSystem?.onMonsterKilled?.(ent || { rawName: msg.rawName || mName, name: mName, isBoss: Boolean(msg.isBoss), lv: msg.mobLv || 1 }, 0);
+      const wasEliteMob = Boolean(msg.isElite || ent?.isElite);
+      window.ImmersiveSystem?.onMonsterKilled?.(
+        ent
+          ? { ...ent, isElite: wasEliteMob }
+          : { rawName: msg.rawName || mName, name: mName, isBoss: Boolean(msg.isBoss), isElite: wasEliteMob, lv: msg.mobLv || 1 },
+        msg.droppedGold || 0
+      );
       GameDB.Quests.forEach(q => {
         const st = player.quests[q.id];
         if (st && st.status === 'ACTIVE' && mName.includes(q.targetName)) {
@@ -1536,6 +1547,8 @@ function handleCentralServerPacket(msg) {
       ent.maxHp = sm.maxHp;
       ent.mp = sm.mp;
       ent.maxMp = sm.maxMp;
+      ent.isElite = !ent.isBoss && Boolean(sm.isElite);
+      ent.scaleMult = sm.scaleMult || (ent.isElite ? 1.42 : 1.0);
       ent.x = sm.x;
       ent.y = sm.y;
       ent.serverX = sm.x;
@@ -1544,6 +1557,8 @@ function handleCentralServerPacket(msg) {
       ent.defDownUntil = 0;
       if (ent.isBoss) {
         window.addChat(`👑 [보스 출현] '${ent.name}'이(가) 성역에 다시 나타났습니다!`, 'log-kill');
+      } else if (ent.isElite && Math.hypot(ent.x - player.x, ent.y - player.y) <= 950) {
+        window.addChat(`⚡ [★거대정예 출현] 근처에 일반 몬스터보다 거대한 정예 '${ent.name}'이(가) 나타났습니다!`, 'log-kill');
       }
     }
     return;

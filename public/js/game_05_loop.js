@@ -2029,24 +2029,24 @@ function gameLoop(rawDelta) {
     }
 
     if (player.targetEntity && player.targetEntity.ref === m) {
-      drawIsoSelectionRing(window.bottomMagicCircleG, m.x, m.y + 12, m.isBoss ? 34 : 20, 0xef4444, 0xfca5a5, tick, Boolean(m.isBoss), 'target');
+      drawIsoSelectionRing(window.bottomMagicCircleG, m.x, m.y + 12, m.isBoss ? 34 : (m.isElite ? 27 : 20), 0xef4444, 0xfca5a5, tick, Boolean(m.isBoss || m.isElite), 'target');
     }
 
     drawMonster(pCtx, m.x, m.y, m, tick);
 
-    let barW = m.isBoss ? 68 : 42;
-    let hpH = m.isBoss ? 6 : 4;
+    let barW = m.isBoss ? 68 : (m.isElite ? 54 : 42);
+    let hpH = m.isBoss ? 6 : (m.isElite ? 5 : 4);
     let barX = Math.round(m.x - barW / 2);
-    let barY = Math.round(m.y - (m.isBoss ? 54 : 32));
+    let barY = Math.round(m.y - (m.isBoss ? 54 : (m.isElite ? 42 : 32)));
 
-    uiG.lineStyle(1, 0x000000, 0.9);
+    uiG.lineStyle(1, m.isElite ? 0xfacc15 : 0x000000, 0.9);
     uiG.beginFill(0x1f2937, 0.85);
     uiG.drawRect(barX, barY, barW, hpH);
     uiG.endFill();
 
     let hpRatio = Math.max(0, Math.min(1, m.hp / m.maxHp));
     uiG.lineStyle(0);
-    uiG.beginFill(m.isBoss ? 0xf43f5e : 0xef4444, 1);
+    uiG.beginFill(m.isBoss ? 0xf43f5e : (m.isElite ? 0xa855f7 : 0xef4444), 1);
     uiG.drawRect(barX + 0.5, barY + 0.5, (barW - 1) * hpRatio, hpH - 1);
     uiG.endFill();
 
@@ -2065,11 +2065,15 @@ function gameLoop(rawDelta) {
       uiG.endFill();
     }
 
+    const dispMobName = (m.isElite && !String(m.name || '').includes('거대정예')) ? `👑[★거대정예] ${m.name}` : m.name;
+    const mCol = m.isBoss ? 0xfacc15 : (m.isElite ? 0xfde047 : ((m.lv - player.level >= 5) ? 0xf87171 : (m.maxMp > 0 ? 0x93c5fd : 0xffffff)));
     if (!m.nameTag) {
-      const mCol = m.isBoss ? 0xfacc15 : ((m.lv - player.level >= 5) ? 0xf87171 : (m.maxMp > 0 ? 0x93c5fd : 0xffffff));
-      m.nameTag = createCrispPixiText(m.name, m.isBoss ? 12 : 11, mCol);
+      m.nameTag = createCrispPixiText(dispMobName, m.isBoss ? 12 : (m.isElite ? 11.5 : 11), mCol);
       m.nameTag.anchor.set(0.5, 1);
       uiContainer.addChild(m.nameTag);
+    } else if (m.nameTag.text !== dispMobName) {
+      m.nameTag.text = dispMobName;
+      m.nameTag.style.fill = mCol;
     }
     m.nameTag.visible = true;
     m.nameTag.x = Math.round(m.x);
@@ -2439,6 +2443,22 @@ function gameLoop(rawDelta) {
 
   // 멀티플레이어 실시간 위치 동기화 패킷 전송 (120ms 간격)
   window.tickMultiplayerSync?.(now);
+
+  // 스마트폰 LTE/다수 교전 환경에서 파티클·플로팅텍스트 과다 누적으로 인한 가비지컬렉션(GC) 스파이크 방지
+  if (activeEffects.length > 46) {
+    activeEffects.splice(0, activeEffects.length - 46);
+  }
+  if (floatingTexts.length > 38) {
+    const overflowCnt = floatingTexts.length - 38;
+    for (let k = 0; k < overflowCnt; k++) {
+      const oldFt = floatingTexts[k];
+      if (oldFt && oldFt.pixiText) {
+        if (oldFt.pixiText.parent) oldFt.pixiText.parent.removeChild(oldFt.pixiText);
+        try { oldFt.pixiText.destroy(); } catch (e) {}
+      }
+    }
+    floatingTexts.splice(0, overflowCnt);
+  }
 
   for (let i = floatingTexts.length - 1; i >= 0; i--) {
     let ft = floatingTexts[i];
