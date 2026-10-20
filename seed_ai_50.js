@@ -218,8 +218,10 @@ const FULL_SKILL_DB = {
   W05: { id: 'W05', class: 'knight', circle: 2, reqLv: 18, name: '휠윈드',         mp: 22, cd: 4000,  mult: 1.25, hits: 3, aoe: true, maxTargets: 5, type: 'attack' },
   W06: { id: 'W06', class: 'knight', circle: 2, reqLv: 20, name: '레이지',         mp: 0,  cd: 14000, mult: 0,    aoe: false, type: 'buff', buffKey: 'RAGE', dur: 35 },
   W07: { id: 'W07', class: 'knight', circle: 2, reqLv: 22, name: '차지',           mp: 16, cd: 4500,  mult: 2.10, aoe: false, type: 'charge', stunSec: 1.5 },
-  W09: { id: 'W09', class: 'knight', circle: 3, reqLv: 38, name: '카운터 어택',     mp: 22, cd: 7500,  mult: 0,    aoe: false, type: 'buff', buffKey: 'COUNTER', dur: 5 },
-  W10: { id: 'W10', class: 'knight', circle: 3, reqLv: 42, name: '워크라이',       mp: 28, cd: 8500,  mult: 1.85, aoe: true, maxTargets: 6, type: 'debuff', defDown: true },
+  W11: { id: 'W11', class: 'knight', circle: 1, reqLv: 5,  name: '아이언 스킨',     mp: 12, cd: 4000,  mult: 0,    aoe: false, type: 'buff', buffKey: 'IRON_SKIN', dur: 300, allyCast: true },
+  W12: { id: 'W12', class: 'knight', circle: 2, reqLv: 24, name: '가디언 아머',     mp: 26, cd: 8000,  mult: 0,    aoe: false, type: 'buff', buffKey: 'GUARDIAN_ARMOR', dur: 240, allyCast: true },
+  W09: { id: 'W09', class: 'knight', circle: 3, reqLv: 38, name: '카운터 어택',     mp: 22, cd: 7000,  mult: 0,    aoe: false, type: 'buff', buffKey: 'COUNTER', dur: 5 },
+  W10: { id: 'W10', class: 'knight', circle: 3, reqLv: 42, name: '워크라이',       mp: 28, cd: 8000,  mult: 1.95, aoe: true, maxTargets: 6, type: 'debuff', defDown: true },
 
   // ---------------- 궁수 (Archer: AS1~5, A01~A15) ----------------
   AS1: { id: 'AS1', class: 'ranger', circle: 0, reqLv: 1,  name: '보우 마스터리',   mp: 0,  cd: 0,     type: 'passive', bonusPAtk: 12, bonusHit: 4 },
@@ -227,7 +229,7 @@ const FULL_SKILL_DB = {
   AS5: { id: 'AS5', class: 'ranger', circle: 0, reqLv: 28, name: '데들리 포커스',   mp: 0,  cd: 0,     type: 'passive', bonusCritDmg: 20 },
   A04: { id: 'A04', class: 'ranger', circle: 1, reqLv: 1,  name: '파이어 샷',       mp: 6,  cd: 1200,  mult: 1.70, aoe: false, type: 'attack' },
   AS2: { id: 'AS2', class: 'ranger', circle: 1, reqLv: 1,  name: '더블 샷',         mp: 9,  cd: 1500,  mult: 1.18, hits: 2, aoe: false, type: 'attack' },
-  A01: { id: 'A01', class: 'ranger', circle: 1, reqLv: 3,  name: '네이처스 터치',   mp: 10, cd: 1800,  heal: 150,  aoe: false, type: 'heal', allyCast: true },
+  A01: { id: 'A01', class: 'ranger', circle: 1, reqLv: 3,  name: '네이처스 터치',   mp: 10, cd: 1800,  heal: 310,  aoe: false, type: 'heal', allyCast: true },
   A02: { id: 'A02', class: 'ranger', circle: 1, reqLv: 4,  name: '인탱글',         mp: 10, cd: 3500,  mult: 1.75, aoe: false, type: 'debuff', stunSec: 2.2, defDown: true },
   A03: { id: 'A03', class: 'ranger', circle: 1, reqLv: 5,  name: '이글 아이',       mp: 14, cd: 3500,  mult: 0,    aoe: false, type: 'buff', buffKey: 'EAGLE_EYE', dur: 300, allyCast: true },
   A05: { id: 'A05', class: 'ranger', circle: 1, reqLv: 6,  name: '윈드 워크',       mp: 12, cd: 3500,  mult: 0,    aoe: false, type: 'buff', buffKey: 'WIND_WALK', dur: 300, allyCast: true },
@@ -254,14 +256,14 @@ const FULL_SKILL_DB = {
   M04: { id: 'M04', class: 'wizard', circle: 1, reqLv: 4,  name: '윈드 컷',         mp: 8,   cd: 1600,  mult: 1.25, aoe: true, maxTargets: 3, type: 'attack' },
   M05: { id: 'M05', class: 'wizard', circle: 1, reqLv: 3,  name: '라이트',         mp: 4,   cd: 2000,  mult: 0,    aoe: false, type: 'buff', buffKey: 'LIGHT', dur: 600, allyCast: true },
   M06: { id: 'M06', class: 'wizard', circle: 1, reqLv: 5,  name: '쉴드',           mp: 10,  cd: 3500,  mult: 0,    aoe: false, type: 'buff', buffKey: 'SHIELD', dur: 300, allyCast: true },
-  M07: { id: 'M07', class: 'wizard', circle: 1, reqLv: 4,  name: '힐링',           mp: 10,  cd: 1800,  heal: 95,   aoe: false, type: 'heal', allyCast: true },
+  M07: { id: 'M07', class: 'wizard', circle: 1, reqLv: 4,  name: '힐링',           mp: 10,  cd: 1800,  heal: 220,   aoe: false, type: 'heal', allyCast: true },
   M08: { id: 'M08', class: 'wizard', circle: 1, reqLv: 6,  name: '텔레포트',       mp: 10,  cd: 1500,  mult: 0,    aoe: false, type: 'utility' },
   // 2서클
   M09: { id: 'M09', class: 'wizard', circle: 2, reqLv: 10, name: '파이어 볼',       mp: 14,  cd: 2200,  mult: 1.90, aoe: true, maxTargets: 5, type: 'attack' },
   M10: { id: 'M10', class: 'wizard', circle: 2, reqLv: 9,  name: '콜드 빔',         mp: 12,  cd: 1500,  mult: 2.05, aoe: false, type: 'attack' },
   M11: { id: 'M11', class: 'wizard', circle: 2, reqLv: 10, name: '라이트닝',       mp: 14,  cd: 1800,  mult: 2.25, aoe: false, skyDrop: true, type: 'attack' },
   M12: { id: 'M12', class: 'wizard', circle: 2, reqLv: 11, name: '커스 포이즌',     mp: 10,  cd: 3200,  mult: 1.65, aoe: false, type: 'debuff', defDown: true },
-  M13: { id: 'M13', class: 'wizard', circle: 2, reqLv: 12, name: '그레이트 힐',     mp: 20,  cd: 2200,  heal: 225,  aoe: false, type: 'heal', allyCast: true },
+  M13: { id: 'M13', class: 'wizard', circle: 2, reqLv: 12, name: '그레이트 힐',     mp: 20,  cd: 2200,  heal: 480,  aoe: false, type: 'heal', allyCast: true },
   M14: { id: 'M14', class: 'wizard', circle: 2, reqLv: 12, name: '인챈트 스탯',     mp: 25,  cd: 4000,  mult: 0,    aoe: false, type: 'buff', buffKey: 'ENCHANT_STAT', dur: 300, allyCast: true },
   M15: { id: 'M15', class: 'wizard', circle: 2, reqLv: 13, name: '멘탈 포커스',     mp: 20,  cd: 5000,  mult: 0,    aoe: false, type: 'buff', buffKey: 'MENTAL_FOCUS', dur: 300, allyCast: true },
   M16: { id: 'M16', class: 'wizard', circle: 2, reqLv: 11, name: '블라인드',       mp: 14,  cd: 3500,  mult: 1.45, aoe: false, type: 'debuff' },
@@ -316,12 +318,12 @@ const FULL_SKILL_DB = {
   KS9: { id: 'W05', class: 'knight', circle: 2, reqLv: 18, name: '휠윈드',         mp: 22, cd: 4000, mult: 1.25, hits: 3, aoe: true, maxTargets: 5, type: 'attack' },
   MS1: { id: 'M09', class: 'wizard', circle: 2, reqLv: 10, name: '파이어 볼',       mp: 14, cd: 2200, mult: 1.90, aoe: true, maxTargets: 5, type: 'attack' },
   MS2: { id: 'M10', class: 'wizard', circle: 2, reqLv: 9,  name: '콜드 빔',         mp: 12, cd: 1500, mult: 2.05, aoe: false, type: 'attack' },
-  MS3: { id: 'M07', class: 'wizard', circle: 1, reqLv: 4,  name: '힐링',           mp: 10, cd: 1800, heal: 95,   aoe: false, type: 'heal', allyCast: true },
+  MS3: { id: 'M07', class: 'wizard', circle: 1, reqLv: 4,  name: '힐링',           mp: 10, cd: 1800, heal: 220,   aoe: false, type: 'heal', allyCast: true },
   MS4: { id: 'M14', class: 'wizard', circle: 2, reqLv: 12, name: '인챈트 스탯',     mp: 25, cd: 4000, mult: 0,    aoe: false, type: 'buff', buffKey: 'ENCHANT_STAT', dur: 300, allyCast: true },
   MS5: { id: 'M11', class: 'wizard', circle: 2, reqLv: 10, name: '라이트닝',       mp: 14, cd: 1800, mult: 2.25, aoe: false, skyDrop: true, type: 'attack' },
   MS6: { id: 'M36', class: 'wizard', circle: 5, reqLv: 74, name: '블리자드',       mp: 85, cd: 8500, mult: 4.10, aoe: true, maxTargets: 8, skyDrop: true, type: 'attack' },
   MS7: { id: 'M26', class: 'wizard', circle: 4, reqLv: 42, name: '이럽션',         mp: 38, cd: 2800, mult: 3.80, aoe: false, type: 'attack' },
-  MS8: { id: 'M13', class: 'wizard', circle: 2, reqLv: 12, name: '그레이트 힐',     mp: 20, cd: 2200, heal: 225,  aoe: false, type: 'heal', allyCast: true },
+  MS8: { id: 'M13', class: 'wizard', circle: 2, reqLv: 12, name: '그레이트 힐',     mp: 20, cd: 2200, heal: 480,  aoe: false, type: 'heal', allyCast: true },
   MS9: { id: 'M43', class: 'wizard', circle: 6, reqLv: 100, name: '미티어 스웜',   mp: 130, cd: 12000, mult: 6.80, aoe: true, maxTargets: 10, skyDrop: true, type: 'attack' }
 };
 

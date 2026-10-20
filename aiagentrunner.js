@@ -36,20 +36,20 @@ const fastHypot = (dx, dy) => Math.sqrt(dx * dx + dy * dy);
 const SKILL_DB = FULL_SKILL_DB;
 
 const POTION_HEAL_MAP = {
-  C_HP01: { hp: 60 },
-  C_HP02: { hp: 160 },
-  C_HP03: { hp: 380 },
-  C_HP04: { hp: 800 },
+  C_HP01: { hp: 185 },
+  C_HP02: { hp: 520 },
+  C_HP03: { hp: 650 },
+  C_HP04: { hp: 950 },
   C_HP05: { hp: 1600 },
-  C_P01:  { hp: 60 },
-  C_P02:  { hp: 160 },
-  C_P03:  { hp: 380 },
-  C_P04:  { hp: 800 },
+  C_P01:  { hp: 185 },
+  C_P02:  { hp: 520 },
+  C_P03:  { mp: 120 },
+  C_P04:  { mp: 320 },
   C_P05:  { hp: 1600 },
-  C_MP01: { mp: 45 },
-  C_MP02: { mp: 110 },
-  C_MP03: { mp: 260 },
-  C_MP04: { mp: 550 }
+  C_MP01: { mp: 120 },
+  C_MP02: { mp: 320 },
+  C_MP03: { mp: 480 },
+  C_MP04: { mp: 750 }
 };
 
 let currentGroqModel = 'llama-3.3-70b-versatile';
@@ -878,9 +878,61 @@ class AIAgentClient {
   }
 
   executeCombatAndLootRoutine(now) {
-    // A. 주변 바닥 아이템 실시간 루팅 (240px 이내)
+    const isPartyLeader = Boolean(this.partyData && this.partyData.leaderCharId === this.charId);
+    const isPartyFollower = Boolean(this.partyData && this.partyData.leaderCharId && this.partyData.leaderCharId !== this.charId);
+    const isPartyFocusMode = Boolean(this.partyData && this.partyData.partyMode === 'FOCUS');
+    const prevTargetId = this.targetMobId;
+
+    // 0. 먼저 현재 타겟 몬스터 생존/유효성을 선검증하여 죽은 타겟 ID가 남지 않도록 즉시 정리!
+    if (this.targetMobId) {
+      const liveMob = this.worldMonsters.get(String(this.targetMobId));
+      if (!liveMob || liveMob.isDead || liveMob.hp <= 0 || isInTownSafeZone(this.mapKey, liveMob.x, liveMob.y)) {
+        this.targetMob = null;
+        this.targetMobId = null;
+      } else {
+        this.targetMob = liveMob;
+      }
+    }
+
+    // B. 파티 팔로워(Follower) 모드 및 점사 타겟 최우선 동기화 (루팅보다 점사 타겟 동기화를 먼저 수행!)
+    let leaderLive = null;
+    if (isPartyFollower) {
+      const leaderMem = (this.partyData.members || []).find(m => m.charId === this.partyData.leaderCharId);
+      leaderLive = this.worldPlayers.get(this.partyData.leaderCharId) || leaderMem;
+
+      if (isPartyFocusMode) {
+        const focusId = this.partyData.leaderTargetMobId || leaderLive?.targetMobId || null;
+        let focusMob = focusId ? this.worldMonsters.get(String(focusId)) : null;
+        if (focusMob && (focusMob.isDead || focusMob.hp <= 0 || isInTownSafeZone(this.mapKey, focusMob.x, focusMob.y))) {
+          focusMob = null;
+        }
+        // 파티장의 타겟 ID가 순간 비어있더라도 파티장 바로 옆(240px 이내)에서 교전 중인 몬스터가 있으면 즉시 함께 점사!
+        if (!focusMob && leaderLive && typeof leaderLive.x === 'number' && !isInTownSafeZone(this.mapKey, leaderLive.x, leaderLive.y)) {
+          let bestLdrDist = 240;
+          for (const m of this.worldMonsters.values()) {
+            if (!m || m.isDead || m.hp <= 0 || isInTownSafeZone(this.mapKey, m.x, m.y)) continue;
+            const dLdr = fastHypot(m.x - leaderLive.x, m.y - leaderLive.y);
+            if (dLdr < bestLdrDist) {
+              bestLdrDist = dLdr;
+              focusMob = m;
+            }
+          }
+        }
+        if (focusMob) {
+          this.targetMob = focusMob;
+          this.targetMobId = String(focusMob.id);
+        } else {
+          // 점사 모드에서 파티장이 타겟팅한 몬스터가 없으면 임의로 딴 몬스터를 치러 이탈하지 않고 파티장을 따라 이동!
+          this.targetMob = null;
+          this.targetMobId = null;
+        }
+      }
+    }
+
+    // A. 주변 바닥 아이템 실시간 루팅 (파티장 또는 점사 교전 중일 때는 발밑 85px 이내만 즉시 줍고 점사 흐름 유지!)
+    const hasActiveFocusTarget = Boolean(isPartyFollower && isPartyFocusMode && this.targetMob);
     let nearestItem = null;
-    let minItemDist = 240;
+    let minItemDist = (isPartyLeader || hasActiveFocusTarget) ? 85 : 220;
     for (const item of this.worldItems.values()) {
       if (!item || isInTownSafeZone(this.mapKey, item.x, item.y)) continue;
       const d = fastHypot(item.x - this.x, item.y - this.y);
@@ -890,7 +942,7 @@ class AIAgentClient {
       }
     }
     if (nearestItem) {
-      if (minItemDist <= 58) {
+      if (minItemDist <= 62) {
         this.sendWs({
           type: 'PICKUP_GROUND_ITEM',
           charId: this.charId,
@@ -898,7 +950,7 @@ class AIAgentClient {
           itemUid: nearestItem.uid
         });
         this.worldItems.delete(String(nearestItem.uid));
-      } else {
+      } else if (!isPartyLeader && !hasActiveFocusTarget) {
         this.moveX = nearestItem.x;
         this.moveY = nearestItem.y;
         this.isWalking = true;
@@ -906,22 +958,12 @@ class AIAgentClient {
       }
     }
 
-    // B. 파티 팔로워(Follower) 모드 및 점사 타겟 동기화
-    if (this.partyData && this.partyData.leaderCharId && this.partyData.leaderCharId !== this.charId) {
-      const leaderMem = (this.partyData.members || []).find(m => m.charId === this.partyData.leaderCharId);
-      const leaderLive = this.worldPlayers.get(this.partyData.leaderCharId) || leaderMem;
-
-      if (this.partyData.partyMode === 'FOCUS' && this.partyData.leaderTargetMobId) {
-        const focusMob = this.worldMonsters.get(String(this.partyData.leaderTargetMobId));
-        if (focusMob && !focusMob.isDead && focusMob.hp > 0) {
-          this.targetMob = focusMob;
-          this.targetMobId = String(focusMob.id);
-        }
-      }
-
+    if (isPartyFollower) {
       if (leaderLive && typeof leaderLive.x === 'number' && (!leaderLive.mapKey || leaderLive.mapKey === this.mapKey)) {
         const distToLeader = fastHypot(leaderLive.x - this.x, leaderLive.y - this.y);
-        if (distToLeader > 290) {
+        // 점사 타겟이 없을 때이거나 파티장과 너무 멀어졌을 때(점사 중에는 520px, 비점사 시 260px) 파티장 곁으로 집결
+        const maxFollowLeash = hasActiveFocusTarget ? 520 : (isPartyFocusMode ? 120 : 280);
+        if (distToLeader > maxFollowLeash) {
           const ang = Math.atan2(leaderLive.y - this.y, leaderLive.x - this.x);
           this.moveX = leaderLive.x - Math.cos(ang) * this.followDist;
           this.moveY = leaderLive.y - Math.sin(ang) * this.followDist;
@@ -949,33 +991,40 @@ class AIAgentClient {
       }
     }
 
-    // C. 타겟 유효성 확인 및 신규 몬스터 타겟팅
-    if (this.targetMobId) {
-      const liveMob = this.worldMonsters.get(String(this.targetMobId));
-      if (!liveMob || liveMob.isDead || liveMob.hp <= 0 || isInTownSafeZone(this.mapKey, liveMob.x, liveMob.y)) {
-        this.targetMob = null;
-        this.targetMobId = null;
-      } else {
-        this.targetMob = liveMob;
-      }
-    }
-
-    if (!this.targetMob) {
+    // C. 신규 몬스터 타겟팅 (점사 모드의 팔로워는 이미 위에서 리더 타겟으로 동기화되었으므로 임의 타겟팅 생략)
+    if (!this.targetMob && !(isPartyFollower && isPartyFocusMode)) {
       const candidates = [];
       for (const m of this.worldMonsters.values()) {
         if (!m || m.isDead || m.hp <= 0) continue;
         if (isInTownSafeZone(this.mapKey, m.x, m.y)) continue;
+        if (isPartyFollower && leaderLive && typeof leaderLive.x === 'number') {
+          const dLeader = fastHypot(m.x - leaderLive.x, m.y - leaderLive.y);
+          if (dLeader > 560) continue;
+        }
         const d = fastHypot(m.x - this.x, m.y - this.y);
         if (d <= 1450) candidates.push({ mob: m, dist: d });
       }
       if (candidates.length > 0) {
         candidates.sort((a, b) => {
-          if (Boolean(a.mob.isBoss) !== Boolean(b.mob.isBoss)) return a.mob.isBoss ? -1 : 1;
+          const aNearBoss = Boolean(a.mob.isBoss && a.dist <= 320);
+          const bNearBoss = Boolean(b.mob.isBoss && b.dist <= 320);
+          if (aNearBoss !== bNearBoss) return aNearBoss ? -1 : 1;
           return a.dist - b.dist;
         });
         this.targetMob = candidates[0].mob;
         this.targetMobId = String(this.targetMob.id);
       }
+    }
+
+    // 파티장인 AI의 타겟이 변경된 즉시 서버에 동기화 패킷 전송 (파티원 점사 지연 0ms 보장!)
+    if (isPartyLeader && this.targetMobId !== prevTargetId) {
+      this.sendWs({
+        type: 'PLAYER_SYNC',
+        charId: this.charId,
+        mapKey: this.mapKey,
+        regionKey: this.regionKey,
+        player: this.buildPlayerSyncPayload()
+      });
     }
 
     // D. 타겟 교전 기동 (근거리 차지 W07 / 원거리 카이팅 / 1~6서클 스마트 스킬 시전)

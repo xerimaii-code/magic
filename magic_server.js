@@ -1408,7 +1408,220 @@ setInterval(() => {
   }
 }, 5000);
 
+
+const GM_MASTER_EMAIL = 'xerimaii@gmail.com';
+const GM_CONFIG_USER_ID = '00000000-0000-0000-0000-000000000000';
+const GM_DEFAULT_PASSWORD = '90051254';
+let cachedGmPassword = null;
+let gmPasswordResetArmed = false;
+
+async function resolveEntryEmail(entry) {
+  if (!entry) return '';
+  const direct = String(entry.email || entry.player?.email || '').trim().toLowerCase();
+  if (direct) {
+    entry.email = direct;
+    return direct;
+  }
+  if (entry.userId) {
+    try {
+      const accTable = GameDB.SupabaseConfig?.tables?.accounts || 'magic_accounts';
+      const rows = await supabaseRest(accTable, 'GET', `?id=eq.${encodeURIComponent(entry.userId)}&select=email`);
+      const fetched = String(rows?.[0]?.email || '').trim().toLowerCase();
+      if (fetched) {
+        entry.email = fetched;
+        if (entry.player) entry.player.email = fetched;
+        return fetched;
+      }
+    } catch (err) {}
+  }
+  return '';
+}
+
+async function findMasterAccountUserId() {
+  try {
+    const accTable = GameDB.SupabaseConfig?.tables?.accounts || 'magic_accounts';
+    const rows = await supabaseRest(accTable, 'GET', `?email=eq.${encodeURIComponent(GM_MASTER_EMAIL)}&select=id`);
+    return rows?.[0]?.id || null;
+  } catch (err) {
+    return null;
+  }
+}
+
+async function loadGmPasswordFromSupabase(forceRefresh = false) {
+  if (cachedGmPassword && !forceRefresh) return cachedGmPassword;
+  const storageTable = GameDB.SupabaseConfig?.tables?.storage || 'magic_storage';
+  try {
+    // 1) 마스터 계정(xerimaii@gmail.com)의 magic_storage 행에 gmPassword 또는 초기화 플래그가 있는지 우선 확인
+    const masterUid = await findMasterAccountUserId();
+    if (masterUid) {
+      const mRows = await supabaseRest(storageTable, 'GET', `?user_id=eq.${encodeURIComponent(masterUid)}&select=account_data`);
+      const mData = mRows?.[0]?.account_data;
+      if (mData && (mData.gmPasswordReset === true || mData.resetGmPassword === true)) {
+        gmPasswordResetArmed = true;
+        const resetPw = (mData.gmPassword && String(mData.gmPassword).trim()) ? String(mData.gmPassword).trim() : GM_DEFAULT_PASSWORD;
+        await saveGmPasswordToSupabase(resetPw, masterUid);
+        return cachedGmPassword;
+      }
+      if (mData && mData.gmPassword && String(mData.gmPassword).trim().length > 0) {
+        cachedGmPassword = String(mData.gmPassword).trim();
+        return cachedGmPassword;
+      }
+    }
+
+    // 2) 공통 GM 설정 행(GM_CONFIG_USER_ID) 조회
+    const rows = await supabaseRest(storageTable, 'GET', `?user_id=eq.${GM_CONFIG_USER_ID}&select=account_data`);
+    const accData = rows?.[0]?.account_data;
+    if (accData && (accData.gmPasswordReset === true || accData.resetGmPassword === true)) {
+      gmPasswordResetArmed = true;
+    }
+    const savedPw = accData?.gmPassword;
+    if (savedPw && String(savedPw).trim().length > 0) {
+      cachedGmPassword = String(savedPw).trim();
+      return cachedGmPassword;
+    }
+  } catch (err) {}
+  cachedGmPassword = GM_DEFAULT_PASSWORD;
+  await saveGmPasswordToSupabase(cachedGmPassword);
+  return cachedGmPassword;
+}
+
+async function saveGmPasswordToSupabase(newPassword, explicitMasterUid = null) {
+  const cleanPw = String(newPassword || GM_DEFAULT_PASSWORD).trim();
+  cachedGmPassword = cleanPw;
+  const storageTable = GameDB.SupabaseConfig?.tables?.storage || 'magic_storage';
+  try {
+    // 1) 공통 GM 설정 행(GM_CONFIG_USER_ID)에 저장
+    const existing = await supabaseRest(storageTable, 'GET', `?user_id=eq.${GM_CONFIG_USER_ID}&select=user_id,account_data`);
+    const nextData = {
+      ...((existing?.[0]?.account_data) || {}),
+      gmPassword: cleanPw,
+      gmPasswordReset: false,
+      masterEmail: GM_MASTER_EMAIL,
+      updatedAt: new Date().toISOString()
+    };
+    await supabaseRest(storageTable, 'POST', '', {
+      user_id: GM_CONFIG_USER_ID,
+      account_data: nextData,
+      updated_at: new Date().toISOString()
+    }, 'user_id');
+
+    // 2) 마스터 계정(xerimaii@gmail.com)의 magic_storage에도 동기화하여 Supabase 대시보드에서 언제든 관리/초기화 가능하도록 보장
+    const masterUid = explicitMasterUid || (await findMasterAccountUserId());
+    if (masterUid) {
+      const mRows = await supabaseRest(storageTable, 'GET', `?user_id=eq.${encodeURIComponent(masterUid)}&select=user_id,account_data`);
+      const mNext = {
+        ...((mRows?.[0]?.account_data) || {}),
+        gmPassword: cleanPw,
+        gmPasswordReset: false,
+        updatedAt: new Date().toISOString()
+      };
+      await supabaseRest(storageTable, 'POST', '', {
+        user_id: masterUid,
+        account_data: mNext,
+        updated_at: new Date().toISOString()
+      }, 'user_id');
+    }
+  } catch (err) {}
+  return cleanPw;
+}
+
+function grantAdminToEntry(entry, msgText = null) {
+  entry.isAdmin = true;
+  if (entry.player) entry.player.isAdmin = true;
+  sendWsMessage(entry.conn, {
+    type: 'ADMIN_MODE_CHANGED',
+    isAdmin: true,
+    gmInvincible: Boolean(entry.gmInvincible),
+    gmInvisible: Boolean(entry.gmInvisible),
+    gmSpeedMult: entry.gmSpeedMult || 1,
+    gmAtkMult: entry.gmAtkMult || 1
+  });
+  if (msgText) {
+    sendSystemMsgToEntry(entry, msgText, 'log-kill');
+  }
+}
+
+function revokeAdminFromEntry(entry, msgText = null) {
+  entry.isAdmin = false;
+  entry.gmInvincible = false;
+  entry.gmInvisible = false;
+  entry.gmSpeedMult = 1;
+  entry.gmAtkMult = 1;
+  if (entry.player) {
+    entry.player.isAdmin = false;
+    entry.player.gmInvisible = false;
+    entry.player.gmInvincible = false;
+  }
+  sendWsMessage(entry.conn, {
+    type: 'ADMIN_MODE_CHANGED',
+    isAdmin: false,
+    gmInvincible: false,
+    gmInvisible: false,
+    gmSpeedMult: 1,
+    gmAtkMult: 1
+  });
+  if (msgText) {
+    sendSystemMsgToEntry(entry, msgText, 'log-sys');
+  }
+}
+
 function handleChatCommand(entry, rawText) {
+
+  const _parts = String(rawText || '').trim().split(/\s+/);
+  const _cmd = _parts[0];
+  const _arg1 = String(_parts[1] || '').trim();
+  if (_cmd === '/운영자초기화' || _cmd === '/운영자비번초기화') {
+    resolveEntryEmail(entry).then(async (uEmail) => {
+      if (uEmail !== GM_MASTER_EMAIL) {
+        sendSystemMsgToEntry(entry, `🚫 운영자 비밀번호 초기화는 ${GM_MASTER_EMAIL} 계정만 가능합니다.`, 'log-hit');
+        return;
+      }
+      gmPasswordResetArmed = true;
+      if (_arg1) {
+        await saveGmPasswordToSupabase(_arg1);
+        gmPasswordResetArmed = false;
+        grantAdminToEntry(entry, `🔓 [비밀번호 초기화 및 변경 완료] 수파베이스 운영자 비밀번호가 '${_arg1}'(으)로 초기화되었으며 운영자모드가 활성화되었습니다!`);
+      } else {
+        await saveGmPasswordToSupabase(GM_DEFAULT_PASSWORD);
+        sendSystemMsgToEntry(entry, `🔓 [초기화 승인 완료] 기본 비밀번호(${GM_DEFAULT_PASSWORD})로 복구되었으며, 지금 바로 '/운영자모드 새비밀번호'를 입력하시면 새 비밀번호로 저장 후 운영자모드에 진입합니다!`, 'log-kill');
+      }
+    });
+    return true;
+  }
+  if (_cmd === '/운영자비번변경' || _cmd === '/비번변경') {
+    if (!entry.isAdmin) { sendSystemMsgToEntry(entry, `⚠️ 먼저 '/운영자모드 <비밀번호>'로 인증하세요.`, 'log-hit'); return true; }
+    if (!_arg1) { sendSystemMsgToEntry(entry, `💡 사용법: /운영자비번변경 <새비밀번호>`, 'log-sys'); return true; }
+    saveGmPasswordToSupabase(_arg1).then(() => {
+      sendSystemMsgToEntry(entry, `🔑 수파베이스 운영자 비밀번호가 '${_arg1}'(으)로 안전하게 변경·저장되었습니다!`, 'log-kill');
+    });
+    return true;
+  }
+  if (_cmd === '/운영자모드' || _cmd === '/운졍자모드' || _cmd === '/운영자' || _cmd === '/관리자모드' || _cmd === '/gm') {
+    if (entry.isAdmin && !_arg1) {
+      revokeAdminFromEntry(entry, `👑 운영자모드가 해제되었습니다.`);
+      return true;
+    }
+    if (!_arg1) {
+      sendSystemMsgToEntry(entry, `🔒 사용법: /운영자모드 <비밀번호> (분실 시 ${GM_MASTER_EMAIL} 계정으로 '/운영자초기화' 후 '/운영자모드 새비밀번호')`, 'log-hit');
+      return true;
+    }
+    resolveEntryEmail(entry).then(async (uEmail) => {
+      const curPw = await loadGmPasswordFromSupabase(true);
+      if (gmPasswordResetArmed && uEmail === GM_MASTER_EMAIL) {
+        gmPasswordResetArmed = false;
+        await saveGmPasswordToSupabase(_arg1);
+        grantAdminToEntry(entry, `👑 새 비밀번호('${_arg1}')가 수파베이스에 저장되었으며 운영자모드가 활성화되었습니다! ('/?'로 명령어 확인)`);
+        return;
+      }
+      if (_arg1 !== curPw) {
+        sendSystemMsgToEntry(entry, `🚫 비밀번호가 일치하지 않습니다. (분실 시 ${GM_MASTER_EMAIL} 계정에서 '/운영자초기화' 입력 또는 수파베이스 magic_storage에서 초기화 가능)`, 'log-hit');
+        return;
+      }
+      grantAdminToEntry(entry, `👑 [운영자 모드 활성화] 상용 게임 GM 권한이 부여되었습니다! ('/?' 도움말, '/운영자비번변경 새비번' 변경 가능)`);
+    });
+    return true;
+  }
+
   const trimmed = String(rawText || '').trim();
   if (!trimmed.startsWith('/')) return false;
 
@@ -1806,48 +2019,10 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
   }
 
   // --------------------------------------------------------------------------
-  // [2] 운영자(GM) 모드 진입 및 해제 명령어
+  // [2] 운영자(GM) 모드 해제 명령어 (진입은 상단 /운영자모드 [비밀번호]에서 통합 처리)
   // --------------------------------------------------------------------------
-  if (cmd === '/운영자모드' || cmd === '/운영자' || cmd === '/관리자모드' || cmd === '/관리자' || cmd === '/gm') {
-    const inputPw = args[0] ? String(args[0]).trim() : '';
-    if (inputPw && inputPw !== ADMIN_SECRET && inputPw !== 'admin1234' && inputPw !== 'gm1234') {
-      sendSystemMsgToEntry(entry, `⚠️ 운영자 인증 암호가 일치하지 않습니다. ('/운영자모드' 단독 입력 또는 올바른 암호 입력)`, 'log-hit');
-      return true;
-    }
-    entry.isAdmin = true;
-    if (entry.player) entry.player.isAdmin = true;
-    sendWsMessage(entry.conn, {
-      type: 'ADMIN_MODE_CHANGED',
-      isAdmin: true,
-      gmInvincible: Boolean(entry.gmInvincible),
-      gmInvisible: Boolean(entry.gmInvisible),
-      gmSpeedMult: entry.gmSpeedMult || 1,
-      gmAtkMult: entry.gmAtkMult || 1
-    });
-    sendSystemMsgToEntry(entry, `👑 [운영자 모드 활성화] 상용 게임 GM 권한이 부여되었습니다! 채팅창에 '/?'를 입력하여 도움말을 확인하세요.`, 'log-kill');
-    return true;
-  }
-
   if (cmd === '/운영자해제' || cmd === '/일반모드' || cmd === '/운영자종료') {
-    entry.isAdmin = false;
-    entry.gmInvincible = false;
-    entry.gmInvisible = false;
-    entry.gmSpeedMult = 1;
-    entry.gmAtkMult = 1;
-    if (entry.player) {
-      entry.player.isAdmin = false;
-      entry.player.gmInvisible = false;
-      entry.player.gmInvincible = false;
-    }
-    sendWsMessage(entry.conn, {
-      type: 'ADMIN_MODE_CHANGED',
-      isAdmin: false,
-      gmInvincible: false,
-      gmInvisible: false,
-      gmSpeedMult: 1,
-      gmAtkMult: 1
-    });
-    sendSystemMsgToEntry(entry, `🛡️ [운영자 모드 해제] 일반 모험가 모드로 전환되었습니다.`, 'log-sys');
+    revokeAdminFromEntry(entry, `🛡️ [운영자 모드 해제] 일반 모험가 모드로 전환되었습니다.`);
     return true;
   }
 
@@ -2770,6 +2945,7 @@ function handleClientWsPacket(conn, msg) {
     const newEntry = {
       conn,
       userId: msg.userId,
+      email: String(msg.email || msg.player?.email || prevEntry?.email || '').trim().toLowerCase(),
       charId,
       sessionToken: msg.sessionToken,
       mapKey: canonicalMap,
@@ -2831,8 +3007,13 @@ function handleClientWsPacket(conn, msg) {
         ? Math.max(1, Math.min(999, Number(rawP.level) || 1))
         : Math.max(1, Math.min(250, Number(rawP.level) || 1));
       const myParty = getPartyByCharId(entry.charId);
+      let leaderTargetChanged = false;
       if (myParty && myParty.leaderCharId === entry.charId && rawP.targetMobId !== undefined) {
-        myParty.leaderTargetMobId = rawP.targetMobId || null;
+        const nextLdrTarget = rawP.targetMobId ? String(rawP.targetMobId) : null;
+        if (myParty.leaderTargetMobId !== nextLdrTarget) {
+          myParty.leaderTargetMobId = nextLdrTarget;
+          leaderTargetChanged = true;
+        }
       }
       entry.partyId = myParty ? myParty.partyId : null;
       entry.bgInvincible = Boolean(rawP.bgInvincible || msg.bgInvincible);
@@ -2851,6 +3032,8 @@ function handleClientWsPacket(conn, msg) {
       if (oldMap && oldMap !== incomingMap) {
         sendWsMessage(conn, buildMapInitStatePacket(incomingMap, entry));
         if (myParty) broadcastPartyUpdate(myParty);
+      } else if (leaderTargetChanged && myParty) {
+        broadcastPartyUpdate(myParty);
       }
     }
     return;
@@ -2869,7 +3052,11 @@ function handleClientWsPacket(conn, msg) {
     const isMercAtk = Boolean(msg.isMercAtk);
     const atkParty = entry ? getPartyByCharId(entry.charId) : null;
     if (atkParty && atkParty.leaderCharId === entry.charId && targetIds[0]) {
-      atkParty.leaderTargetMobId = String(targetIds[0]);
+      const nextAtkTarget = String(targetIds[0]);
+      if (atkParty.leaderTargetMobId !== nextAtkTarget) {
+        atkParty.leaderTargetMobId = nextAtkTarget;
+        broadcastPartyUpdate(atkParty);
+      }
     }
     const isSkillHit = Boolean(msg.opts && msg.opts.isSkill);
     if (entry && !isMercAtk && !isAdminUser && !isSkillHit) {
@@ -2888,7 +3075,7 @@ function handleClientWsPacket(conn, msg) {
       critDmgMult: Math.min(isAdminUser ? 10 : 3.0, Math.max(1.0, Number(rawCStats.critDmgMult) || 1.5)),
       drainBonus: Math.min(isAdminUser ? 100 : 25, Math.max(0, Number(rawCStats.drainBonus) || 0))
     };
-    const maxLegitRawDmg = isAdminUser ? 99999999 : (260 + attackerLv * 65);
+    const maxLegitRawDmg = isAdminUser ? 99999999 : Math.floor((380 + attackerLv * 115) * (isSkillHit ? 4.8 : 1.4));
     const clampedClientDmg = Math.min(maxLegitRawDmg, Math.max(1, Number(msg.rawDmg) || 10));
     const rawDmgBase = clampedClientDmg * (entry?.gmAtkMult || 1);
     const opts = msg.opts || {};
@@ -3005,6 +3192,10 @@ function handleClientWsPacket(conn, msg) {
           ent.isDead = true;
           ent.respawnTimer = ent.isBoss ? 300 : 12;
           if (ent.isBoss) mapInst.bossRespawnTimer = 300;
+          if (atkParty && String(atkParty.leaderTargetMobId) === String(ent.id)) {
+            atkParty.leaderTargetMobId = null;
+            broadcastPartyUpdate(atkParty);
+          }
 
           const mobLv = ent.lv || 1;
           const killerClass = entry?.player?.class || 'knight';
@@ -3299,6 +3490,11 @@ function handleClientWsPacket(conn, msg) {
     }
     if (party.leaderCharId === msg.charId && msg.leaderTargetMobId !== undefined) {
       party.leaderTargetMobId = msg.leaderTargetMobId;
+    } else if (party.leaderCharId) {
+      const ldrEntry = activeCharSockets.get(party.leaderCharId);
+      if (ldrEntry?.player?.targetMobId) {
+        party.leaderTargetMobId = String(ldrEntry.player.targetMobId);
+      }
     }
     broadcastPartyUpdate(party);
     return;
@@ -3778,13 +3974,14 @@ setInterval(() => {
 
           const pMoved = !prevP || Math.abs(prevP.x - ox) >= 1 || Math.abs(prevP.y - oy) >= 1 || prevP.dir !== op.dir || prevP.walk !== Boolean(op.isWalking);
           const mMoved = merc && (!prevP || Math.abs((prevP.mx || 0) - mx) >= 1 || Math.abs((prevP.my || 0) - my) >= 1 || prevP.mWalk !== Boolean(merc.isWalking));
-          const statOrMetaDiff = !prevP || prevP.metaSig !== metaSig || prevP.hp !== op.hp || prevP.mp !== op.mp || prevP.atkTs !== op.lastAttackTime;
+          const statOrMetaDiff = !prevP || prevP.metaSig !== metaSig || prevP.hp !== op.hp || prevP.mp !== op.mp || prevP.atkTs !== op.lastAttackTime || prevP.targetMobId !== (op.targetMobId || null);
 
           if (pMoved || mMoved || statOrMetaDiff || isNearRefreshTick) {
             const includeFullMeta = !prevP || prevP.metaSig !== metaSig || isNearRefreshTick;
             receiver._knownPlayers.set(other.charId, {
               x: ox, y: oy, dir: op.dir, walk: Boolean(op.isWalking),
               hp: op.hp, mp: op.mp, atkTs: op.lastAttackTime,
+              targetMobId: op.targetMobId || null,
               mx, my, mWalk: Boolean(merc?.isWalking),
               metaSig
             });
@@ -3815,6 +4012,7 @@ setInterval(() => {
                 maxMp: op.maxMp,
                 partyId,
                 isPartyLeader: isLeader,
+                targetMobId: op.targetMobId || null,
                 mercenary: merc ? {
                   hired: true,
                   isDead: Boolean(merc.isDead),
