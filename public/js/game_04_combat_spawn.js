@@ -2811,22 +2811,24 @@ function loadMapData(mapKey, customSpawn = null) {
 
       if (reg.hubType === "CAMP") {
         npcList.push(
-          { x: townX - 180, y: townY - 60,  name: "잡화상인 마르코", role: "MERCHANT",  color: 0xfde047 },
-          { x: townX,       y: townY - 190, name: qNpcName,          role: "QUEST",     color: 0x4ade80 },
-          { x: townX + 180, y: townY - 60,  name: "차원술사 아리아", role: "WORLDMAP",  color: 0x38bdf8 },
-          { x: townX - 160, y: townY + 125, name: "마법상인 엘린",   role: "SKILL",     color: 0x60a5fa },
-          { x: townX,       y: townY + 145, name: "창고지기 바르크", role: "BANK",      color: 0xfbbf24 },
-          { x: townX + 160, y: townY + 125, name: "용병단장 카셀",   role: "MERCENARY", color: 0xf87171 }
+          { x: townX,       y: townY - 88,  name: "📖 왕립 안내관 루시", role: "GUIDE",     color: 0xf472b6 },
+          { x: townX - 180, y: townY - 60,  name: "잡화상인 마르코",     role: "MERCHANT",  color: 0xfde047 },
+          { x: townX,       y: townY - 190, name: qNpcName,             role: "QUEST",     color: 0x4ade80 },
+          { x: townX + 180, y: townY - 60,  name: "차원술사 아리아",     role: "WORLDMAP",  color: 0x38bdf8 },
+          { x: townX - 160, y: townY + 125, name: "마법상인 엘린",       role: "SKILL",     color: 0x60a5fa },
+          { x: townX,       y: townY + 145, name: "창고지기 바르크",     role: "BANK",      color: 0xfbbf24 },
+          { x: townX + 160, y: townY + 125, name: "용병단장 카셀",       role: "MERCENARY", color: 0xf87171 }
         );
       } else {
         npcList.push(
+          { x: townX,       y: townY - 95,  name: "📖 왕립 안내관 루시", role: "GUIDE",     color: 0xf472b6 },
           { x: townX,       y: townY - 230, name: qNpcName,             role: "QUEST",     color: 0x4ade80 },
-          { x: townX - 210, y: townY - 130, name: "잡화상인 마르코",    role: "MERCHANT",  color: 0xfde047 },
-          { x: townX + 210, y: townY - 130, name: "마법상인 엘린",      role: "SKILL",     color: 0x60a5fa },
-          { x: townX - 240, y: townY + 20,  name: "창고지기 바르크",    role: "BANK",      color: 0xfbbf24 },
-          { x: townX + 240, y: townY + 20,  name: "용병단장 카셀",      role: "MERCENARY", color: 0xf87171 },
-          { x: townX - 170, y: townY + 150, name: "주문서상인 카인",    role: "SCROLL",    color: 0xc084fc },
-          { x: townX + 170, y: townY + 150, name: "차원술사 아리아",    role: "WORLDMAP",  color: 0x38bdf8 }
+          { x: townX - 210, y: townY - 130, name: "잡화상인 마르코",     role: "MERCHANT",  color: 0xfde047 },
+          { x: townX + 210, y: townY - 130, name: "마법상인 엘린",       role: "SKILL",     color: 0x60a5fa },
+          { x: townX - 240, y: townY + 20,  name: "창고지기 바르크",     role: "BANK",      color: 0xfbbf24 },
+          { x: townX + 240, y: townY + 20,  name: "용병단장 카셀",       role: "MERCENARY", color: 0xf87171 },
+          { x: townX - 170, y: townY + 150, name: "주문서상인 카인",     role: "SCROLL",    color: 0xc084fc },
+          { x: townX + 170, y: townY + 150, name: "차원술사 아리아",     role: "WORLDMAP",  color: 0x38bdf8 }
         );
       }
     }

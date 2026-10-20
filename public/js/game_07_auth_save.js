@@ -615,24 +615,24 @@ function renderCharacterSlots() {
       const regObj = GameDB.Regions.find(r => r.id === (c.region_key || 'R01')) || GameDB.Regions[0];
       const isCharOnline = Boolean(c.isOnline || (c.id && typeof activeCharacterId !== 'undefined' && activeCharacterId === c.id));
       html += `
-        <div class="char-slot-card">
-          <div style="display:flex; align-items:center; gap:9px; min-width:0; flex:1;">
-            <div style="position:relative; width:38px; height:38px; border-radius:8px; background:#090b10; border:1px solid #6b5535; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;">
-              ${window.getClassIconHTML ? window.getClassIconHTML(c.class, 26) : (clsMeta.icon || '🛡️')}
+        <div class="char-slot-card" style="gap:6px; padding:8px 9px;">
+          <div style="display:flex; align-items:center; gap:7px; min-width:0; flex:1;">
+            <div style="position:relative; width:36px; height:36px; border-radius:8px; background:#090b10; border:1px solid #6b5535; display:flex; align-items:center; justify-content:center; font-size:19px; flex-shrink:0;">
+              ${window.getClassIconHTML ? window.getClassIconHTML(c.class, 24) : (clsMeta.icon || '🛡️')}
             </div>
             <div style="min-width:0; flex:1; text-align:left;">
-              <div style="font-size:13.5px; font-weight:bold; color:#fde047; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:6px;">
-                <span>Lv.${c.level || 1} ${c.name}</span>
-                ${isCharOnline ? `<span title="이미 접속중인 캐릭터" style="color:#22c55e; font-size:11px; line-height:1; flex-shrink:0; text-shadow:none; box-shadow:none;">●</span>` : ''}
+              <div style="font-size:13px; font-weight:bold; color:#fde047; display:flex; align-items:center; gap:5px; min-width:0;">
+                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;">Lv.${c.level || 1} ${c.name}</span>
+                ${isCharOnline ? `<span title="이미 접속중인 캐릭터" style="color:#22c55e; font-size:11.5px; line-height:1; flex-shrink:0; text-shadow:none; box-shadow:none;">●</span>` : ''}
               </div>
-              <div style="font-size:10.5px; color:#93c5fd;">
+              <div style="font-size:10px; color:#93c5fd; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                 ${clsMeta.name} · 📍 ${regObj.name}
               </div>
             </div>
           </div>
-          <div style="display:flex; gap:5px; flex-shrink:0;">
-            <button type="button" class="auth-primary-btn" style="padding:6px 12px; font-size:11.5px;" onclick="enterGameWithCharacter(${i})">⚡ 접속</button>
-            <button type="button" class="auth-danger-btn" style="padding:6px 10px; font-size:11.5px;" onclick="openDeleteCharModal(${i})">🗑️ 삭제</button>
+          <div style="display:flex; gap:4px; flex-shrink:0;">
+            <button type="button" class="auth-primary-btn" style="padding:5px 8px; font-size:11px; white-space:nowrap;" onclick="enterGameWithCharacter(${i})">⚡ 접속</button>
+            <button type="button" class="auth-danger-btn" style="padding:5px 6px; font-size:10.5px; white-space:nowrap;" onclick="openDeleteCharModal(${i})">🗑️ 삭제</button>
           </div>
         </div>
       `;

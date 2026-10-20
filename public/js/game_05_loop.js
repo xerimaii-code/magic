@@ -745,25 +745,30 @@ function gameLoop(rawDelta) {
   const baseSpd = CLASS_STATS[player.class]?.baseSpeed ?? 1.90;
   player.speed = baseSpd * effSpeedMult * (player.gmSpeedMult || 1);
 
-  if (player.targetEntity && player.targetEntity.type === 'MONSTER') updateTopTargetUI(player.targetEntity.ref);
+  if (player.targetEntity && player.targetEntity.type === 'MONSTER' && player.targetEntity.ref) {
+    if (Math.floor(tick) % 3 === 0) updateTopTargetUI(player.targetEntity.ref);
+    if (player.targetEntity.ref.isBoss) window.ImmersiveSystem?.onBossEngage?.(player.targetEntity.ref);
+  }
 
-  // 4) 보스 리스폰 타이머 HUD 갱신
-  const bossTimerEl = document.getElementById('boss-timer-hud');
+  // 4) 보스 리스폰 타이머 HUD 갱신 (20프레임 주기로 DOM 갱신하여 모바일 렉 방지)
   if (bossRespawnTimer > 0) {
     bossRespawnTimer -= (delta / 60);
-    if (bossTimerEl) {
+  }
+  if (Math.floor(tick) % 20 === 0) {
+    const bossTimerEl = document.getElementById('boss-timer-hud');
+    if (bossRespawnTimer > 0 && bossTimerEl) {
       let mins = Math.floor(Math.max(0, bossRespawnTimer) / 60);
       let secs = Math.floor(Math.max(0, bossRespawnTimer) % 60).toString().padStart(2, '0');
       bossTimerEl.innerText = `👑 지역 보스(B) 리스폰: ${mins}:${secs}`;
       bossTimerEl.style.color = '#fca5a5';
-    }
-  } else if (bossTimerEl) {
-    const bossAlive = monsterList.find(m => m.isBoss && !m.isDead);
-    if (bossAlive) {
-      bossTimerEl.innerText = `👑 ${bossAlive.rawName || bossAlive.name}: 출현 중!`;
-      bossTimerEl.style.color = '#4ade80';
-    } else {
-      bossTimerEl.innerText = '';
+    } else if (bossTimerEl) {
+      const bossAlive = monsterList.find(m => m.isBoss && !m.isDead);
+      if (bossAlive) {
+        bossTimerEl.innerText = `👑 ${bossAlive.rawName || bossAlive.name}: 출현 중!`;
+        bossTimerEl.style.color = '#4ade80';
+      } else {
+        bossTimerEl.innerText = '';
+      }
     }
   }
 
@@ -1959,9 +1964,13 @@ function gameLoop(rawDelta) {
     }
   }
 
+  // 카메라 시야 정밀 프러스텀 컬링 반경 (화면 안 그래픽 품질은 100% 유지하면서 화면 밖 불필요한 벡터 드로잉만 차단!)
+  const halfCullW = viewW * 0.56 + 75;
+  const halfCullH = viewH * 0.56 + 85;
+
   // 11) 드롭된 아이템 렌더링 + 아이템 선택링(2.5D 그림자 기울기 일치)
   itemList.forEach(it => {
-    const inView = Math.abs(it.x - player.x) <= viewW && Math.abs(it.y - player.y) <= viewH;
+    const inView = Math.abs(it.x - player.x) <= halfCullW && Math.abs(it.y - player.y) <= halfCullH;
     if (!inView) {
       if (it.pixiSprite) it.pixiSprite.visible = false;
       if (it.nameTag) it.nameTag.visible = false;
@@ -1987,7 +1996,7 @@ function gameLoop(rawDelta) {
 
   // 11-B) NPC 렌더링 + NPC 선택링(2.5D 그림자 기울기 일치)
   npcList.forEach(npc => {
-    let inView = Math.abs(npc.x - player.x) <= viewW && Math.abs(npc.y - player.y) <= viewH;
+    let inView = Math.abs(npc.x - player.x) <= halfCullW && Math.abs(npc.y - player.y) <= halfCullH;
     if (!inView) {
       if (npc.nameTag) npc.nameTag.visible = false;
       return;
@@ -2013,7 +2022,7 @@ function gameLoop(rawDelta) {
       if (m.nameTag) m.nameTag.visible = false;
       return;
     }
-    let inView = Math.abs(m.x - player.x) <= viewW * 0.85 && Math.abs(m.y - player.y) <= viewH * 0.85;
+    let inView = Math.abs(m.x - player.x) <= halfCullW && Math.abs(m.y - player.y) <= halfCullH;
     if (!inView) {
       if (m.nameTag) m.nameTag.visible = false;
       return;
@@ -2114,7 +2123,34 @@ function gameLoop(rawDelta) {
           if (!op.isWalking && op.serverDir) op.dir = op.serverDir;
         }
       }
-      const inView = !op.isMinimapOnly && Math.abs(op.x - player.x) <= viewW && Math.abs(op.y - player.y) <= viewH;
+      // 타 플레이어의 동행 용병 좌표 보간도 화면 안팎과 무관하게 먼저 수행하여 100% 위치 동기화 보장!
+      if (op.mercenary && op.mercenary.hired && !op.mercenary.isDead) {
+        const om = op.mercenary;
+        if (typeof om.serverX === 'number' && typeof om.serverY === 'number') {
+          const dxOm = om.serverX - (om.x ?? om.serverX);
+          const dyOm = om.serverY - (om.y ?? om.serverY);
+          const dOm = Math.hypot(dxOm, dyOm);
+          const baseOmSpd = om._interpSpeed || om.speed || 1.94;
+          if (om.x === undefined || dOm > 320) {
+            om.x = om.serverX;
+            om.y = om.serverY;
+          } else if (dOm > 0.20) {
+            const glideOm = baseOmSpd + Math.max(0, (dOm - 14) * 0.08);
+            const stepOm = Math.min(dOm, glideOm * delta);
+            om.x += (dxOm / dOm) * stepOm;
+            om.y += (dyOm / dOm) * stepOm;
+            om.lastMoveVisualTime = now;
+            om.isWalking = true;
+            if (dOm > 1.2 && Math.abs(dxOm) > 0.8) {
+              om.dir = dxOm >= 0 ? 'right' : 'left';
+            }
+          } else {
+            om.isWalking = Boolean(om.serverWalking || (now - (om.lastMoveVisualTime || 0) < 240));
+          }
+        }
+      }
+
+      const inView = !op.isMinimapOnly && Math.abs(op.x - player.x) <= halfCullW && Math.abs(op.y - player.y) <= halfCullH;
       if (!inView) {
         if (op.pixiSprite) op.pixiSprite.visible = false;
         if (op.nameTag) op.nameTag.visible = false;
@@ -2144,8 +2180,8 @@ function gameLoop(rawDelta) {
         uiContainer.addChild(op.nameTag);
       }
       op.nameTag.visible = true;
-      // 상대방 플레이어 네임택: 레벨 표기 제거, 이름만 깔끔하게 표시!
-      op.nameTag.text = `${op.isAdmin ? '👑[GM] ' : ''}${op.name || '모험가'}`;
+      const nextOpName = `${op.isAdmin ? '👑[GM] ' : ''}${op.name || '모험가'}`;
+      if (op.nameTag.text !== nextOpName) op.nameTag.text = nextOpName;
       op.nameTag.x = Math.round(op.x);
       op.nameTag.y = Math.round(opBarY - 2);
 
@@ -2158,31 +2194,9 @@ function gameLoop(rawDelta) {
 
       renderEntitySpeechBubble(uiG, uiContainer, op, op.x, op.partyId ? (opBarY - 34) : (opBarY - 19), now);
 
-      // 🤝 타 플레이어의 동행 용병도 부드러운 보간과 함께 렌더링 (클래스 전용 배지 + 용병 이름만 표시)
+      // 🤝 타 플레이어의 동행 용병 렌더링
       if (op.mercenary && op.mercenary.hired && !op.mercenary.isDead) {
         const om = op.mercenary;
-        if (typeof om.serverX === 'number' && typeof om.serverY === 'number') {
-          const dxOm = om.serverX - (om.x ?? om.serverX);
-          const dyOm = om.serverY - (om.y ?? om.serverY);
-          const dOm = Math.hypot(dxOm, dyOm);
-          const baseOmSpd = om._interpSpeed || om.speed || 1.94;
-          if (om.x === undefined || dOm > 320) {
-            om.x = om.serverX;
-            om.y = om.serverY;
-          } else if (dOm > 0.20) {
-            const glideOm = baseOmSpd + Math.max(0, (dOm - 14) * 0.08);
-            const stepOm = Math.min(dOm, glideOm * delta);
-            om.x += (dxOm / dOm) * stepOm;
-            om.y += (dyOm / dOm) * stepOm;
-            om.lastMoveVisualTime = now;
-            om.isWalking = true;
-            if (dOm > 1.2 && Math.abs(dxOm) > 0.8) {
-              om.dir = dxOm >= 0 ? 'right' : 'left';
-            }
-          } else {
-            om.isWalking = Boolean(om.serverWalking || (now - (om.lastMoveVisualTime || 0) < 240));
-          }
-        }
         const omX = om.x || (op.x - 42);
         const omY = om.y || (op.y + 26);
         drawMercenary(pCtx, omX, omY, om, tick, now, true);
@@ -2200,7 +2214,8 @@ function gameLoop(rawDelta) {
           uiContainer.addChild(om.nameTag);
         }
         om.nameTag.visible = true;
-        om.nameTag.text = normalizeMercenaryDisplayName(om.name, om.class || 'knight');
+        const nextOmName = normalizeMercenaryDisplayName(om.name, om.class || 'knight');
+        if (om.nameTag.text !== nextOmName) om.nameTag.text = nextOmName;
         drawMercClassBadgeNextToNameTag(uiG, om.class || 'knight', om.nameTag, omX, omBarY - 2);
       } else if (op.mercenary?.nameTag) {
         op.mercenary.nameTag.visible = false;
@@ -2250,7 +2265,7 @@ function gameLoop(rawDelta) {
     // 용병 필드 네임택: "내 용병", "보조/공격/대기" 택 제거 -> [클래스 전용 배지] + 용병 이름(예: 숲속의 실비아)만 표시!
     mercenary.name = normalizeMercenaryDisplayName(mercenary.name, mercenary.class || 'knight');
     mercenary.nameTag.visible = true;
-    mercenary.nameTag.text = mercenary.name;
+    if (mercenary.nameTag.text !== mercenary.name) mercenary.nameTag.text = mercenary.name;
     drawMercClassBadgeNextToNameTag(uiG, mercenary.class || 'knight', mercenary.nameTag, mercenary.x, mBarY - 2);
   } else if (mercenary.nameTag) {
     mercenary.nameTag.visible = false;
@@ -2295,7 +2310,8 @@ function gameLoop(rawDelta) {
     uiContainer.addChild(playerNameTag);
   }
   const pClassName = CLASS_STATS[player.class]?.name || "모험가";
-  playerNameTag.text = `${player.isAdmin ? '👑[GM] ' : ''}${player.name || pClassName}`;
+  const nextPlayerNameTxt = `${player.isAdmin ? '👑[GM] ' : ''}${player.name || pClassName}`;
+  if (playerNameTag.text !== nextPlayerNameTxt) playerNameTag.text = nextPlayerNameTxt;
   playerNameTag.x = Math.round(player.x);
   playerNameTag.y = Math.round(pBarY - 3);
 
@@ -2478,7 +2494,10 @@ function gameLoop(rawDelta) {
     }
   }
 
-  renderMinimap();
+  // 미니맵 렌더링은 3프레임(약 20FPS) 주기로 실행하여 모바일/PC 2D 캔버스 드로잉 부하를 66% 절감
+  if (Math.floor(tick) % 3 === 0) {
+    renderMinimap();
+  }
 }
 
 function awardPickedItemToPlayer(it) {

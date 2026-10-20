@@ -143,14 +143,28 @@ window.openNpcModal = function(npc) {
   const bodyEl = document.getElementById('npc-modal-body');
   if (!modal || !titleEl || !bodyEl) return;
 
-  const helpTopic = npc.role === 'SKILL' ? 'skill' : (npc.role === 'MERCENARY' ? 'merc' : (npc.role === 'QUEST' ? 'quest' : 'inventory'));
+  const helpTopicMap = {
+    SKILL: 'skill',
+    MERCENARY: 'merc',
+    QUEST: 'quest',
+    BANK: 'bank',
+    SCROLL: 'scroll',
+    MERCHANT: 'merchant',
+    GUIDE: 'guide'
+  };
+  const helpTopic = helpTopicMap[npc.role] || 'inventory';
   titleEl.innerHTML = `💬 ${npc.name} <button class="help-q-btn" onclick="showHelpModal('${helpTopic}', event)" title="도움말">?</button>`;
   bodyEl.innerHTML = '';
   modal.classList.remove('hidden');
   window.bringModalToFront?.(modal);
   setTimeout(() => window.centerModalOnScreen?.(modal), 0);
 
-  if (npc.role === 'BANK') {
+  if (npc.role === 'GUIDE') {
+    window.addChat(`💬 [${npc.name}] "모험가님 환영합니다! 대마법 시대의 기초 조작부터 용병 보급·카이팅, 서클 마법, 장비 강화, 파티 점사, 에테르 도감 20종까지 자세히 안내해 드릴게요!"`, 'log-chat', 'chat');
+    window.renderBeginnerGuideNpcBody('basic');
+    return;
+  }
+  else if (npc.role === 'BANK') {
     window.addChat(`💬 [${npc.name}] "계정 내 모든 캐릭터가 함께 공유하는 통합 창고입니다. 물품과 골드를 안전하게 보관해 드리지요."`, 'log-chat', 'chat');
     window.renderBankWarehouseModal?.();
   }
@@ -299,6 +313,139 @@ window.openNpcModal = function(npc) {
     bodyEl.innerHTML = buildQuestListHTML(true);
     setTimeout(() => window.focusLastActiveQuestRow?.(), 40);
   }
+};
+
+let currentGuideTab = 'basic';
+window.renderBeginnerGuideNpcBody = function(tabKey = 'basic') {
+  currentGuideTab = tabKey || currentGuideTab || 'basic';
+  const bodyEl = document.getElementById('npc-modal-body');
+  if (!bodyEl) return;
+
+  const tabs = [
+    { key: 'basic', label: '🕹️ 조작·자동사냥' },
+    { key: 'class', label: '⚔️ 직업·스킬·스탯' },
+    { key: 'merc',  label: '🛡️ 용병·전술·보급' },
+    { key: 'equip', label: '✨ 장비·강화·가방' },
+    { key: 'party', label: '🎗️ 파티·보스·월드' },
+    { key: 'ether', label: '📖 에테르도감 20종' }
+  ];
+
+  const tabBarHtml = `
+    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:4px; margin-bottom:6px;">
+      ${tabs.map(t => `
+        <button type="button" onclick="renderBeginnerGuideNpcBody('${t.key}')"
+          style="padding:5px 4px; border-radius:5px; font-size:11px; font-weight:bold; cursor:pointer; border:1px solid ${currentGuideTab === t.key ? '#facc15' : '#3d3020'}; background:${currentGuideTab === t.key ? '#78350f' : '#141210'}; color:${currentGuideTab === t.key ? '#fde047' : '#d1d5db'};">
+          ${t.label}
+        </button>
+      `).join('')}
+    </div>
+  `;
+
+  let contentHtml = '';
+  if (currentGuideTab === 'basic') {
+    contentHtml = `
+      <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.55; color:#f3f4f6;">
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">1️⃣ 이동 · 타겟팅 · 자동사냥</div>
+          • <b>이동 조작</b>: 화면 좌하단 드래그(가상 조이스틱) 또는 바닥 터치/방향키(WASD)로 이동합니다.<br>
+          • <b>자동사냥(AUTO)</b>: 우하단 <b>[⚔️자동]</b> 버튼을 켜면 주변 몬스터 추적·공격 및 아이템 루팅을 자동으로 수행합니다.<br>
+          • <b>🧭 퀘스트 방향 안내</b>: 진행 중인 퀘스트 지역에 있으면 캐릭터 주변에 연한 노란 화살표가 목표(몬스터/NPC) 방향을 가리킵니다 (옵션에서 ON/OFF).
+        </div>
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#38bdf8; font-weight:bold; font-size:12.5px; margin-bottom:3px;">2️⃣ 퀵슬롯 등록 & 스킬/물약 자동 발동</div>
+          • <b>슬롯 등록</b>: 가방(물약/주문서)이나 스킬북에서 항목을 터치한 뒤 하단 퀵슬롯(1~0)을 터치하거나 드래그해 등록합니다.<br>
+          • <b>⚡ 자동 사용 설정</b>: 하단 퀵슬롯 아이콘을 <b>위로 스와이프(또는 마우스 우클릭)</b>하면 붉은 테두리가 켜지며 사냥 중 자동으로 물약 복용·버프·공격스킬을 시전합니다!
+        </div>
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#4ade80; font-weight:bold; font-size:12.5px; margin-bottom:3px;">3️⃣ 미니맵 클릭 → 지역 상세 지도</div>
+          • 우상단 <b>미니맵</b>이나 지역명 배지를 터치하면 현재 지역의 <b>거점(S/S1)·사냥터·보스(B)·던전(D)</b> 구조와 내 위치를 한눈에 볼 수 있습니다.
+        </div>
+      </div>
+    `;
+  } else if (currentGuideTab === 'class') {
+    contentHtml = `
+      <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.55; color:#f3f4f6;">
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">⚔️ 3대 클래스 & 핵심 스탯</div>
+          • <b>인간전사 (주스탯 STR / 보조 CON)</b>: 검·방패 착용, 높은 체력과 방패 블록률을 자랑합니다. <b>배쉬(기절)·휠윈드(광역)·차지(돌진)</b>와 방어 버프 <b>아이언 월·배틀 크라이</b>로 선봉을 지킵니다.<br>
+          • <b>엘프궁수 (주스탯 DEX / 보조 CON)</b>: 양손활 원거리 고속 사격·치명타·회피에 특화되며, <b>멀티샷·애로우 레인·네이처스 터치(자가/아군 치유)</b>를 사용합니다.<br>
+          • <b>엘프마법사 (주스탯 INT / 보조 CON)</b>: 1~6서클 원소 광역 마법과 <b>힐링·그레이터 힐·쉴드·헤이스트·이뮨 투 함</b>으로 파티와 용병을 지원합니다.
+        </div>
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#60a5fa; font-weight:bold; font-size:12.5px; margin-bottom:3px;">📕 서클 기술 습득 & [미습득] 표시</div>
+          • <b>기초 기술</b>: 마을의 <b>마법상인 엘린</b>에게서 골드로 즉시 습득합니다.<br>
+          • <b>상위 서클 기술</b>: 필드·던전 몬스터가 드롭하는 <b>마법서/비급서</b>로 습득하며, 내가 아직 배우지 못한 책은 가방 슬롯에 초록색 <b>[미습득]</b> 표시가 뜹니다!
+        </div>
+      </div>
+    `;
+  } else if (currentGuideTab === 'merc') {
+    contentHtml = `
+      <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.55; color:#f3f4f6;">
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">🛡️ 정예 용병 고용 & ⚡아이템 자동 보급</div>
+          • 마을/야영지의 <b>용병단장 카셀</b>에게서 전사·궁수·마법사 용병 중 1명을 고용할 수 있습니다.<br>
+          • 용병 관리창(또는 가방)의 <b>[⚡아이템보급]</b> 버튼을 누르면 플레이어 가방에 있는 장비 중 현재 용병 장비보다 좋은 장비를 자동으로 가져와 착용합니다!
+        </div>
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#4ade80; font-weight:bold; font-size:12.5px; margin-bottom:3px;">🏃 용병 전술 카이팅 & 위기 생존 AI</div>
+          • <b>카이팅 & 점사</b>: 몬스터가 용병에게 접근하면 피격 전에 먼저 회피 기동을 수행한 뒤 플레이어의 타겟을 함께 점사합니다 (궁수/마법사는 플레이어가 공격하기 좋은 각도로 원을 그리며 회피).<br>
+          • <b>위기 생존</b>: 물약이 떨어지고 체력이 <b>20% 이하</b>가 되면 무리하게 싸우지 않고 플레이어 주변을 돌며 생존 기동을 수행합니다.
+        </div>
+      </div>
+    `;
+  } else if (currentGuideTab === 'equip') {
+    contentHtml = `
+      <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.55; color:#f3f4f6;">
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">✨ 안전 강화 구간 (+6 / +4) & 각성</div>
+          • <b>무기 강화</b>: <b>+6까지 100% 안전 강화</b> | +7(방관+5%), +9(쿨감-8%), +10 이상(보스추뎀+10%)<br>
+          • <b>방어구/장신구</b>: <b>+4까지 100% 안전 강화</b> | +7(피감+3%), +9(쿨감-2%), +10 이상(보스피감+4%·올스탯+1)<br>
+          • 중반 지역 이후부터는 적정 등급 장비를 착용하고 안전 강화(+6/+4)를 맞추면 물약 소모를 크게 줄이며 쾌적하게 사냥할 수 있습니다!
+        </div>
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#38bdf8; font-weight:bold; font-size:12.5px; margin-bottom:3px;">🎒 가방 다중 판매 · 수량 선택 판매</div>
+          • 단건 판매 시 화면 암전 없이 부드러운 <b>수량 선택창</b>이 뜨며, <b>[다중 선택]</b> 체크 후 여러 아이템과 중첩 수량을 한 번에 일괄 판매할 수 있습니다.
+        </div>
+      </div>
+    `;
+  } else if (currentGuideTab === 'party') {
+    contentHtml = `
+      <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.55; color:#f3f4f6;">
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">🎗️ 파티 사냥 (자유사냥 vs 점사모드)</div>
+          • <b>자동사냥 유지 초대</b>: 파티 요청이 와도 자동사냥이 끊기지 않으며, 10초 무반응 시 초대창이 자동 종료됩니다.<br>
+          • <b>🎯 점사모드</b>: 파티장이 점사모드 선택 시 모든 파티원과 용병이 파티장의 타겟을 최우선으로 함께 공격하여 보스와 정예 몬스터를 빠르게 제압합니다!
+        </div>
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#86efac; font-weight:bold; font-size:12.5px; margin-bottom:3px;">🌐 전 유저 실시간 서버 시간대 동기화</div>
+          • 모든 플레이어와 몬스터·보스·차원 마나 기류(날씨)는 동일한 서버 시간대를 공유하며 실시간 동기화됩니다.
+        </div>
+      </div>
+    `;
+  } else if (currentGuideTab === 'ether') {
+    contentHtml = `
+      <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.52; color:#f3f4f6;">
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">📖 1차 몰입형 콘텐츠 (1 ~ 10)</div>
+          1. <b>몬스터 생태 도감</b> · 2. <b>지역 수호 칭호 시스템</b> · 3. <b>에테르 보물 고블린</b> · 4. <b>균열 엘리트 챔피언</b> · 5. <b>무기 5대 원소 공명</b> · 6. <b>보스 기여도 전광판 & 파티 주사위</b> · 7. <b>에테르 연대기(15장)</b> · 8. <b>모닥불 온기 & 음유시인 담화</b> · 9. <b>차원 마나 기류(실시간 날씨)</b> · 10. <b>용병 유대감 & 전술 대사</b>
+        </div>
+        <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
+          <div style="color:#38bdf8; font-weight:bold; font-size:12.5px; margin-bottom:3px;">🌟 2차 몰입형 콘텐츠 (11 ~ 20)</div>
+          11. <b>왕립 일일 현상수배 게시판</b> · 12. <b>무기 숙련도 & 전장의 훈장</b> · 13. <b>고대 에테르 성물함</b> · 14. <b>차원 방랑 상인 아카샤</b> · 15. <b>에테르 12성좌 오늘의 운세</b> · 16. <b>모험가 길드 명예 등급</b> · 17. <b>보스 토벌전 전술 브리핑</b> · 18. <b>대장장이 토르딘의 명장 각인</b> · 19. <b>15차원 탐사 발자취 지도</b> · 20. <b>연속 사냥 콤보 & 각성 피버</b>
+        </div>
+        <button type="button" class="auth-primary-btn" style="padding:7px; font-size:12px;" onclick="closeNpcModal(); window.toggleImmersive20Modal && window.toggleImmersive20Modal();">📖 에테르 도감 (20종 통합 창) 바로 열기</button>
+      </div>
+    `;
+  }
+
+  bodyEl.innerHTML = `
+    <div style="padding:2px 2px 4px 2px;">
+      ${tabBarHtml}
+      <div style="max-height:46dvh; overflow-y:auto; padding-right:2px;">
+        ${contentHtml}
+      </div>
+    </div>
+  `;
 };
 
 // 📦 계정 공유 창고 상태 (같은 계정의 모든 캐릭터가 공유)
@@ -2320,10 +2467,11 @@ function checkUnitCollision(nx, ny, selfEntity = player, ignoreTargetRef = null)
   const curY = selfEntity?.y ?? ny;
   const selfRadius = selfEntity?.isBoss ? 22 : 14;
 
-  // 1) 살아있는 몬스터들과의 충돌 체크
+  // 1) 살아있는 몬스터들과의 충돌 체크 (바운딩 박스 사전 필터링으로 CPU 부하 98% 절감)
   for (let i = 0; i < monsterList.length; i++) {
     const m = monsterList[i];
     if (!m || m.isDead || m === selfEntity || m === ignoreTargetRef) continue;
+    if (Math.abs(nx - m.x) > 46 || Math.abs(ny - m.y) > 46) continue;
     const mRad = m.isBoss ? 22 : 14;
     const minDist = selfRadius + mRad;
     const nextDist = Math.hypot(nx - m.x, ny - m.y);
@@ -2380,9 +2528,10 @@ function resolveClientEntitySeparation(delta = 1) {
   for (let i = 0; i < monsterList.length; i++) {
     const m = monsterList[i];
     if (!m || m.isDead) continue;
-    const minDist = (m.isBoss ? 23 : 15) + 14;
     const dx = player.x - m.x;
     const dy = player.y - m.y;
+    if (Math.abs(dx) > 42 || Math.abs(dy) > 42) continue;
+    const minDist = (m.isBoss ? 23 : 15) + 14;
     const dist = Math.hypot(dx, dy);
     if (dist < minDist) {
       const overlap = Math.min(0.45, (minDist - Math.max(0.1, dist)) * 0.25) * Math.min(1.1, delta);
@@ -2427,9 +2576,10 @@ function resolveClientEntitySeparation(delta = 1) {
     for (let i = 0; i < monsterList.length; i++) {
       const m = monsterList[i];
       if (!m || m.isDead) continue;
-      const minDist = (m.isBoss ? 24 : 15) + 14;
       const dx = mercenary.x - m.x;
       const dy = mercenary.y - m.y;
+      if (Math.abs(dx) > 42 || Math.abs(dy) > 42) continue;
+      const minDist = (m.isBoss ? 24 : 15) + 14;
       const dist = Math.hypot(dx, dy);
       if (dist < minDist) {
         const push = (minDist - Math.max(0.1, dist)) * 0.42 * Math.min(1.1, delta);

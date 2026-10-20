@@ -1720,22 +1720,31 @@ window.respondPartyInvite = function(inviterCharId, accept) {
   });
 };
 
+let _lastRegHudTxt = '';
+let _lastPartyHudHtml = '';
+let _lastMercHudSig = '';
+let _lastMercTitleKey = '';
+
 window.updateMercHUD = function() {
   const regEl = document.getElementById('current-region-hud');
   if (regEl) {
     const reg = GameDB.Regions.find(r => r.id === currentRegionKey) || GameDB.Regions[0];
     const isDung = currentMapKey.endsWith('_dungeon');
-    regEl.innerText = `📍 ${reg.name} ${isDung ? '[던전]' : `(${reg.lvRange})`}`;
+    const nextRegTxt = `📍 ${reg.name} ${isDung ? '[던전]' : `(${reg.lvRange})`}`;
+    if (_lastRegHudTxt !== nextRegTxt) {
+      _lastRegHudTxt = nextRegTxt;
+      regEl.innerText = nextRegTxt;
+    }
   }
 
-  // 🎗️ 용병 HUD 바로 밑에 오직 '내 파티원 HUD(체력/마나)'만 표시 (같은 계정 다른 슬롯 캐릭터나 무관한 유저가 뜨지 않도록 수정 완료!)
+  // 🎗️ 용병 HUD 바로 밑에 오직 '내 파티원 HUD(체력/마나)'만 표시 (변경 시에만 DOM 갱신하여 렉 원천 차단!)
   const pHud = document.getElementById('party-hud');
   if (pHud) {
     if (window.partyState && Array.isArray(window.partyState.members) && window.partyState.members.length > 0) {
-      pHud.style.display = 'flex';
+      if (pHud.style.display !== 'flex') pHud.style.display = 'flex';
       const curMode = window.partyAutoHuntMode || window.partyState.partyMode || 'FREE';
       const modeBadge = curMode === 'FOCUS' ? '🎯점사' : '🏃자유';
-      pHud.innerHTML = window.partyState.members.map((pm) => {
+      const nextPartyHtml = window.partyState.members.map((pm) => {
         const liveOp = pm.charId === activeCharacterId
           ? player
           : ((window.otherPlayers || []).find(o => o && o.charId === pm.charId) || pm);
@@ -1745,8 +1754,8 @@ window.updateMercHUD = function() {
         const maxHpVal = Math.max(1, liveOp.maxHp || pm.maxHp || 100);
         const mpVal = Math.ceil(liveOp.mp ?? pm.mp ?? 50);
         const maxMpVal = Math.max(1, liveOp.maxMp || pm.maxMp || 50);
-        const hpPct = Math.max(0, Math.min(100, (hpVal / maxHpVal) * 100));
-        const mpPct = Math.max(0, Math.min(100, (mpVal / maxMpVal) * 100));
+        const hpPct = Math.round(Math.max(0, Math.min(100, (hpVal / maxHpVal) * 100)));
+        const mpPct = Math.round(Math.max(0, Math.min(100, (mpVal / maxMpVal) * 100)));
         const borderCol = isSel ? '#4ade80' : (isLeader ? '#facc15' : '#38bdf8');
         return `
           <div onpointerdown="onPartyHudPointerDown(event, '${pm.charId}', ${isLeader})"
@@ -1769,7 +1778,12 @@ window.updateMercHUD = function() {
           </div>
         `;
       }).join('');
-    } else {
+      if (_lastPartyHudHtml !== nextPartyHtml) {
+        _lastPartyHudHtml = nextPartyHtml;
+        pHud.innerHTML = nextPartyHtml;
+      }
+    } else if (_lastPartyHudHtml !== '') {
+      _lastPartyHudHtml = '';
       pHud.style.display = 'none';
       pHud.innerHTML = '';
     }
@@ -1778,12 +1792,21 @@ window.updateMercHUD = function() {
   const mHud = document.getElementById('merc-hud');
   if (!mHud) return;
   if (!mercenary.hired) {
-    mHud.style.display = 'none';
+    if (_lastMercHudSig !== 'unhired') {
+      _lastMercHudSig = 'unhired';
+      mHud.style.display = 'none';
+    }
     return;
   }
-  mHud.style.display = 'flex';
 
-  const isMercSelectedForBuff = player.friendlyTarget && player.friendlyTarget.type === 'MERC';
+  const isMercSelectedForBuff = Boolean(player.friendlyTarget && player.friendlyTarget.type === 'MERC');
+  const hpCeil = Math.ceil(mercenary.hp);
+  const mpCeil = Math.ceil(mercenary.mp);
+  const nextMercSig = `${mercenary.class}|${mercenary.name}|${mercenary.isDead?1:0}|${mercenary.manaRechargeWait?1:0}|${mercenary.stance}|${hpCeil}/${mercenary.maxHp}|${mpCeil}/${mercenary.maxMp}|${isMercSelectedForBuff?1:0}`;
+  if (_lastMercHudSig === nextMercSig) return;
+  _lastMercHudSig = nextMercSig;
+
+  if (mHud.style.display !== 'flex') mHud.style.display = 'flex';
   mHud.style.borderColor = isMercSelectedForBuff ? '#4ade80' : '#60a5fa';
   mHud.style.boxShadow = isMercSelectedForBuff
     ? '0 0 12px rgba(74, 222, 128, 0.85), inset 0 0 6px rgba(74, 222, 128, 0.35)'
@@ -1804,7 +1827,11 @@ window.updateMercHUD = function() {
   const mpBar = document.getElementById('merc-hud-mp-bar');
   const mpTxt = document.getElementById('merc-hud-mp-txt');
 
-  if (titleEl) titleEl.innerHTML = `${window.getClassIconHTML ? window.getClassIconHTML(mercenary.class, 13) : meta.icon} <span>${normalizeMercenaryDisplayName(mercenary.name, mercenary.class).split(' ').pop()}</span>`;
+  const titleKey = `${mercenary.class}|${mercenary.name}`;
+  if (titleEl && _lastMercTitleKey !== titleKey) {
+    _lastMercTitleKey = titleKey;
+    titleEl.innerHTML = `${window.getClassIconHTML ? window.getClassIconHTML(mercenary.class, 13) : meta.icon} <span>${normalizeMercenaryDisplayName(mercenary.name, mercenary.class).split(' ').pop()}</span>`;
+  }
   if (stanceEl) {
     if (mercenary.isDead) {
       stanceEl.innerText = '💀사망';
@@ -1832,9 +1859,9 @@ window.updateMercHUD = function() {
   const hpPct = mercenary.isDead ? 0 : Math.max(0, Math.min(100, (mercenary.hp / mercenary.maxHp) * 100));
   const mpPct = mercenary.isDead ? 0 : Math.max(0, Math.min(100, (mercenary.mp / mercenary.maxMp) * 100));
   if (hpBar) hpBar.style.width = `${hpPct}%`;
-  if (hpTxt) hpTxt.innerText = mercenary.isDead ? '사망 (부활필요)' : `${Math.ceil(mercenary.hp)}/${mercenary.maxHp}`;
+  if (hpTxt) hpTxt.innerText = mercenary.isDead ? '사망 (부활필요)' : `${hpCeil}/${mercenary.maxHp}`;
   if (mpBar) mpBar.style.width = `${mpPct}%`;
-  if (mpTxt) mpTxt.innerText = `${Math.ceil(mercenary.mp)}/${mercenary.maxMp}`;
+  if (mpTxt) mpTxt.innerText = `${mpCeil}/${mercenary.maxMp}`;
 };
 
 let selectedMercInvIdx = null;

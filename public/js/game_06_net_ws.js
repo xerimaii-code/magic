@@ -576,13 +576,17 @@ function drawPartyRibbonAboveEntity(uiG, uiContainer, entity, cx, nameBottomY, i
 
   if (!entity.partyRibbonText) {
     entity.partyRibbonText = createCrispPixiText(labelStr, 9.5, theme.txt);
+    entity.partyRibbonText._lastFill = theme.txt;
     entity.partyRibbonText.anchor.set(0.5, 0.5);
     uiContainer.addChild(entity.partyRibbonText);
   }
   if (entity.partyRibbonText.text !== labelStr) {
     entity.partyRibbonText.text = labelStr;
   }
-  entity.partyRibbonText.style.fill = theme.txt;
+  if (entity.partyRibbonText._lastFill !== theme.txt) {
+    entity.partyRibbonText._lastFill = theme.txt;
+    entity.partyRibbonText.style.fill = theme.txt;
+  }
   entity.partyRibbonText.visible = true;
   entity.partyRibbonText.x = Math.round(cx);
   entity.partyRibbonText.y = centerY;
@@ -984,7 +988,27 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
   });
 
   window.otherPlayers = Array.from(baseMap.values());
-  window.updateMercHUD?.();
+  if (window.partyState && Array.isArray(window.partyState.members) && window.partyState.members.length > 0) {
+    window.updateMercHUD?.();
+  }
+}
+
+window.serverTimeOffset = 0;
+window.getSyncedServerTime = function() {
+  return Date.now() + (window.serverTimeOffset || 0);
+};
+window._monsterIdMap = new Map();
+
+function getFastMonsterById(mobId) {
+  let m = window._monsterIdMap.get(mobId);
+  if (m) return m;
+  for (let i = 0; i < monsterList.length; i++) {
+    if (monsterList[i].id === mobId) {
+      window._monsterIdMap.set(mobId, monsterList[i]);
+      return monsterList[i];
+    }
+  }
+  return null;
 }
 
 function syncAuthoritativeMonstersFull(serverMonsters) {
@@ -993,6 +1017,7 @@ function syncAuthoritativeMonstersFull(serverMonsters) {
   monsterList.forEach(m => oldMap.set(m.id, m));
 
   const nextList = [];
+  window._monsterIdMap.clear();
   serverMonsters.forEach(sm => {
     const existing = oldMap.get(sm.id);
     if (existing) {
@@ -1004,6 +1029,7 @@ function syncAuthoritativeMonstersFull(serverMonsters) {
       });
       if (existing.isDead && existing.nameTag) existing.nameTag.visible = false;
       nextList.push(existing);
+      window._monsterIdMap.set(existing.id, existing);
     } else {
       const baseMob = (GameDB.Monsters || []).find(bm => bm.id === sm.mobId || bm.name === sm.name) || sm;
       const created = createMonsterInstance(sm.id, baseMob, sm.x, sm.y, sm.isBoss);
@@ -1012,6 +1038,7 @@ function syncAuthoritativeMonstersFull(serverMonsters) {
         serverY: sm.y
       });
       nextList.push(created);
+      window._monsterIdMap.set(created.id, created);
     }
   });
 
@@ -1051,6 +1078,13 @@ function syncAuthoritativeGroundItems(serverItems) {
 
 function handleCentralServerPacket(msg) {
   if (!msg || !msg.type) return;
+
+  if (typeof msg.serverTime === 'number' && msg.serverTime > 0) {
+    const newOffset = msg.serverTime - Date.now();
+    window.serverTimeOffset = window.serverTimeOffset === 0
+      ? newOffset
+      : Math.round(window.serverTimeOffset * 0.8 + newOffset * 0.2);
+  }
 
   if (msg.buildVersion) {
     window.checkServerVersionAndAutoReload?.(msg.buildVersion);
@@ -1259,11 +1293,10 @@ function handleCentralServerPacket(msg) {
 
     // A. 초경량 튜플 패킷(msg.ms: [id, x, y, hp, isDead, mp, maxHp, stunUntil, defDownUntil, respawnTimer]) 복원
     if (Array.isArray(msg.ms)) {
-      const mobMap = new Map();
-      monsterList.forEach(m => mobMap.set(m.id, m));
-      msg.ms.forEach(tup => {
-        if (!Array.isArray(tup)) return;
-        const m = mobMap.get(tup[0]);
+      for (let i = 0; i < msg.ms.length; i++) {
+        const tup = msg.ms[i];
+        if (!Array.isArray(tup)) continue;
+        const m = getFastMonsterById(tup[0]);
         if (m) {
           const distM = Math.hypot((tup[1] || 0) - (m.x ?? tup[1] ?? 0), (tup[2] || 0) - (m.y ?? tup[2] ?? 0));
           const defMobSpd = m.isBoss ? 1.82 : 1.45;
@@ -1290,15 +1323,14 @@ function handleCentralServerPacket(msg) {
             m.defDownUntil = tup[7] || 0;
           }
         }
-      });
+      }
       if (player.targetEntity?.type === 'MONSTER' && player.targetEntity.ref) {
         updateTopTargetUI(player.targetEntity.ref);
       }
     } else if (Array.isArray(msg.monsters)) {
-      const mobMap = new Map();
-      monsterList.forEach(m => mobMap.set(m.id, m));
-      msg.monsters.forEach(sm => {
-        const m = mobMap.get(sm.id);
+      for (let i = 0; i < msg.monsters.length; i++) {
+        const sm = msg.monsters[i];
+        const m = getFastMonsterById(sm.id);
         if (m) {
           const distM = Math.hypot((sm.x || 0) - (m.x ?? sm.x ?? 0), (sm.y || 0) - (m.y ?? sm.y ?? 0));
           m._interpSpeed = distM > 0.4 ? Math.max(0.45, Math.min(2.45, distM / 6.0)) : (m.isBoss ? 1.82 : 1.45);
@@ -1314,7 +1346,7 @@ function handleCentralServerPacket(msg) {
           m.defDownUntil = sm.defDownUntil || 0;
           if (m.isDead && m.nameTag) m.nameTag.visible = false;
         }
-      });
+      }
       if (player.targetEntity?.type === 'MONSTER' && player.targetEntity.ref) {
         updateTopTargetUI(player.targetEntity.ref);
       }
@@ -1329,7 +1361,7 @@ function handleCentralServerPacket(msg) {
   // 4) 서버 권위 몬스터 피격 브로드캐스트 (같은 곳을 보는 모든 유저 화면에서 동시에 피깎임·타격이펙트·데미지 텍스트 표시!)
   if (msg.type === 'MONSTER_DAMAGED') {
     if (normalizeClientMapKey(msg.mapKey) !== normalizeClientMapKey(currentMapKey)) return;
-    const ent = monsterList.find(m => m.id === msg.mobId);
+    const ent = getFastMonsterById(msg.mobId);
     if (!ent) return;
 
     ent.hp = msg.hp;

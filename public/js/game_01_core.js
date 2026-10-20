@@ -1153,79 +1153,137 @@ window.addChat = function(text, type = 'log-sys', category = null) {
 // ============================================================================
 const HELP_CONTENTS = {
   merc: {
-    title: "⚔️ 용병 제어 · 지원타겟 도움말",
+    title: "⚔️ 용병 제어 · 아이템 보급 · 생존 AI 도움말",
     body: `
-      • <b>용병 HUD 터치</b>: 우측 <b>용병 HUD 짧게 터치</b> 시 힐/버프 지원대상으로 선택(전투타겟 유지), <b>길게 누르면</b> 상태·가방창 오픈!<br>
-      • <b>스탠스</b>: <b>공격</b>(적극교전) · <b>대기</b>(추종/반격) · <b>보조</b>(힐+협공)<br>
-      • <b>자동 생존</b>: HP 70%·MP 20% 이하 물약 복용, 마나 10% 이하 시 MP 충전 대기
+      • <b>용병 HUD 터치</b>: 우측 <b>용병 HUD 짧게 터치</b> 시 힐/버프 지원대상으로 지정, <b>길게 누르면</b> 용병 관리창 오픈!<br>
+      • <b>⚡ 아이템 보급</b>: 용병 창에서 <b>[⚡아이템보급]</b> 클릭 시 내 가방에 있는 더 좋은 장비와 물약을 자동으로 가져와 착용합니다.<br>
+      • <b>전술 스탠스</b>: <b>공격</b>(적극교전) · <b>보조</b>(힐+점사협공) · <b>대기</b>(추종/회피)<br>
+      • <b>카이팅·회피 AI</b>: 몬스터 접근 시 피격 전 회피 기동 후 플레이어 타겟을 함께 점사하며, 물약 소진 및 체력 20% 이하 시 플레이어 주변을 돌며 생존 기동합니다.
     `
   },
   equip: {
     title: "🛡️ 14부위 장착 · 스탯 · 고강화 각성 도움말",
     body: `
       • <b>14부위 착용</b>: 투구1·목걸이1·귀걸이2·반지2·장갑1·무기1·방패1·벨트1·갑옷1·신발1·티셔츠1·망토1 (빈 슬롯 터치 시 가방 장비 즉시 장착!)<br>
+      • <b>📊 스탯 분배</b>: 좌측 <b>[스탯 분배]</b> 버튼으로 STR(전사)·DEX(궁수)·INT(마법사)·CON(체력/방어)을 성장시킬 수 있습니다.<br>
       • <b>무기 각성</b>: +6 안전 | <b>+7</b> 방어관통+5% · <b>+9</b> 쿨감-8% · <b>+10+</b> 보스추뎀+10%<br>
       • <b>방어구/장신구</b>: +4 안전 | <b>+7</b> 피해감소+3% · <b>+9</b> 쿨감-2% · <b>+10+</b> 보스피감+4%·올스탯+1
     `
   },
-  inventory: {
-    title: "🎒 가방 정렬 · 인챈트 · 비전서 도움말",
+  stat: {
+    title: "📊 스탯 분배 · 능력치 성장 도움말",
     body: `
-      • <b>🧹 정렬 버튼</b>: 1순위 물약(체력→마나→버프 고정) → 2순위 착장장비(장착중·보유장비) → 3순위 주문서·마법서·재료 순 자동 정렬<br>
-      • <b>더블 터치 / 장착 버튼</b>: 장비 장착/해제, 물약 복용, 마법서·비급서 영구 습득<br>
-      • <b>인챈트</b>: 주문서 더블터치 또는 상세창 [✨강화시도] 버튼 클릭
+      • <b>근력(STR)</b>: 전사 주스탯 · 근접 물리 공격력 및 치명타 피해 상승<br>
+      • <b>민첩(DEX)</b>: 궁수 주스탯 · 원거리 물리 공격력, 명중률, 치명타율, 회피율 상승<br>
+      • <b>지능(INT)</b>: 마법사 주스탯 · 마법 공격력, 최대 MP, 힐링 회복량 상승<br>
+      • <b>체력(CON)</b>: 전 직업 공통 · 최대 HP, 물리/마법 방어 보조, 방패 블록률 상승<br>
+      • <b>스탯 초기화</b>: 50레벨 단위마다 무료 스탯 전체 회수 기회가 해금됩니다.
+    `
+  },
+  inventory: {
+    title: "🎒 가방 정렬 · 다중 판매 · 인챈트 도움말",
+    body: `
+      • <b>🧹 정렬 · ⚡ 아이템보급</b>: 물약→장비→주문서 순 자동 정렬 및 <b>[⚡아이템보급]</b>으로 용병에게 상위 장비를 즉시 보급합니다.<br>
+      • <b>💰 판매 · 다중 선택</b>: 단건 선택 판매 시 수량 조절창이 뜨며, <b>[다중 선택]</b> 체크 후 여러 아이템이나 복수 수량 묶음을 한 번에 판매/버리기 할 수 있습니다.<br>
+      • <b>📕 미습득 표시</b>: 아직 배우지 않은 마법서·비급서는 슬롯 좌상단에 초록색 <b>[미습득]</b> 배지가 표시됩니다.<br>
+      • <b>✨ 인챈트</b>: 주문서 더블터치 또는 상세창 [✨강화시도] 버튼으로 장비를 강화합니다.
     `
   },
   skill: {
-    title: "📕 서클별 스킬 · 패시브 · 아군버프",
+    title: "📕 서클별 스킬 · 패시브 · 아군버프 도움말",
     body: `
       • <b>패시브 해금</b>: <b>Lv.1</b>(마스터리) → <b>Lv.12</b>(중급오라) → <b>Lv.28</b>(상급각성)<br>
-      • <b>습득처</b>: 마법사 1~2서클(NPC)/3~6서클(드롭) | 전사·궁수 1서클(NPC)/2~3서클(드롭)<br>
-      • <b>아군 힐/버프</b>: 용병 HUD나 타 플레이어/파티 HUD 선택 후 힐링·버프 시전 가능
+      • <b>습득처</b>: 마법사 1~2서클(NPC)/3~6서클(몬스터 드롭) | 전사·궁수 1서클(NPC)/2~3서클(몬스터 드롭)<br>
+      • <b>퀵슬롯 자동 시전</b>: 하단 퀵슬롯에 등록한 스킬/물약을 <b>위로 스와이프(또는 우클릭)</b>하면 자동사냥 시 자동 발동됩니다.<br>
+      • <b>아군 힐/버프</b>: 용병 HUD나 파티원 HUD 선택 후 힐링·버프 시전 가능
     `
   },
   quest: {
-    title: "📜 퀘스트 · 보스 전용 무기 도움말",
+    title: "📜 퀘스트 · 방향 화살표 · 전용 무기 도움말",
     body: `
-      • <b>진행/보상</b>: 각 마을(S)·야영지(S1) 퀘스트 NPC를 통해 수락 및 보상 수령<br>
+      • <b>진행/보상</b>: 각 마을(S)·야영지(S1) 퀘스트 NPC를 통해 수락 및 보상 수령 (현재 진행 중인 마지막 임무로 자동 포커스)<br>
+      • <b>🧭 방향 화살표</b>: 퀘스트 해당 지역에 있을 때 다음 목표 방향을 캐릭터 주변 연한 화살표로 안내합니다 (옵션에서 ON/OFF 가능).<br>
       • <b>[퀘스트전용] 보상</b>: 각 지역 최종 보스 임무 완료 시 클래스 맞춤 고성능 무기 지급
     `
   },
   option: {
-    title: "⚙️ 서버 동기화 · 카메라 · 루팅 도움말",
+    title: "⚙️ 서버 동기화 · 절전방지 · 루팅 도움말",
     body: `
-      • <b>수파베이스 일원화</b>: 모든 캐릭터·창고·옵션 데이터는 수파베이스 DB를 최우선 기준으로 실시간 동기화됩니다.<br>
-      • <b>시야 배율</b>: 자동조정 선택 시 마을(1단계)·일반사냥(2단계)·보스전(3단계) 자동 전환<br>
-      • <b>루팅 필터</b>: 설정 등급 이상의 장비만 자동 루팅 (골드·물약·주문서·비전서는 항상 루팅)
+      • <b>서버 시간 · 실시간 동기화</b>: 모든 플레이어와 몬스터는 동일한 서버 시간대를 공유하며 수파베이스 DB와 실시간 연동됩니다.<br>
+      • <b>💡 화면 항상 켜기</b>: 전체화면 및 자동사냥 중 화면 꺼짐(절전모드)을 방지합니다.<br>
+      • <b>🧭 퀘스트 화살표</b>: 퀘스트 목표 방향 화살표 표시 여부를 켜고 끌 수 있습니다.<br>
+      • <b>💎 루팅 필터</b>: 설정 등급 이상의 장비만 자동 루팅 (골드·물약·주문서·비전서는 항상 루팅)
     `
   },
   party: {
-    title: "🎗️ 파티 시스템 · 자동사냥 모드 도움말",
+    title: "🎗️ 파티 시스템 · 점사 모드 도움말",
     body: `
-      • <b>초대/탈퇴</b>: 같은 존에서 <b>/파티초대 이름</b> 입력 또는 파티창에서 초대 | <b>/파티탈퇴</b><br>
-      • <b>파티원 버프</b>: 용병 HUD 아래 <b>파티원 HUD 터치</b> 시 힐/버프 시전 대상 지정<br>
-      • <b>파티장 HUD 홀드</b>: 파티장 HUD를 길게 누르면 <b>자유사냥/점사모드·위임·탈퇴</b> 창 오픈<br>
-      • <b>자동 승계</b>: 파티장 접속 종료 시 <b>두 번째 가입자</b>가 자동으로 파티장 승계
+      • <b>비차단 파티 초대</b>: 파티 요청이 와도 <b>자동사냥이 끊기지 않으며</b>, 10초 무반응 시 초대창이 자동으로 닫힙니다.<br>
+      • <b>🎯 점사모드 vs 🏃 자유사냥</b>: 파티장이 <b>[점사모드]</b> 설정 시 파티원들과 용병이 파티장의 타겟을 최우선으로 함께 집중 공격합니다.<br>
+      • <b>파티원 버프/힐</b>: 우측 파티원 HUD를 짧게 터치하면 지원 대상으로 지정되며, 길게 누르면 파티 설정창이 열립니다.
+    `
+  },
+  immersive: {
+    title: "📖 에테르 도감 · 20대 몰입형 콘텐츠 도움말",
+    body: `
+      • <b>1차 콘텐츠(1~10)</b>: 몬스터 생태 도감, 지역 수호 칭호, 에테르 보물 고블린, 균열 엘리트 챔피언, 무기 5대 원소 공명, 보스 기여도 전광판 & 파티 주사위, 에테르 연대기(15장), 모닥불 온기 & 음유시인 담화, 차원 마나 기류(실시간 날씨), 용병 유대감 & 전술 대사<br>
+      • <b>2차 콘텐츠(11~20)</b>: 왕립 일일 현상수배 게시판, 무기 숙련도 & 전장의 훈장, 고대 에테르 성물함, 차원 방랑 상인 아카샤, 에테르 12성좌 오늘의 운세, 모험가 길드 명예 등급, 보스 토벌전 전술 브리핑, 대장장이 토르딘의 명장 각인, 15차원 탐사 발자취 지도, 연속 사냥 콤보 & 각성 피버<br>
+      • <b>조작 안내</b>: 상단 탭을 눌러 각 콘텐츠 현황을 확인하고 원소 공명·칭호 장착·각인·보급 수령을 진행하세요.
+    `
+  },
+  guide: {
+    title: "🎓 초보자 마을 왕립 가이드 도움말",
+    body: `
+      • <b>왕립 안내관 루시</b>: 초보자 마을(알트리아) 광장에서 모험가님께 조작법, 전투·자동사냥, 용병 보급·전술, 스킬 서클, 강화, 파티 점사, 에테르 도감 20종까지 게임의 모든 핵심 기능을 안내합니다.<br>
+      • 상단 분야별 탭을 눌러 궁금한 항목을 언제든 배경 암전 없이 선명하게 확인하세요!
+    `
+  },
+  bank: {
+    title: "🏦 계정 통합 창고 · 성소 회복 도움말",
+    body: `
+      • <b>계정 공유</b>: 창고에 보관한 아이템(최대 60칸)과 골드는 같은 계정 내 3개 슬롯의 모든 캐릭터가 함께 공유합니다.<br>
+      • <b>무료 치유</b>: [✨ 무료 HP/MP 회복] 버튼으로 캐릭터와 용병의 체력/마나를 즉시 100% 회복할 수 있습니다.
+    `
+  },
+  scroll: {
+    title: "📜 마법 주문서 · 장비 안전 강화 도움말",
+    body: `
+      • <b>안전 인챈트 구간</b>: 무기는 <b>+6까지</b>, 방어구·장신구는 <b>+4까지 100% 안전하게 강화</b>됩니다.<br>
+      • <b>고강화 도전</b>: 안전 구간 이후 강화 성공 시 방어관통·쿨타임 감소·보스 추가피해 등 강력한 각성 옵션이 해금됩니다.
+    `
+  },
+  merchant: {
+    title: "🛒 잡화 상점 · 대량 구매 도움말",
+    body: `
+      • <b>물약 & 기초장비</b>: 체력/마나 물약, 가속 물약(촐기), 전직업 기본 장비를 판매합니다.<br>
+      • <b>묶음 구매</b>: <b>[x1] [x10] [x50]</b> 버튼으로 물약과 귀환 주문서를 빠르게 대량 구매할 수 있습니다.
+    `
+  },
+  chat: {
+    title: "💬 대화창 · 명령어 · 투명모드 도움말",
+    body: `
+      • <b>창 제어</b>: 상단 바를 드래그해 위치를 옮기거나 모서리를 끌어 크기를 조절하고, <b>[💧투명]</b> 버튼으로 배경만 투명하게 전환할 수 있습니다.<br>
+      • <b>주요 명령어</b>: <b>/파티초대 이름</b>, <b>/파티탈퇴</b>, <b>/누구</b> 등을 지원합니다.
     `
   },
   class_create: {
     title: "⚔️ 클래스 특징 도움말",
     body: `
-      • <b>인간전사(STR)</b>: 검·방패 착용, 높은 체력/방어, 배쉬(기절)·휠윈드(광역)·차지(돌진)<br>
+      • <b>인간전사(STR)</b>: 검·방패 착용, 높은 체력/방어, 배쉬(기절)·휠윈드(광역)·차지(돌진)·아이언월/배틀크라이(방어버프)<br>
       • <b>엘프궁수(DEX)</b>: 양손활 착용, 원거리 고속 사격·카이팅, 네이처스 터치(자체/아군 힐)<br>
       • <b>엘프마법사(INT)</b>: 지팡이 착용, 1~6서클 광역 마법 및 힐링·쉴드·헤이스트·뮨 아군 지원
     `
   }
 };
 
-// 화면 전체 암전 없이 최상단에 작고 선명하게 뜨는 비차단형 도움말 툴팁 팝업
+// 화면 전체 암전(dimming) 없이 최상단에 읽기 편한 크기로 선명하게 뜨는 비차단형 도움말 팝업
 window.showHelpModal = function(topicKey, ev) {
   if (ev) ev.stopPropagation();
   let pop = document.getElementById('global-help-popover');
   if (!pop) {
     pop = document.createElement('div');
     pop.id = 'global-help-popover';
-    pop.style.cssText = 'position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:999999; display:none; width:min(90vw, 315px); pointer-events:auto;';
+    pop.style.cssText = 'position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:999999; display:none; width:min(94vw, 355px); max-height:78dvh; background:transparent; pointer-events:auto;';
     document.body.appendChild(pop);
     document.addEventListener('pointerdown', (e) => {
       if (pop.style.display !== 'none' && !pop.contains(e.target) && !e.target.classList?.contains('help-q-btn')) {
@@ -1240,12 +1298,12 @@ window.showHelpModal = function(topicKey, ev) {
   pop.setAttribute('data-topic', topicKey);
   const info = HELP_CONTENTS[topicKey] || HELP_CONTENTS.inventory;
   pop.innerHTML = `
-    <div onclick="event.stopPropagation()" style="background:rgba(20, 18, 15, 0.96); border:1.5px solid #facc15; border-radius:8px; padding:8px 10px; color:#f3f4f6; box-shadow:0 6px 22px rgba(0,0,0,0.85);">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #3d3020; padding-bottom:4px; margin-bottom:5px;">
-        <span style="font-size:11.5px; font-weight:bold; color:#fde047;">${info.title}</span>
-        <button onclick="document.getElementById('global-help-popover').style.display='none'" style="background:#7f1d1d; color:#fff; border:1px solid #f87171; border-radius:4px; padding:1px 6px; font-size:10px; cursor:pointer;">✕</button>
+    <div onclick="event.stopPropagation()" style="background:rgba(17, 20, 28, 0.97); border:2px solid #facc15; border-radius:10px; padding:10px 12px; color:#f9fafb; box-shadow:0 8px 24px rgba(0,0,0,0.75); max-height:74dvh; overflow-y:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #4a3b2c; padding-bottom:6px; margin-bottom:7px; gap:6px;">
+        <span style="font-size:13.5px; font-weight:900; color:#fde047; line-height:1.3;">${info.title}</span>
+        <button onclick="document.getElementById('global-help-popover').style.display='none'" style="background:#7f1d1d; color:#fff; border:1px solid #f87171; border-radius:5px; padding:2px 8px; font-size:11.5px; font-weight:bold; cursor:pointer; flex-shrink:0;">✕</button>
       </div>
-      <div style="font-size:10px; line-height:1.48; color:#e5e7eb;">${info.body}</div>
+      <div style="font-size:12.5px; line-height:1.58; color:#f3f4f6; word-break:keep-all;">${info.body}</div>
     </div>
   `;
   pop.style.display = 'block';
@@ -1431,7 +1489,7 @@ function ensureAllGameModals() {
     document.head.appendChild(style);
   }
 
-  // 기존 정적 모달 헤더(#equip-ui, #inventory-ui, #skill-ui)에도 ? 도움말 버튼 자동 부착
+  // 모든 정적 모달 헤더(#equip-ui, #inventory-ui, #skill-ui, #stat-alloc-modal, #quest-ui, #npc-modal-ui, #chat-window-ui)에 ? 도움말 버튼 자동 부착
   const attachHelpBtn = (modalId, topic) => {
     const hdr = document.querySelector(`#${modalId} .modal-header`);
     if (hdr && !hdr.querySelector('.help-q-btn')) {
@@ -1446,6 +1504,19 @@ function ensureAllGameModals() {
   attachHelpBtn('equip-ui', 'equip');
   attachHelpBtn('inventory-ui', 'inventory');
   attachHelpBtn('skill-ui', 'skill');
+  attachHelpBtn('stat-alloc-modal', 'stat');
+  attachHelpBtn('quest-ui', 'quest');
+  attachHelpBtn('npc-modal-ui', 'guide');
+
+  const chatTitleWrap = document.getElementById('chat-win-title-wrap');
+  if (chatTitleWrap && !chatTitleWrap.querySelector('.help-q-btn')) {
+    const cBtn = document.createElement('button');
+    cBtn.className = 'help-q-btn';
+    cBtn.title = '대화창 도움말';
+    cBtn.innerText = '?';
+    cBtn.onclick = (e) => window.showHelpModal('chat', e);
+    chatTitleWrap.insertBefore(cBtn, chatTitleWrap.children[1] || null);
+  }
 
   // 미니맵 아래 현재지역 표시 & 용병 미니 HUD 동적 부착
   const rightHud = document.querySelector('.right-hud');
