@@ -186,31 +186,48 @@ export const ImmersiveSystem = {
     }
   },
 
-  toggleModal() {
+  ensureModalDOM() {
     let m = document.getElementById('immersive-20-modal');
     if (!m) {
       m = document.createElement('div');
       m.id = 'immersive-20-modal';
       m.className = 'modal-panel hidden';
-      m.style.cssText = 'width:min(94vw, 372px); max-height:78dvh; z-index:9300; display:flex; flex-direction:column; padding:6px !important;';
+      m.style.cssText = 'width:min(94vw, 386px); max-height:min(80dvh, calc(100dvh - 155px)); z-index:320; display:flex; flex-direction:column; padding:8px !important; overflow:hidden;';
+      m.innerHTML = `
+        <div class="modal-header drag-handle" id="immersive-20-drag-header" style="padding:6px 32px 6px 10px; font-size:13.5px; flex:none; cursor:move; user-select:none;">
+          📖 몬스터 · 드롭 도감 <button type="button" class="help-q-btn" onclick="showHelpModal('immersive', event)" title="몬스터 도감 도움말">?</button>
+        </div>
+        <button type="button" class="close-x-btn" onclick="window.ImmersiveSystem.toggleModal()">✖</button>
+        <div id="immersive-20-body" style="flex:1 1 auto; min-height:0; display:flex; flex-direction:column; overflow:hidden;"></div>
+      `;
       (document.getElementById('game-wrapper') || document.body).appendChild(m);
-      if (typeof window.makeDraggable === 'function') {
-        try { window.makeDraggable('immersive-20-modal'); } catch (e) {}
-      }
     }
+    if (typeof window.makeDraggable === 'function') {
+      try { window.makeDraggable('immersive-20-modal'); } catch (e) {}
+    }
+    return m;
+  },
+
+  toggleModal() {
+    const m = this.ensureModalDOM();
+    const wasHidden = m.classList.contains('hidden');
     m.classList.toggle('hidden');
     if (!m.classList.contains('hidden')) {
       this.loadFromLocal();
       this.selectedRegion = window.currentRegionKey || 'R01';
       this.renderModal();
       window.bringModalToFront?.(m);
-      window.centerModalOnScreen?.(m);
+      if (wasHidden && !m._hasCustomDragPos) {
+        window.centerModalOnScreen?.(m);
+      }
     }
   },
 
   renderModal() {
-    const m = document.getElementById('immersive-20-modal');
-    if (!m) return;
+    const m = this.ensureModalDOM();
+    const bodyEl = document.getElementById('immersive-20-body');
+    if (!m || !bodyEl) return;
+
     const s = this.state;
     const regions = GameDB.Regions || [];
     const curRegId = this.selectedRegion || window.currentRegionKey || 'R01';
@@ -253,14 +270,14 @@ export const ImmersiveSystem = {
       const isCurrentReg = curRegId === (window.currentRegionKey || 'R01');
 
       return `
-        <div style="background:#14171f; border:1px solid ${isBoss ? '#dc2626' : '#2d3748'}; border-radius:6px; padding:6px 8px; display:flex; flex-direction:column; gap:3px;">
+        <div style="background:#14171f; border:1px solid ${isBoss ? '#dc2626' : '#2d3748'}; border-radius:6px; padding:6px 8px; display:flex; flex-direction:column; gap:3px; flex-shrink:0;">
           <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
             <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
               <span style="color:${isBoss ? '#facc15' : '#f3f4f6'}; font-weight:bold; font-size:12.5px;">${isBoss ? '👑 ' : ''}${mob.name}</span>
               <span style="font-size:10.5px; color:#38bdf8; font-weight:bold;">Lv.${mob.lv}</span>
               <span style="font-size:10px; padding:0 4px; border-radius:3px; background:${mob.aggro === 'Y' ? '#7f1d1d' : '#1e293b'}; color:${mob.aggro === 'Y' ? '#fca5a5' : '#94a3b8'};">${mob.aggro === 'Y' ? '선공' : '비선공'}·${mob.type || '물리'}</span>
             </div>
-            <div style="display:flex; align-items:center; gap:4px;">
+            <div style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
               <span style="font-size:11px; color:${killCnt > 0 ? '#4ade80' : '#6b7280'}; font-weight:bold;">처치 ${killCnt.toLocaleString()}</span>
               ${isCurrentReg ? `<button type="button" onclick="window.ImmersiveSystem.moveToMonster(${mob.id})" style="background:#1e3a8a; border:1px solid #60a5fa; color:#e0f2fe; border-radius:4px; padding:1px 6px; font-size:10px; font-weight:bold; cursor:pointer;">📍이동</button>` : ''}
             </div>
@@ -275,30 +292,29 @@ export const ImmersiveSystem = {
       `;
     }).join('');
 
-    m.innerHTML = `
-      <div class="modal-header drag-handle" style="padding:5px 8px; font-size:13.5px;">📖 몬스터 · 드롭 도감 <button class="help-q-btn" onclick="showHelpModal('immersive', event)" title="몬스터 도감 도움말">?</button></div>
-      <button class="close-x-btn" onclick="window.ImmersiveSystem.toggleModal()">✖</button>
-
-      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; background:#0f172a; border:1px solid #334155; border-radius:6px; padding:5px 6px; margin-bottom:5px; text-align:center; font-size:11px;">
+    bodyEl.innerHTML = `
+      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; background:#0f172a; border:1px solid #334155; border-radius:6px; padding:5px 6px; margin-bottom:5px; text-align:center; font-size:11px; flex-shrink:0;">
         <div><div style="color:#94a3b8; font-size:10px;">도감 발견</div><div style="color:#38bdf8; font-weight:bold;">${discoveredCount}/${allMobsCount}종</div></div>
         <div><div style="color:#94a3b8; font-size:10px;">총 처치</div><div style="color:#4ade80; font-weight:bold;">${(s.totalKills || 0).toLocaleString()}</div></div>
         <div><div style="color:#94a3b8; font-size:10px;">★거대 처치</div><div style="color:#facc15; font-weight:bold;">${(s.giantKills || 0).toLocaleString()}</div></div>
         <div><div style="color:#94a3b8; font-size:10px;">👑보스 토벌</div><div style="color:#f43f5e; font-weight:bold;">${(s.bossKills || 0).toLocaleString()}</div></div>
       </div>
 
-      <div style="display:flex; gap:4px; overflow-x:auto; padding-bottom:4px; margin-bottom:4px; scrollbar-width:thin;">
+      <div style="display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:3px; margin-bottom:5px; flex-shrink:0; overflow:hidden;">
         ${regions.map(r => {
           const active = r.id === curRegId;
-          return `<button type="button" onclick="window.ImmersiveSystem.selectRegion('${r.id}')" style="flex:0 0 auto; padding:4px 8px; border-radius:5px; font-size:11px; font-weight:bold; cursor:pointer; background:${active ? '#78350f' : '#14171f'}; border:1px solid ${active ? '#facc15' : '#374151'}; color:${active ? '#fde047' : '#cbd5e1'};">${r.name} <span style="font-size:9.5px; opacity:0.85;">(${r.lvRange})</span></button>`;
+          const isHere = r.id === (window.currentRegionKey || 'R01');
+          const shortLv = String(r.lvRange || '').replace(/^Lv\./i, '');
+          return `<button type="button" onclick="window.ImmersiveSystem.selectRegion('${r.id}')" style="padding:3px 2px; border-radius:4px; font-size:10px; font-weight:bold; cursor:pointer; line-height:1.15; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:${active ? 'linear-gradient(180deg, #92400e, #451a03)' : (isHere ? '#1e293b' : '#14171f')}; border:1px solid ${active ? '#facc15' : (isHere ? '#38bdf8' : '#334155')}; color:${active ? '#fef08a' : (isHere ? '#bae6fd' : '#cbd5e1')};" title="${r.name} (${r.lvRange})"><div>${isHere ? '📍' : ''}${r.name}</div><div style="font-size:8.5px; opacity:0.82; font-weight:normal;">Lv.${shortLv}</div></button>`;
         }).join('')}
       </div>
 
-      <div style="font-size:11px; color:#fde047; background:rgba(120,53,15,0.25); border:1px solid rgba(250,204,21,0.3); border-radius:5px; padding:4px 7px; margin-bottom:5px; display:flex; justify-content:space-between; align-items:center;">
-        <span>🗺️ <b>${curRegObj?.name || ''}</b> (${curRegObj?.lvRange || ''})</span>
-        <span style="color:#cbd5e1; font-size:10.5px;">필드 사냥 시 <b>★거대 몬스터(보상 2배+)</b>가 출현합니다</span>
+      <div style="font-size:11px; color:#fde047; background:rgba(120,53,15,0.25); border:1px solid rgba(250,204,21,0.3); border-radius:5px; padding:4px 7px; margin-bottom:5px; display:flex; justify-content:space-between; align-items:center; gap:6px; flex-shrink:0;">
+        <span style="white-space:nowrap;">🗺️ <b>${curRegObj?.name || ''}</b> (${curRegObj?.lvRange || ''})</span>
+        <span style="color:#cbd5e1; font-size:10px; text-align:right;">필드 사냥 시 <b>★거대 몬스터(보상 2배+)</b> 출현</span>
       </div>
 
-      <div style="display:flex; flex-direction:column; gap:5px; overflow-y:auto; max-height:calc(78dvh - 145px); padding-right:2px;">
+      <div id="immersive-20-list" style="flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:5px; overflow-y:auto; overflow-x:hidden; padding-right:2px;">
         ${mobCardsHtml}
       </div>
     `;

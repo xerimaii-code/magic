@@ -1,38 +1,62 @@
 // js/data_image.js
+const _pixiColorCache = new Map();
+
 export class PixiCtx {
     constructor(g) { this.g = g; this.stack = []; this.tx = 0; this.ty = 0; this.scX = 1; this.scY = 1; this.rot = 0; }
     save() { this.stack.push({x: this.tx, y: this.ty, sx: this.scX, sy: this.scY, r: this.rot}); }
     restore() { let s = this.stack.pop(); if(s) { this.tx = s.x; this.ty = s.y; this.scX = s.sx; this.scY = s.sy; this.rot = s.r; } }
-    translate(x, y) { this.tx += (x * Math.cos(this.rot) - y * Math.sin(this.rot)) * this.scX; this.ty += (x * Math.sin(this.rot) + y * Math.cos(this.rot)) * this.scY; }
+    translate(x, y) {
+        if (this.rot === 0) {
+            this.tx += x * this.scX;
+            this.ty += y * this.scY;
+        } else {
+            const c = Math.cos(this.rot), s = Math.sin(this.rot);
+            this.tx += (x * c - y * s) * this.scX;
+            this.ty += (x * s + y * c) * this.scY;
+        }
+    }
     rotate(a) { this.rot += a; }
     scale(x, y) { this.scX *= x; this.scY *= y; }
-    _t(x, y) { let nx = (x * Math.cos(this.rot) - y * Math.sin(this.rot)) * this.scX; let ny = (x * Math.sin(this.rot) + y * Math.cos(this.rot)) * this.scY; return { x: this.tx + nx, y: this.ty + ny }; }
+    _t(x, y) {
+        if (this.rot === 0) {
+            return { x: this.tx + x * this.scX, y: this.ty + y * this.scY };
+        }
+        const c = Math.cos(this.rot), s = Math.sin(this.rot);
+        return { x: this.tx + (x * c - y * s) * this.scX, y: this.ty + (x * s + y * c) * this.scY };
+    }
     _parseColor(col, defaultAlpha = 1) {
         if (!col) return { hex: 0x000000, alpha: 0 };
         if (typeof col === 'number') return { hex: col, alpha: defaultAlpha };
+        const cacheKey = defaultAlpha === 1 ? col : `${col}@${defaultAlpha}`;
+        const cached = _pixiColorCache.get(cacheKey);
+        if (cached) return cached;
+
         const s = String(col).trim();
+        let res = { hex: 0x111111, alpha: defaultAlpha };
         if (s.startsWith('#')) {
             const raw = s.slice(1);
             if (raw.length === 3) {
                 const r = parseInt(raw[0] + raw[0], 16) || 0;
                 const g = parseInt(raw[1] + raw[1], 16) || 0;
                 const b = parseInt(raw[2] + raw[2], 16) || 0;
-                return { hex: (r << 16) | (g << 8) | b, alpha: defaultAlpha };
+                res = { hex: (r << 16) | (g << 8) | b, alpha: defaultAlpha };
+            } else {
+                res = { hex: parseInt(raw, 16) || 0, alpha: defaultAlpha };
             }
-            return { hex: parseInt(raw, 16) || 0, alpha: defaultAlpha };
-        }
-        if (s.startsWith('rgba') || s.startsWith('rgb')) {
+        } else if (s.startsWith('rgba') || s.startsWith('rgb')) {
             const m = s.match(/[\d.]+/g);
             if (m && m.length >= 3) {
                 const r = Math.min(255, Math.max(0, parseInt(m[0], 10) || 0));
                 const g = Math.min(255, Math.max(0, parseInt(m[1], 10) || 0));
                 const b = Math.min(255, Math.max(0, parseInt(m[2], 10) || 0));
                 const a = m.length >= 4 ? Math.min(1, Math.max(0, parseFloat(m[3]))) : defaultAlpha;
-                return { hex: (r << 16) | (g << 8) | b, alpha: a };
+                res = { hex: (r << 16) | (g << 8) | b, alpha: a };
+            } else {
+                res = { hex: 0x000000, alpha: 0.45 };
             }
-            return { hex: 0x000000, alpha: 0.45 };
         }
-        return { hex: 0x111111, alpha: defaultAlpha };
+        if (_pixiColorCache.size < 512) _pixiColorCache.set(cacheKey, res);
+        return res;
     }
     poly(pts, fill, stroke='#111111', lw=2) {
         if (stroke && lw > 0) {
@@ -59,6 +83,11 @@ export class PixiCtx {
         if (fill) {
             const fc = this._parseColor(fill, 1);
             this.g.beginFill(fc.hex, fc.alpha);
+        }
+        if (this.rot === 0) {
+            this.g.drawEllipse(this.tx + cx * this.scX, this.ty + cy * this.scY, Math.abs(rx * this.scX), Math.abs(ry * this.scY));
+            if (fill) this.g.endFill();
+            return;
         }
         let pts = []; for(let i=0; i<=16; i++) { let a = (i/16) * Math.PI * 2; pts.push([cx + Math.cos(a)*rx, cy + Math.sin(a)*ry]); }
         let p0 = this._t(pts[0][0], pts[0][1]); this.g.moveTo(p0.x, p0.y);
@@ -1274,7 +1303,8 @@ export function drawOtherPlayer(ctx, x, y, op, tick, now, entityContainer = null
 }
 
 // ============================================================================
-// 🐉 전 지역 52종 몬스터 이름 1:1 맞춤형 고해상도 외형 렌더러
+// 🐉 전 지역 52종 몬스터 이름 1:1 맞춤형 고해상도 2.5D 외형 렌더러 (하드웨어 가속 최적화)
+// - PixiJS 네이티브 drawEllipse & 색상 캐싱과 결합하여 프레임 저하(0%) 없이 입체 음영·무기 광택·관절 모션·보스 오라 구현
 // ============================================================================
 export function drawMonster(ctx, x, y, m, tick) {
     ctx.save();
@@ -1299,39 +1329,54 @@ export function drawMonster(ctx, x, y, m, tick) {
         atkLungeY = Math.sin(ang) * lungeDist * lungeFactor * 0.65;
     }
 
-    // 🌟 2.5D 그림자 렌더링 (플레이어 그림자 기울기 비율 ISO_TILT 적용)
-    const shadowRx = isBoss ? 27 : (isElite ? 25 : 14);
+    // 🌟 2.5D 이중 입체 그림자 렌더링 (외부 부드러운 그림자 + 발밑 코어 암영)
+    const shadowRx = isBoss ? 28 : (isElite ? 25 : 14.5);
     const shadowRy = shadowRx * ISO_TILT;
-    ctx.ellipse(0, 12, shadowRx, shadowRy, 'rgba(0,0,0,0.45)', null, 0);
+    ctx.ellipse(0, 12, shadowRx * 1.12, shadowRy * 1.12, 'rgba(0,0,0,0.24)', null, 0);
+    ctx.ellipse(0, 12, shadowRx * 0.82, shadowRy * 0.82, 'rgba(0,0,0,0.48)', null, 0);
 
-    // 보스 몬스터 바닥 오라 링 / ★거대 몬스터 황금 링
+    // 👑 보스 몬스터 바닥 이중 마법 문양 링 / ★거대 정예 황금 왕관 오라 링
     if (isBoss) {
         const pulse = Math.sin(tick * 0.08) * 2.5;
-        const bossRx = 29 + pulse;
-        ctx.ellipse(0, 12, bossRx, bossRx * ISO_TILT, null, '#dc2626', 1.8);
+        const bossRx = 30 + pulse;
+        const bossRy = bossRx * ISO_TILT;
+        ctx.ellipse(0, 12, bossRx * 1.08, bossRy * 1.08, 'rgba(220, 38, 38, 0.14)', null, 0);
+        ctx.ellipse(0, 12, bossRx, bossRy, null, '#dc2626', 2.0);
+        ctx.ellipse(0, 12, bossRx * 0.76, bossRy * 0.76, null, '#facc15', 1.2);
+        const bRot = tick * 0.035;
+        for (let i = 0; i < 4; i++) {
+            const a = bRot + (i * Math.PI) / 2;
+            const px = Math.cos(a) * bossRx;
+            const py = 12 + Math.sin(a) * bossRy;
+            ctx.ellipse(px, py, 2.8, 1.8, '#fef08a', '#dc2626', 1);
+        }
     } else if (isElite) {
         const pulse = Math.sin(tick * 0.10) * 2.0;
         const eliteRx = 27 + pulse;
-        ctx.ellipse(0, 12, eliteRx, eliteRx * ISO_TILT, 'rgba(250, 204, 21, 0.14)', '#facc15', 1.8);
+        const eliteRy = eliteRx * ISO_TILT;
+        ctx.ellipse(0, 12, eliteRx, eliteRy, 'rgba(250, 204, 21, 0.14)', '#facc15', 1.8);
+        ctx.ellipse(0, 12, eliteRx * 0.78, eliteRy * 0.78, null, 'rgba(254, 240, 138, 0.7)', 1.1);
     }
 
-    const bounce = Math.sin(tick * 0.1 + x * 0.05) * (isBoss ? 1.5 : 2.5);
-    const swing = Math.sin(tick * 0.14 + y * 0.03) * 3;
+    const phase = tick * 0.1 + x * 0.05 + y * 0.03;
+    const bounce = Math.sin(phase) * (isBoss ? 1.5 : 2.4);
+    const breathe = Math.cos(phase) * 0.032;
+    const swing = Math.sin(tick * 0.15 + y * 0.04) * 3.2;
 
     // 💥 몬스터 피격 시 묵직한 넉백 리코일 + 타격 스쿼시 & 임팩트 링
     const hitElapsed = now - (m.lastHitTime || 0);
     let hitRecoilX = 0;
     let hitRecoilY = 0;
-    let hitSquashX = 1.0;
-    let hitSquashY = 1.0;
+    let hitSquashX = 1.0 + breathe;
+    let hitSquashY = 1.0 - breathe * 0.8;
     if (hitElapsed >= 0 && hitElapsed < 185) {
         const hitFactor = Math.sin((hitElapsed / 185) * Math.PI);
         const recoilDist = (m.lastHitCrit ? 11.5 : 7.5) * (isBoss ? 0.65 : (isElite ? 0.8 : 1.0));
         const hAng = typeof m.lastHitAngle === 'number' ? m.lastHitAngle : 0;
         hitRecoilX = Math.cos(hAng) * recoilDist * hitFactor;
         hitRecoilY = Math.sin(hAng) * recoilDist * hitFactor * 0.65;
-        hitSquashX = 1.0 + 0.13 * hitFactor;
-        hitSquashY = 1.0 - 0.10 * hitFactor;
+        hitSquashX = 1.0 + 0.14 * hitFactor;
+        hitSquashY = 1.0 - 0.11 * hitFactor;
     }
 
     ctx.translate(atkLungeX + hitRecoilX, bounce + atkLungeY + hitRecoilY);
@@ -1345,160 +1390,270 @@ export function drawMonster(ctx, x, y, m, tick) {
     }
 
     if (isAttacking) {
-        // 공격 순간 2.5D 타원 플래시 이펙트
         const flashRx = isBoss ? 25 : 15;
         ctx.ellipse(0, 8, flashRx, flashRx * ISO_TILT, null, '#facc15', 2.0);
     }
 
-    // 1. 슬라임 계열 (초원 슬라임 / 푸른 초원 슬라임)
+    // 1. 슬라임 계열 (초원 슬라임 / 푸른 초원 슬라임 — 반투명 젤리 질감 + 내부 마력 코어 + 하이라이트)
     if (n.includes("슬라임")) {
         const isBlue = n.includes("푸른");
-        const bodyCol = isBlue ? '#38bdf8' : '#22c55e';
-        const strokeCol = isBlue ? '#0284c7' : '#15803d';
-        const coreCol = isBlue ? '#bae6fd' : '#86efac';
-        const squish = Math.sin(tick * 0.12 + x) * 1.8;
-        ctx.curveFill(-14 - squish, 10, -16, -14 + squish, 16, -14 + squish, 14 + squish, 10, bodyCol, strokeCol, 1.8);
-        ctx.ellipse(-4, -3, 4.5, 3, coreCol, null, 0);
-        ctx.ellipse(-4, 1, 2.2, 2.8, '#0f172a', null, 0);
-        ctx.ellipse(4, 1, 2.2, 2.8, '#0f172a', null, 0);
-        ctx.ellipse(-4.6, 0.2, 0.9, 0.9, '#ffffff', null, 0);
-        ctx.ellipse(3.4, 0.2, 0.9, 0.9, '#ffffff', null, 0);
+        const outerCol = isBlue ? '#0ea5e9' : '#16a34a';
+        const bodyCol  = isBlue ? '#38bdf8' : '#22c55e';
+        const strokeCol = isBlue ? '#0369a1' : '#14532d';
+        const coreCol  = isBlue ? '#e0f2fe' : '#bbf7d0';
+        const squish = Math.sin(tick * 0.12 + x) * 1.9;
+
+        // 젤리 하단 그림자 베이스 & 외피
+        ctx.ellipse(0, 7, 13.5 + squish * 0.6, 5.2, outerCol, null, 0);
+        ctx.curveFill(-14.5 - squish, 10, -16.5, -14.5 + squish, 16.5, -14.5 + squish, 14.5 + squish, 10, bodyCol, strokeCol, 1.8);
+        // 내부 부유 마력 코어 핵 (숨쉬듯 위아래 부유)
+        const coreY = 1 + Math.sin(tick * 0.14) * 1.2;
+        ctx.ellipse(0, coreY, 5.5, 4.2, isBlue ? '#0284c7' : '#15803d', null, 0);
+        ctx.ellipse(0, coreY - 0.5, 3.2, 2.4, coreCol, null, 0);
+        // 상단 좌측 젤리 광택 하이라이트
+        ctx.ellipse(-5.2, -4.2 + squish * 0.3, 4.8, 2.5, coreCol, null, 0);
+        ctx.ellipse(-7.5, -1.0 + squish * 0.3, 1.6, 1.2, '#ffffff', null, 0);
+        // 입체적인 눈동자 & 듀얼 안광
+        ctx.ellipse(-4.2, 1.2, 2.3, 3.0, '#0f172a', null, 0);
+        ctx.ellipse(4.2, 1.2, 2.3, 3.0, '#0f172a', null, 0);
+        ctx.ellipse(-4.8, 0.2, 1.0, 1.0, '#ffffff', null, 0);
+        ctx.ellipse(3.6, 0.2, 1.0, 1.0, '#ffffff', null, 0);
+        ctx.poly([[-1.8, 3.8], [0, 4.8], [1.8, 3.8]], null, '#0f172a', 1.1);
         if (isBlue) {
-            ctx.poly([[0, -14], [-4, -7], [4, -7]], '#e0f2fe', '#0284c7', 1);
+            ctx.poly([[-5, -10], [-2, -16], [0, -10]], '#bae6fd', '#0284c7', 1);
+            ctx.poly([[5, -10], [2, -16], [0, -10]], '#bae6fd', '#0284c7', 1);
+            ctx.poly([[0, -19], [-3.5, -9], [3.5, -9]], '#e0f2fe', '#0284c7', 1.2);
         }
     }
-    // 2. 고블린 계열
+    // 2. 고블린 계열 (들판 고블린 / 궁수 / 전사 / 주술사 / 어둠 고블린 / 고블린 족장(B))
     else if (n.includes("고블린") || n.includes("친위대장")) {
         const isArcher = n.includes("궁수");
         const isShaman = n.includes("주술사");
         const isDark = n.includes("어둠");
-        const isElite = n.includes("전사") || n.includes("친위대장");
-        const sc = isBoss ? 1.75 : (isElite ? 1.12 : 0.95);
+        const isWarrior = n.includes("전사") || n.includes("친위대장");
+        const sc = isBoss ? 1.78 : (isWarrior ? 1.15 : 0.98);
         ctx.scale(sc, sc);
 
-        if (isBoss || isElite || isShaman) {
+        // 망토 (보스 / 정예전사 / 주술사)
+        if (isBoss || isWarrior || isShaman) {
             const capeCol = isBoss ? '#991b1b' : (isDark ? '#3b0764' : '#78350f');
-            ctx.poly([[-11, -6], [11, -6], [15, 13], [-15, 13]], capeCol, '#111111', 1.2);
+            const capeTrim = isBoss ? '#facc15' : '#111111';
+            ctx.poly([[-11, -6], [11, -6], [16 + swing * 0.3, 13], [-16 + swing * 0.3, 13]], capeCol, capeTrim, 1.3);
         }
-        ctx.poly([[-7, 6], [-2, 6], [-2, 13], [-8, 13]], '#451a03', '#111111', 1);
-        ctx.poly([[2, 6], [7, 6], [8, 13], [2, 13]], '#451a03', '#111111', 1);
-        const armorCol = isBoss ? '#b45309' : (isDark ? '#4c1d95' : (isElite ? '#475569' : '#713f12'));
-        ctx.poly([[-9, -6], [9, -6], [10, 8], [-10, 8]], armorCol, '#111111', 1.4);
+        // 교차 보행 다리 & 가죽 장화
+        const legL = swing * 0.45;
+        const legR = -swing * 0.45;
+        ctx.poly([[-7, 5], [-2, 5], [-2 + legL, 13], [-8 + legL, 13]], '#3f2305', '#111111', 1.1);
+        ctx.poly([[2, 5], [7, 5], [8 + legR, 13], [2 + legR, 13]], '#3f2305', '#111111', 1.1);
+        // 갑옷 몸통 & X자 가죽 하네스 & 벨트 버클
+        const armorCol = isBoss ? '#b45309' : (isDark ? '#4c1d95' : (isWarrior ? '#475569' : '#713f12'));
+        const armorSub = isBoss ? '#fef08a' : (isWarrior ? '#94a3b8' : '#a16207');
+        ctx.poly([[-9.5, -6], [9.5, -6], [10.5, 8], [-10.5, 8]], armorCol, '#111111', 1.4);
+        ctx.poly([[-6, -5], [6, -5], [4, 4], [-4, 4]], armorSub, null, 0);
+        ctx.poly([[-10, 4], [10, 4], [10, 7.5], [-10, 7.5]], '#27170a', '#111111', 1);
+        ctx.poly([[-2.5, 3.8], [2.5, 3.8], [2.5, 7.8], [-2.5, 7.8]], '#facc15', '#78350f', 1);
 
+        // 어깨 견갑
+        if (isBoss || isWarrior) {
+            ctx.ellipse(-10, -4, 4.5, 3.5, isBoss ? '#dc2626' : '#64748b', '#111111', 1.2);
+            ctx.ellipse(10, -4, 4.5, 3.5, isBoss ? '#dc2626' : '#64748b', '#111111', 1.2);
+        }
+
+        // 뾰족한 고블린 귀 + 귀걸이 + 얼굴 입체 음영
         const skinCol = isDark ? '#4d7c0f' : '#65a30d';
-        ctx.poly([[-9, -13], [-19, -17], [-11, -9]], skinCol, '#1a2e05', 1.2);
-        ctx.poly([[9, -13], [19, -17], [11, -9]], skinCol, '#1a2e05', 1.2);
-        ctx.ellipse(0, -13, 9, 8.5, skinCol, '#1a2e05', 1.4);
+        const skinDark = isDark ? '#365314' : '#3f6212';
+        ctx.poly([[-8.5, -13], [-20, -18], [-11, -8.5]], skinCol, '#1a2e05', 1.2);
+        ctx.poly([[8.5, -13], [20, -18], [11, -8.5]], skinCol, '#1a2e05', 1.2);
+        ctx.ellipse(-15, -11.5, 1.5, 1.5, '#facc15', '#000', 0.6);
+        ctx.ellipse(0, -13, 9.2, 8.6, skinCol, '#1a2e05', 1.4);
+        ctx.ellipse(0, -10.5, 7.5, 4.8, skinDark, null, 0);
 
-        ctx.ellipse(-3.5, -14, 2, 2, isBoss || isDark ? '#ef4444' : '#facc15', '#000', 0.8);
-        ctx.ellipse(3.5, -14, 2, 2, isBoss || isDark ? '#ef4444' : '#facc15', '#000', 0.8);
-        ctx.poly([[-4, -9], [4, -9], [2, -7], [-2, -7]], '#ffffff', '#111', 0.8);
+        // 매서운 눈썹 + 안광 + 송곳니
+        ctx.ellipse(-3.6, -14, 2.2, 2.1, isBoss || isDark ? '#ef4444' : '#facc15', '#000', 0.9);
+        ctx.ellipse(3.6, -14, 2.2, 2.1, isBoss || isDark ? '#ef4444' : '#facc15', '#000', 0.9);
+        ctx.ellipse(-3.8, -14.4, 0.8, 0.8, '#ffffff', null, 0);
+        ctx.ellipse(3.4, -14.4, 0.8, 0.8, '#ffffff', null, 0);
+        ctx.poly([[-6.5, -16.8], [-1.2, -15.2], [-1.5, -14.2], [-6.5, -15.5]], '#1a2e05', null, 0);
+        ctx.poly([[6.5, -16.8], [1.2, -15.2], [1.5, -14.2], [6.5, -15.5]], '#1a2e05', null, 0);
+        ctx.poly([[-4.5, -8.5], [-2.5, -11.5], [-1, -8.5]], '#ffffff', '#111', 0.7);
+        ctx.poly([[4.5, -8.5], [2.5, -11.5], [1, -8.5]], '#ffffff', '#111', 0.7);
 
+        // 투구 / 왕관 / 두건
         if (isBoss) {
-            ctx.poly([[-9, -19], [-9, -27], [-4, -22], [0, -29], [4, -22], [9, -27], [9, -19]], '#facc15', '#b45309', 1.4);
+            ctx.poly([[-9.5, -19], [-10.5, -28], [-4.5, -22.5], [0, -30.5], [4.5, -22.5], [10.5, -28], [9.5, -19]], '#facc15', '#b45309', 1.4);
+            ctx.ellipse(0, -22.5, 2.2, 2.2, '#ef4444', '#fef08a', 0.8);
         } else if (isShaman) {
-            ctx.poly([[-9, -18], [9, -18], [5, -28], [-5, -28]], isDark ? '#581c87' : '#b91c1c', '#111', 1.2);
-            ctx.ellipse(0, -22, 3.5, 3.5, '#f1f5f9', '#111', 1);
-        } else if (isElite) {
-            ctx.curveFill(-10, -16, -8, -26, 8, -26, 10, -16, '#64748b', '#1e293b', 1.3);
+            ctx.poly([[-9.5, -18], [9.5, -18], [6, -29], [-6, -29]], isDark ? '#581c87' : '#b91c1c', '#111', 1.2);
+            ctx.poly([[-7, -23], [-13, -28], [-5, -26]], '#e2e8f0', '#111', 1);
+            ctx.poly([[7, -23], [13, -28], [5, -26]], '#e2e8f0', '#111', 1);
+            ctx.ellipse(0, -22.5, 3.8, 3.8, '#f8fafc', '#111', 1);
+        } else if (isWarrior) {
+            ctx.curveFill(-10.5, -16, -8.5, -26.5, 8.5, -26.5, 10.5, -16, '#64748b', '#1e293b', 1.3);
+            ctx.poly([[-2, -25], [2, -25], [0, -31]], '#94a3b8', '#1e293b', 1.1);
         } else if (isArcher) {
-            ctx.curveFill(-9, -16, -6, -24, 6, -24, 9, -16, '#166534', '#052e16', 1.2);
+            ctx.curveFill(-9.5, -16, -6.5, -24.5, 6.5, -24.5, 9.5, -16, '#166534', '#052e16', 1.2);
+            ctx.poly([[-8, -14], [-11, -22], [-5, -18]], '#ef4444', '#7f1d1d', 0.9);
         }
 
+        // 무기 디테일
         if (isArcher) {
-            ctx.curveFill(9, -15, 18, -7, 18, 5, 9, 11, null, '#a16207', 2.2);
-            ctx.poly([[9, -14], [10, -14], [10, 10], [9, 10]], '#e2e8f0', null, 0);
+            ctx.poly([[-9, -15], [-6, -15], [-4, -3], [-7, -3]], '#78350f', '#111', 1);
+            ctx.curveFill(9, -16, 19, -7, 19, 6, 9, 12, null, '#b45309', 2.3);
+            ctx.poly([[9, -15], [10, -15], [10, 11], [9, 11]], '#e2e8f0', null, 0);
+            ctx.poly([[8, -2], [18, -2], [18, -0.5], [8, -0.5]], '#fef08a', null, 0);
+            ctx.poly([[18, -4], [22, -1.2], [18, 1.5]], '#38bdf8', '#0284c7', 0.8);
         } else if (isShaman) {
-            ctx.poly([[11, -22], [13, -22], [13, 12], [11, 12]], '#78350f', '#111', 1);
-            ctx.ellipse(12, -25, 5, 5, isDark ? '#a855f7' : '#f97316', '#fde047', 1.4);
+            ctx.poly([[11, -23], [13.5, -23], [13.5, 12], [11, 12]], '#78350f', '#111', 1.1);
+            const orbGlow = 5.2 + Math.sin(tick * 0.18) * 1.1;
+            ctx.ellipse(12.2, -26, orbGlow, orbGlow, isDark ? '#a855f7' : '#f97316', '#fde047', 1.4);
+            ctx.ellipse(12.2, -26, 2.4, 2.4, '#ffffff', null, 0);
         } else if (isBoss) {
-            ctx.poly([[11, -24], [14, -24], [14, 12], [11, 12]], '#78350f', '#111', 1.2);
-            ctx.poly([[12, -22], [25, -28], [26, -10], [12, -14]], '#e2e8f0', '#1e293b', 1.5);
-            ctx.poly([[12, -22], [2, -26], [2, -12], [12, -14]], '#cbd5e1', '#1e293b', 1.5);
-            ctx.poly([[-16, -10], [-8, -10], [-7, 6], [-12, 10], [-17, 6]], '#7f1d1d', '#facc15', 1.4);
-        } else if (isElite) {
-            ctx.poly([[-15, -9], [-8, -9], [-8, 5], [-15, 5]], '#475569', '#1e293b', 1.3);
-            ctx.poly([[10, -3], [19, -18], [22, -15], [12, 1]], '#cbd5e1', '#1e293b', 1.2);
+            // 양날 대형 배틀액스 & 황금 문장 방패
+            ctx.poly([[11, -26], [14, -26], [14, 13], [11, 13]], '#78350f', '#111', 1.2);
+            ctx.poly([[13, -23], [27, -30], [28, -9], [13, -14]], '#e2e8f0', '#1e293b', 1.5);
+            ctx.poly([[22, -27], [26.5, -29], [27.5, -10], [22, -12]], '#ffffff', null, 0);
+            ctx.poly([[12, -23], [1, -27], [1, -11], [12, -14]], '#cbd5e1', '#1e293b', 1.4);
+            ctx.poly([[-17, -10], [-8, -10], [-7, 6], [-12.5, 11], [-18, 6]], '#7f1d1d', '#facc15', 1.5);
+            ctx.ellipse(-12.5, -1, 2.8, 2.8, '#facc15', '#451a03', 1);
+        } else if (isWarrior) {
+            ctx.poly([[-16, -9], [-8, -9], [-7.5, 5], [-12, 8.5], [-16.5, 5]], '#475569', '#1e293b', 1.3);
+            ctx.ellipse(-12, -1.5, 2.2, 2.2, '#e2e8f0', '#1e293b', 0.9);
+            ctx.poly([[10, -3], [20, -19], [23.5, -15.5], [12.5, 1]], '#e2e8f0', '#1e293b', 1.2);
+            ctx.poly([[11, -3], [19.5, -17], [21, -15.5], [12, -1]], '#ffffff', null, 0);
         } else {
-            ctx.poly([[9, -2], [17, -14], [20, -11], [11, 2]], '#94a3b8', '#1e293b', 1.2);
+            ctx.poly([[9, -2], [18, -15], [21, -11.5], [11.5, 2]], '#cbd5e1', '#1e293b', 1.2);
+            ctx.poly([[10, -2], [17.5, -13.5], [19, -12], [11, 0]], '#ffffff', null, 0);
         }
     }
-    // 3. 늑대 & 야수 계열
+    // 3. 늑대 & 야수 계열 (들판 늑대 / 서리 늑대 / 역병 감염야수)
     else if (n.includes("늑대") || n.includes("감염야수")) {
         const isIce = n.includes("서리");
         const isPlague = n.includes("역병") || n.includes("감염");
-        const furCol = isIce ? '#bae6fd' : (isPlague ? '#581c87' : '#57534e');
-        const darkFur = isIce ? '#0284c7' : (isPlague ? '#3b0764' : '#292524');
+        const furCol = isIce ? '#7dd3fc' : (isPlague ? '#6b21a8' : '#57534e');
+        const lightFur = isIce ? '#e0f2fe' : (isPlague ? '#c084fc' : '#a8a29e');
+        const darkFur = isIce ? '#0369a1' : (isPlague ? '#3b0764' : '#292524');
         const eyeCol = isIce ? '#38bdf8' : (isPlague ? '#4ade80' : '#ef4444');
-        ctx.scale(1.15, 1.15);
+        ctx.scale(1.18, 1.18);
 
-        ctx.poly([[-14, -2], [-24, -10 + swing * 0.4], [-20, 2]], furCol, darkFur, 1.2);
-        ctx.poly([[-11, 4], [-7, 4], [-8 + swing * 0.5, 12], [-12 + swing * 0.5, 12]], darkFur, '#111', 1);
-        ctx.poly([[6, 4], [10, 4], [11 - swing * 0.5, 12], [7 - swing * 0.5, 12]], darkFur, '#111', 1);
-        ctx.ellipse(-2, 0, 14, 8, furCol, darkFur, 1.4);
-        ctx.poly([[-4, -8], [8, -10], [11, 2], [-2, 2]], furCol, darkFur, 1.2);
+        // 풍성한 이중 꼬리 & 4족 보행 다리
+        ctx.poly([[-13, -2], [-25, -11 + swing * 0.45], [-22, -2 + swing * 0.3], [-19, 3]], furCol, darkFur, 1.2);
+        ctx.poly([[-16, -4], [-23, -9 + swing * 0.45], [-20, -1]], lightFur, null, 0);
+
+        const s1 = swing * 0.55;
+        ctx.poly([[-12, 3], [-8, 3], [-9 - s1, 12], [-13 - s1, 12]], darkFur, '#111', 1);
+        ctx.poly([[-7, 4], [-3, 4], [-4 + s1, 12.5], [-8 + s1, 12.5]], furCol, darkFur, 1);
+        ctx.poly([[3, 3], [7, 3], [8 - s1, 12], [4 - s1, 12]], darkFur, '#111', 1);
+        ctx.poly([[7, 4], [11, 4], [12 + s1, 12.5], [8 + s1, 12.5]], furCol, darkFur, 1);
+
+        // 근육질 몸통 & 가슴 갈기털
+        ctx.ellipse(-2, 0, 14.5, 8.2, furCol, darkFur, 1.4);
+        ctx.ellipse(-3, 2.5, 10, 4.2, lightFur, null, 0);
+        ctx.poly([[-4, -8.5], [9, -10.5], [13, -3], [11, 3.5], [-2, 2.5]], furCol, darkFur, 1.3);
+        ctx.poly([[4, -6], [11, -3], [9, 3], [2, 1]], lightFur, null, 0);
+
+        // 등 결정/돌기
         if (isPlague) {
-            ctx.poly([[-8, -8], [-5, -15], [-2, -8], [2, -16], [5, -8]], '#a855f7', '#111', 1);
+            ctx.poly([[-9, -7], [-6, -15], [-3, -7], [1, -16.5], [5, -7]], '#a855f7', '#111', 1.1);
+            ctx.ellipse(-4, -2, 2.2, 1.8, '#4ade80', '#14532d', 0.8);
+            ctx.ellipse(2, -1, 1.8, 1.5, '#4ade80', '#14532d', 0.8);
+        } else if (isIce) {
+            ctx.poly([[-9, -7], [-6, -15], [-3, -7], [1, -16], [5, -7]], '#e0f2fe', '#0284c7', 1.1);
         }
-        ctx.poly([[6, -10], [9, -18], [12, -10]], furCol, darkFur, 1.2);
-        ctx.poly([[11, -10], [15, -18], [16, -9]], furCol, darkFur, 1.2);
-        ctx.ellipse(12, -7, 7, 6, furCol, darkFur, 1.4);
-        ctx.poly([[15, -9], [24, -6], [22, -2], [14, -3]], furCol, darkFur, 1.2);
-        ctx.poly([[16, -3], [21, -3], [19, 0]], '#ffffff', null, 0);
-        ctx.ellipse(14, -8, 1.8, 1.8, eyeCol, '#000', 0.8);
+
+        // 귀 & 늑대 머리 & 송곳니 주둥이
+        ctx.poly([[6, -10], [8.5, -19], [12, -10]], furCol, darkFur, 1.2);
+        ctx.poly([[11, -10], [15.5, -19], [16.5, -9]], furCol, darkFur, 1.2);
+        ctx.ellipse(12, -7, 7.2, 6.2, furCol, darkFur, 1.4);
+        ctx.poly([[15, -9.5], [25, -6.5], [23, -1.5], [14, -2.5]], furCol, darkFur, 1.2);
+        ctx.poly([[15, -2.5], [22.5, -1.5], [21, 1.5], [13, 0]], darkFur, '#111', 1);
+        ctx.poly([[17, -2.5], [18.5, 0.5], [20, -2.5], [21.5, 0.2], [22.5, -2]], '#ffffff', null, 0);
+        ctx.ellipse(14.2, -8.2, 2.0, 1.8, eyeCol, '#000', 0.8);
+        ctx.ellipse(14.5, -8.5, 0.7, 0.7, '#ffffff', null, 0);
     }
-    // 4. 독버섯 정령
+    // 4. 독버섯 정령 (형광 포자 + 주름갓 음영 + 귀여운 스텝)
     else if (n.includes("버섯")) {
-        ctx.scale(1.15, 1.15);
-        ctx.poly([[-7, -2], [7, -2], [9, 11], [-9, 11]], '#fef3c7', '#78350f', 1.4);
-        ctx.curveFill(-18, -1, -16, -24, 16, -24, 18, -1, '#9333ea', '#3b0764', 1.6);
-        ctx.ellipse(-7, -11, 3.5, 3, '#e2e8f0', null, 0);
-        ctx.ellipse(6, -13, 4, 3, '#5eead4', null, 0);
-        ctx.ellipse(0, -6, 3, 2.2, '#f0abfc', null, 0);
-        ctx.ellipse(-3.5, 3, 1.8, 2.2, '#111827', null, 0);
-        ctx.ellipse(3.5, 3, 1.8, 2.2, '#111827', null, 0);
+        ctx.scale(1.18, 1.18);
+        const step = swing * 0.35;
+        ctx.ellipse(-4.5 + step, 11, 3.8, 2.2, '#d97706', '#451a03', 1);
+        ctx.ellipse(4.5 - step, 11, 3.8, 2.2, '#d97706', '#451a03', 1);
+        ctx.poly([[-7.5, -2], [7.5, -2], [9.5, 10.5], [-9.5, 10.5]], '#fef3c7', '#78350f', 1.4);
+        ctx.ellipse(0, -1, 16, 4.5, '#581c87', '#3b0764', 1.2);
+        ctx.curveFill(-18.5, -1, -16.5, -25, 16.5, -25, 18.5, -1, '#9333ea', '#3b0764', 1.6);
+        ctx.curveFill(-14, -4, -12, -21, 12, -21, 14, -4, '#a855f7', null, 0);
+        ctx.ellipse(-7.5, -11.5, 3.8, 3.2, '#e2e8f0', '#6b21a8', 0.8);
+        ctx.ellipse(6.5, -13.5, 4.2, 3.2, '#5eead4', '#0f766e', 0.8);
+        ctx.ellipse(0, -6.5, 3.2, 2.4, '#f0abfc', '#701a75', 0.8);
+        ctx.ellipse(-3.6, 3, 2.0, 2.5, '#111827', null, 0);
+        ctx.ellipse(3.6, 3, 2.0, 2.5, '#111827', null, 0);
+        ctx.ellipse(-4.0, 2.2, 0.8, 0.8, '#ffffff', null, 0);
+        ctx.ellipse(3.2, 2.2, 0.8, 0.8, '#ffffff', null, 0);
+        // 부유하는 독포자 방울
+        const spY = Math.sin(tick * 0.12) * 3;
+        ctx.ellipse(-14, -16 + spY, 2.0, 2.0, '#5eead4', null, 0);
+        ctx.ellipse(15, -14 - spY, 1.8, 1.8, '#f0abfc', null, 0);
     }
-    // 5. 픽시 / 하피 / 서큐버스
+    // 5. 픽시 / 하피 / 서큐버스 (4중 날개 / 깃털 날개 / 박쥐 날개 + 마력 구체)
     else if (n.includes("픽시") || n.includes("하피") || n.includes("서큐버스")) {
         const isPixie = n.includes("픽시");
         const isHarpy = n.includes("하피");
-        const sc = isPixie ? 1.0 : 1.22;
+        const sc = isPixie ? 1.05 : 1.25;
         ctx.scale(sc, sc);
-        const wingCol = isPixie ? '#c084fc' : (isHarpy ? '#38bdf8' : '#be123c');
-        const dressCol = isPixie ? '#581c87' : (isHarpy ? '#0284c7' : '#4c0519');
-        const flap = Math.sin(tick * 0.25) * 5;
+        const wingCol = isPixie ? '#d8b4fe' : (isHarpy ? '#38bdf8' : '#be123c');
+        const wingSub = isPixie ? '#f3e8ff' : (isHarpy ? '#bae6fd' : '#f43f5e');
+        const dressCol = isPixie ? '#6b21a8' : (isHarpy ? '#0369a1' : '#4c0519');
+        const flap = Math.sin(tick * 0.26) * 5.5;
 
-        ctx.poly([[-4, -8], [-22, -20 + flap], [-18, -2 + flap * 0.5]], wingCol, '#111', 1.2);
-        ctx.poly([[4, -8], [22, -20 + flap], [18, -2 + flap * 0.5]], wingCol, '#111', 1.2);
-        ctx.poly([[-7, -6], [7, -6], [10, 10], [-10, 10]], dressCol, '#111', 1.3);
-        ctx.ellipse(0, -14, 7.5, 7.5, '#fde68a', '#111', 1.2);
-        ctx.curveFill(-8, -15, -8, -25, 8, -25, 8, -15, isPixie ? '#a855f7' : (isHarpy ? '#0ea5e9' : '#111827'), '#111', 1);
+        // 상/하단 이중 날개
+        ctx.poly([[-3, -7], [-23, -21 + flap], [-19, -3 + flap * 0.5]], wingCol, '#111', 1.2);
+        ctx.poly([[3, -7], [23, -21 + flap], [19, -3 + flap * 0.5]], wingCol, '#111', 1.2);
+        ctx.poly([[-4, -6], [-17, -14 + flap * 0.8], [-14, -4 + flap * 0.4]], wingSub, null, 0);
+        ctx.poly([[4, -6], [17, -14 + flap * 0.8], [14, -4 + flap * 0.4]], wingSub, null, 0);
+        ctx.poly([[-3, -3], [-16, 2 - flap * 0.4], [-11, 9]], wingCol, '#111', 1.0);
+        ctx.poly([[3, -3], [16, 2 - flap * 0.4], [11, 9]], wingCol, '#111', 1.0);
+
+        // 의상 및 장식
+        ctx.poly([[-7.5, -6], [7.5, -6], [10.5, 10.5], [-10.5, 10.5]], dressCol, '#111', 1.3);
+        ctx.poly([[-4, -5], [4, -5], [5, 9.5], [-5, 9.5]], wingSub, null, 0);
+        ctx.ellipse(0, -14, 7.6, 7.6, '#fde68a', '#111', 1.2);
+        ctx.curveFill(-8.5, -15, -8.5, -25.5, 8.5, -25.5, 8.5, -15, isPixie ? '#a855f7' : (isHarpy ? '#0ea5e9' : '#111827'), '#111', 1.1);
         if (!isPixie && !isHarpy) {
-            ctx.poly([[-5, -20], [-11, -28], [-2, -22]], '#f43f5e', '#111', 1);
-            ctx.poly([[5, -20], [11, -28], [2, -22]], '#f43f5e', '#111', 1);
+            ctx.poly([[-5, -20], [-12, -29], [-2, -22]], '#f43f5e', '#111', 1.1);
+            ctx.poly([[5, -20], [12, -29], [2, -22]], '#f43f5e', '#111', 1.1);
+        } else if (isPixie) {
+            ctx.ellipse(0, -24, 5, 2, null, '#fef08a', 1.4);
         }
-        ctx.ellipse(-2.5, -14, 1.5, 1.5, '#ef4444', null, 0);
-        ctx.ellipse(2.5, -14, 1.5, 1.5, '#ef4444', null, 0);
+        ctx.ellipse(-2.6, -14, 1.6, 1.8, isPixie ? '#38bdf8' : '#ef4444', null, 0);
+        ctx.ellipse(2.6, -14, 1.6, 1.8, isPixie ? '#38bdf8' : '#ef4444', null, 0);
     }
     // 6. 엔트 / 수호목 / 부패한 세계수(B)
     else if (n.includes("엔트") || n.includes("수호목") || n.includes("세계수")) {
-        const sc = isBoss ? 2.15 : 1.38;
+        const sc = isBoss ? 2.18 : 1.40;
         ctx.scale(sc, sc);
         const barkCol = isBoss ? '#3b0764' : '#451a03';
+        const barkSub = isBoss ? '#581c87' : '#78350f';
         const leafCol = isBoss ? '#7e22ce' : '#166534';
-        const subLeaf = isBoss ? '#c084fc' : '#15803d';
+        const subLeaf = isBoss ? '#c084fc' : '#22c55e';
 
-        ctx.poly([[-14, 12], [-8, 0], [8, 0], [14, 12]], barkCol, '#111', 1.4);
-        ctx.poly([[-11, -16], [11, -16], [13, 10], [-13, 10]], barkCol, '#111', 1.6);
-        ctx.poly([[-11, -8], [-24, -18], [-21, -11], [-11, -3]], barkCol, '#111', 1.2);
-        ctx.poly([[11, -8], [24, -18], [21, -11], [11, -3]], barkCol, '#111', 1.2);
-        ctx.ellipse(-10, -20, 11, 9, leafCol, '#111', 1.3);
-        ctx.ellipse(10, -20, 11, 9, leafCol, '#111', 1.3);
-        ctx.ellipse(0, -25, 14, 11, subLeaf, '#111', 1.4);
-        ctx.ellipse(-4, -6, 2.5, 2.5, isBoss ? '#ef4444' : '#facc15', '#000', 1);
-        ctx.ellipse(4, -6, 2.5, 2.5, isBoss ? '#ef4444' : '#facc15', '#000', 1);
+        // 뿌리 다리 & 나무 기둥 결
+        ctx.poly([[-15, 12.5], [-9, 0], [9, 0], [15, 12.5]], barkCol, '#111', 1.4);
+        ctx.poly([[-11.5, -16], [11.5, -16], [13.5, 10.5], [-13.5, 10.5]], barkCol, '#111', 1.6);
+        ctx.poly([[-5, -15], [-2, -15], [-3, 9], [-6, 9]], barkSub, null, 0);
+        ctx.poly([[3, -15], [6, -15], [5, 9], [2, 9]], barkSub, null, 0);
+        // 나뭇가지 팔
+        ctx.poly([[-11, -8], [-25, -19 + swing * 0.3], [-21, -11], [-11, -3]], barkCol, '#111', 1.2);
+        ctx.poly([[11, -8], [25, -19 - swing * 0.3], [21, -11], [11, -3]], barkCol, '#111', 1.2);
+        // 다층 수관(잎사귀)
+        ctx.ellipse(-11, -20, 11.5, 9.2, leafCol, '#111', 1.3);
+        ctx.ellipse(11, -20, 11.5, 9.2, leafCol, '#111', 1.3);
+        ctx.ellipse(0, -25.5, 14.5, 11.5, subLeaf, '#111', 1.4);
+        ctx.ellipse(-5, -27, 6, 4, isBoss ? '#e879f9' : '#86efac', null, 0);
+        // 영혼 안광 & 나무 입
+        ctx.ellipse(-4.2, -6.5, 2.6, 2.6, isBoss ? '#ef4444' : '#facc15', '#000', 1);
+        ctx.ellipse(4.2, -6.5, 2.6, 2.6, isBoss ? '#ef4444' : '#facc15', '#000', 1);
+        ctx.poly([[-5, -1], [0, -2.5], [5, -1], [3, 2], [-3, 2]], '#111827', null, 0);
         if (isBoss) {
-            ctx.ellipse(0, 2, 4.5, 6, '#f43f5e', '#fde047', 1.5);
+            ctx.ellipse(0, 3.5, 4.8, 6.2, '#f43f5e', '#fde047', 1.5);
+            ctx.ellipse(0, 3.5, 2.2, 3.2, '#ffffff', null, 0);
         }
     }
     // 7. 거미 / 전갈 / 병정벌레 / 말벌여왕
@@ -1507,39 +1662,54 @@ export function drawMonster(ctx, x, y, m, tick) {
         const isWasp = n.includes("말벌");
         const isIce = n.includes("얼음");
         const isQueen = n.includes("여왕");
-        const sc = isBoss ? 1.9 : (isQueen ? 1.35 : 1.12);
+        const sc = isBoss ? 1.92 : (isQueen ? 1.38 : 1.15);
         ctx.scale(sc, sc);
 
         if (isWasp) {
-            const flap = Math.sin(tick * 0.35) * 6;
-            ctx.ellipse(-12, -12 + flap * 0.4, 11, 5, 'rgba(186,230,253,0.75)', '#38bdf8', 1);
-            ctx.ellipse(12, -12 + flap * 0.4, 11, 5, 'rgba(186,230,253,0.75)', '#38bdf8', 1);
-            ctx.ellipse(0, 3, 9, 12, '#facc15', '#111', 1.5);
-            ctx.poly([[-8, 0], [8, 0], [8, 3], [-8, 3]], '#111827', null, 0);
-            ctx.poly([[-7, 6], [7, 6], [6, 9], [-6, 9]], '#111827', null, 0);
-            ctx.poly([[-3, 14], [3, 14], [0, 22]], '#dc2626', '#111', 1);
-            ctx.ellipse(0, -10, 7, 6, '#ca8a04', '#111', 1.2);
-            ctx.poly([[-5, -15], [-3, -21], [0, -17], [3, -21], [5, -15]], '#fde047', '#b45309', 1);
+            const flap = Math.sin(tick * 0.38) * 6.5;
+            ctx.ellipse(-13, -12 + flap * 0.4, 12, 5.2, 'rgba(186,230,253,0.78)', '#38bdf8', 1.1);
+            ctx.ellipse(13, -12 + flap * 0.4, 12, 5.2, 'rgba(186,230,253,0.78)', '#38bdf8', 1.1);
+            ctx.ellipse(0, 3.5, 9.5, 12.5, '#facc15', '#111', 1.5);
+            ctx.poly([[-8.5, -0.5], [8.5, -0.5], [8.5, 2.8], [-8.5, 2.8]], '#111827', null, 0);
+            ctx.poly([[-7.5, 5.5], [7.5, 5.5], [6.5, 8.8], [-6.5, 8.8]], '#111827', null, 0);
+            ctx.poly([[-3.2, 14.5], [3.2, 14.5], [0, 23]], '#dc2626', '#111', 1.1);
+            ctx.ellipse(0, -10, 7.2, 6.2, '#ca8a04', '#111', 1.2);
+            ctx.ellipse(-2.8, -11, 2.0, 2.2, '#ef4444', '#000', 0.8);
+            ctx.ellipse(2.8, -11, 2.0, 2.2, '#ef4444', '#000', 0.8);
+            ctx.poly([[-5.5, -15], [-3.5, -22], [0, -17.5], [3.5, -22], [5.5, -15]], '#fde047', '#b45309', 1.1);
         } else if (isScorpion) {
-            ctx.ellipse(0, 2, 13, 9, '#b45309', '#451a03', 1.5);
-            ctx.ellipse(-14, -5, 6, 4, '#d97706', '#451a03', 1.3);
-            ctx.ellipse(14, -5, 6, 4, '#d97706', '#451a03', 1.3);
-            ctx.curveFill(0, -4, 4, -22, 14, -24, 8, -14, '#92400e', '#451a03', 1.6);
-            ctx.ellipse(9, -15, 3.5, 3.5, '#ef4444', '#111', 1);
+            for (let i = 0; i < 3; i++) {
+                const oy = -1 + i * 3.5;
+                const lOff = (i % 2 === 0 ? 1 : -1) * swing * 0.35;
+                ctx.poly([[-9, oy], [-19, oy - 3 + lOff], [-22, oy + 3 + lOff]], null, '#451a03', 2.0);
+                ctx.poly([[9, oy], [19, oy - 3 - lOff], [22, oy + 3 - lOff]], null, '#451a03', 2.0);
+            }
+            ctx.ellipse(0, 2, 13.5, 9.2, '#b45309', '#451a03', 1.5);
+            ctx.ellipse(0, 1.5, 9.5, 5.5, '#d97706', null, 0);
+            ctx.ellipse(-14.5, -5.5, 6.5, 4.2, '#d97706', '#451a03', 1.3);
+            ctx.ellipse(14.5, -5.5, 6.5, 4.2, '#d97706', '#451a03', 1.3);
+            ctx.curveFill(0, -4, 4, -23, 15, -25, 8.5, -14, '#92400e', '#451a03', 1.6);
+            ctx.ellipse(9.5, -15.5, 3.8, 3.8, '#ef4444', '#111', 1.1);
+            ctx.ellipse(9.5, -16.2, 1.4, 1.4, '#fef08a', null, 0);
         } else {
-            const bodyCol = isIce ? '#38bdf8' : (isQueen ? '#581c87' : (n.includes("벌레") ? '#78350f' : '#1e293b'));
+            const bodyCol = isIce ? '#0284c7' : (isQueen ? '#581c87' : (n.includes("벌레") ? '#78350f' : '#1e293b'));
+            const subCol  = isIce ? '#7dd3fc' : (isQueen ? '#c084fc' : (n.includes("벌레") ? '#b45309' : '#475569'));
             const headCol = isIce ? '#bae6fd' : (isQueen ? '#a855f7' : '#334155');
             for (let i = 0; i < 4; i++) {
                 const oy = -4 + i * 3.5;
-                ctx.poly([[-8, oy], [-20, oy - 5 + (i % 2) * 2], [-24, oy + 2]], null, isIce ? '#7dd3fc' : '#0f172a', 2);
-                ctx.poly([[8, oy], [20, oy - 5 + (i % 2) * 2], [24, oy + 2]], null, isIce ? '#7dd3fc' : '#0f172a', 2);
+                const lMov = ((i % 2 === 0) ? 1 : -1) * swing * 0.4;
+                ctx.poly([[-8, oy], [-20, oy - 5 + lMov], [-25, oy + 2.5 + lMov]], null, isIce ? '#38bdf8' : '#0f172a', 2.1);
+                ctx.poly([[8, oy], [20, oy - 5 - lMov], [25, oy + 2.5 - lMov]], null, isIce ? '#38bdf8' : '#0f172a', 2.1);
             }
-            ctx.ellipse(0, 4, 13, 14, bodyCol, '#111', 1.5);
-            ctx.ellipse(0, -7, 8.5, 7.5, headCol, '#111', 1.4);
-            ctx.ellipse(-3, -9, 2, 2, '#ef4444', null, 0);
-            ctx.ellipse(3, -9, 2, 2, '#ef4444', null, 0);
+            ctx.ellipse(0, 4.5, 13.5, 14.2, bodyCol, '#111', 1.5);
+            ctx.poly([[0, -2], [5, 4], [0, 11], [-5, 4]], subCol, null, 0);
+            ctx.ellipse(0, -7, 8.8, 7.6, headCol, '#111', 1.4);
+            ctx.poly([[-4, -12], [-6, -17], [-2, -13]], '#e2e8f0', '#111', 0.9);
+            ctx.poly([[4, -12], [6, -17], [2, -13]], '#e2e8f0', '#111', 0.9);
+            ctx.ellipse(-3.2, -9, 2.1, 2.1, '#ef4444', '#000', 0.7);
+            ctx.ellipse(3.2, -9, 2.1, 2.1, '#ef4444', '#000', 0.7);
             if (isQueen) {
-                ctx.poly([[-5, -14], [-3, -20], [0, -16], [3, -20], [5, -14]], '#facc15', '#b45309', 1);
+                ctx.poly([[-5.5, -14], [-3.5, -21], [0, -16.5], [3.5, -21], [5.5, -14]], '#facc15', '#b45309', 1.1);
             }
         }
     }
@@ -1547,53 +1717,67 @@ export function drawMonster(ctx, x, y, m, tick) {
     else if (n.includes("오크") || n.includes("트롤") || n.includes("거인")) {
         const isFrostGiant = n.includes("서리 거인");
         const isFireTroll = n.includes("불의 트롤");
-        const sc = isBoss ? 2.05 : (isFireTroll ? 1.45 : 1.18);
+        const sc = isBoss ? 2.08 : (isFireTroll ? 1.48 : 1.20);
         ctx.scale(sc, sc);
 
-        const skinCol = isFrostGiant ? '#60a5fa' : (isFireTroll ? '#b91c1c' : (n.includes("붉은") ? '#991b1b' : '#3f6212'));
+        const skinCol = isFrostGiant ? '#60a5fa' : (isFireTroll ? '#dc2626' : (n.includes("붉은") ? '#991b1b' : '#3f6212'));
         const armorCol = isFrostGiant ? '#1e3a8a' : (isFireTroll ? '#450a0a' : '#334155');
 
-        ctx.poly([[-12, -6], [12, -6], [14, 12], [-14, 12]], armorCol, '#111', 1.5);
-        ctx.ellipse(-12, -4, 5, 4, '#64748b', '#111', 1.2);
-        ctx.ellipse(12, -4, 5, 4, '#64748b', '#111', 1.2);
-        ctx.ellipse(0, -14, 10, 9.5, skinCol, '#111', 1.5);
+        // 다리 & 갑옷 몸통 & 해골 벨트
+        ctx.poly([[-8, 6], [-2, 6], [-2 + swing * 0.35, 13.5], [-9 + swing * 0.35, 13.5]], '#1e293b', '#111', 1.1);
+        ctx.poly([[2, 6], [8, 6], [9 - swing * 0.35, 13.5], [2 - swing * 0.35, 13.5]], '#1e293b', '#111', 1.1);
+        ctx.poly([[-12.5, -6], [12.5, -6], [14.5, 12], [-14.5, 12]], armorCol, '#111', 1.5);
+        ctx.poly([[-8, -5], [8, -5], [6, 5], [-6, 5]], skinCol, null, 0);
+        ctx.ellipse(-13, -4.5, 5.5, 4.5, '#64748b', '#111', 1.2);
+        ctx.ellipse(13, -4.5, 5.5, 4.5, '#64748b', '#111', 1.2);
+        ctx.ellipse(0, 7, 3.5, 3.0, '#facc15', '#451a03', 1.1);
+
+        // 머리 & 뿔/엄니
+        ctx.ellipse(0, -14, 10.5, 9.8, skinCol, '#111', 1.5);
         if (isFrostGiant) {
-            ctx.poly([[-8, -11], [8, -11], [5, 2], [0, 6], [-5, 2]], '#e0f2fe', '#94a3b8', 1.2);
-            ctx.poly([[-10, -20], [-16, -29], [-6, -21]], '#cbd5e1', '#1e293b', 1.3);
-            ctx.poly([[10, -20], [16, -29], [6, -21]], '#cbd5e1', '#1e293b', 1.3);
+            ctx.poly([[-8.5, -11], [8.5, -11], [5.5, 3], [0, 7], [-5.5, 3]], '#e0f2fe', '#94a3b8', 1.2);
+            ctx.poly([[-10, -20], [-17, -30], [-6, -21]], '#e0f2fe', '#1e293b', 1.3);
+            ctx.poly([[10, -20], [17, -30], [6, -21]], '#e0f2fe', '#1e293b', 1.3);
         } else {
-            ctx.poly([[-5, -9], [-3, -14], [-1, -9]], '#ffffff', '#111', 1);
-            ctx.poly([[5, -9], [3, -14], [1, -9]], '#ffffff', '#111', 1);
+            ctx.poly([[-5.5, -8.5], [-3.5, -14.5], [-1, -8.5]], '#ffffff', '#111', 1);
+            ctx.poly([[5.5, -8.5], [3.5, -14.5], [1, -8.5]], '#ffffff', '#111', 1);
         }
-        ctx.ellipse(-3.5, -15, 2, 2, isFrostGiant ? '#e0f2fe' : '#facc15', '#000', 0.8);
-        ctx.ellipse(3.5, -15, 2, 2, isFrostGiant ? '#e0f2fe' : '#facc15', '#000', 0.8);
-        ctx.poly([[12, -18], [15, -18], [15, 10], [12, 10]], '#78350f', '#111', 1.2);
-        ctx.poly([[7, -24], [22, -24], [22, -14], [7, -14]], isFrostGiant ? '#7dd3fc' : '#64748b', '#111', 1.4);
+        ctx.ellipse(-3.6, -15, 2.2, 2.1, isFrostGiant ? '#e0f2fe' : '#facc15', '#000', 0.8);
+        ctx.ellipse(3.6, -15, 2.2, 2.1, isFrostGiant ? '#e0f2fe' : '#facc15', '#000', 0.8);
+        // 대형 전투도끼 / 해머
+        ctx.poly([[12.5, -19], [15.5, -19], [15.5, 11], [12.5, 11]], '#78350f', '#111', 1.2);
+        ctx.poly([[7, -25], [23, -25], [23, -13.5], [7, -13.5]], isFrostGiant ? '#7dd3fc' : '#94a3b8', '#111', 1.4);
+        ctx.poly([[18, -24], [22, -24], [22, -14.5], [18, -14.5]], '#ffffff', null, 0);
     }
     // 9. 골렘 / 가고일 / 타이탄(B)
     else if (n.includes("골렘") || n.includes("가고일") || n.includes("타이탄") || n.includes("파수꾼")) {
         const isLava = n.includes("화산") || n.includes("용암");
         const isMecha = n.includes("마공학") || n.includes("타이탄") || n.includes("파수꾼");
         const isTemple = n.includes("신전");
-        const sc = isBoss ? 2.15 : 1.38;
+        const sc = isBoss ? 2.18 : 1.40;
         ctx.scale(sc, sc);
 
-        const bodyCol = isLava ? '#292524' : (isMecha ? '#d97706' : (isTemple ? '#e2e8f0' : '#64748b'));
+        const bodyCol = isLava ? '#292524' : (isMecha ? '#d97706' : (isTemple ? '#cbd5e1' : '#64748b'));
+        const highlightCol = isLava ? '#57534e' : (isMecha ? '#fbbf24' : (isTemple ? '#f8fafc' : '#94a3b8'));
         const coreCol = isLava ? '#f97316' : (isMecha ? '#38bdf8' : '#facc15');
 
         if (n.includes("가고일")) {
-            ctx.poly([[-8, -8], [-24, -18], [-18, 2]], '#334155', '#111', 1.3);
-            ctx.poly([[8, -8], [24, -18], [18, 2]], '#334155', '#111', 1.3);
+            ctx.poly([[-8, -8], [-25, -19 + swing * 0.4], [-19, 2]], '#334155', '#111', 1.3);
+            ctx.poly([[8, -8], [25, -19 + swing * 0.4], [19, 2]], '#334155', '#111', 1.3);
         }
-        ctx.poly([[-14, -10], [14, -10], [11, 12], [-11, 12]], bodyCol, '#111827', 1.6);
-        ctx.poly([[-20, -10], [-12, -12], [-12, 4], [-19, 4]], bodyCol, '#111827', 1.4);
-        ctx.poly([[12, -12], [20, -10], [19, 4], [12, 4]], bodyCol, '#111827', 1.4);
-        ctx.poly([[-8, -22], [8, -22], [9, -10], [-9, -10]], bodyCol, '#111827', 1.5);
-        ctx.ellipse(0, -1, 5, 5, coreCol, '#ffffff', 1.4);
-        ctx.ellipse(-3, -16, 2, 1.8, coreCol, null, 0);
-        ctx.ellipse(3, -16, 2, 1.8, coreCol, null, 0);
+        // 육중한 장갑판 몸통 & 마력 코어 라인
+        ctx.poly([[-14.5, -10.5], [14.5, -10.5], [11.5, 12.5], [-11.5, 12.5]], bodyCol, '#111827', 1.6);
+        ctx.poly([[-11, -9], [11, -9], [8, 2], [-8, 2]], highlightCol, null, 0);
+        ctx.poly([[-20.5, -10], [-12, -12.5], [-12, 4.5], [-19.5, 4.5]], bodyCol, '#111827', 1.4);
+        ctx.poly([[12, -12.5], [20.5, -10], [19.5, 4.5], [12, 4.5]], bodyCol, '#111827', 1.4);
+        ctx.poly([[-8.5, -22.5], [8.5, -22.5], [9.5, -10], [-9.5, -10]], bodyCol, '#111827', 1.5);
+        // 흉부 에너지 코어 & 바이저 안광
+        ctx.ellipse(0, -1, 5.5, 5.5, coreCol, '#ffffff', 1.4);
+        ctx.ellipse(0, -1, 2.5, 2.5, '#ffffff', null, 0);
+        ctx.ellipse(-3.2, -16, 2.2, 1.9, coreCol, null, 0);
+        ctx.ellipse(3.2, -16, 2.2, 1.9, coreCol, null, 0);
         if (isBoss) {
-            ctx.ellipse(0, -14, 22, 6, null, '#38bdf8', 2);
+            ctx.ellipse(0, -14, 23, 6.5, null, coreCol, 2.0);
         }
     }
     // 10. 정령 / 세이렌 / 폭풍의 눈(B) / 이프리트(B)
@@ -1601,23 +1785,25 @@ export function drawMonster(ctx, x, y, m, tick) {
         const isFire = n.includes("이프리트") || n.includes("화염");
         const isStorm = n.includes("폭풍");
         const isIce = n.includes("빙결") || n.includes("눈보라");
-        const sc = isBoss ? 2.0 : 1.25;
+        const sc = isBoss ? 2.04 : 1.28;
         ctx.scale(sc, sc);
 
-        const cMain = isFire ? '#ef4444' : (isStorm ? '#38bdf8' : (isIce ? '#bae6fd' : '#0ea5e9'));
+        const cMain = isFire ? '#ef4444' : (isStorm ? '#0284c7' : (isIce ? '#38bdf8' : '#0ea5e9'));
         const cSub  = isFire ? '#facc15' : (isStorm ? '#fde047' : '#e0f2fe');
 
-        ctx.curveFill(-12, -4, -16, 8, 16, 8, 0, 14, cMain, '#111', 1.3);
-        ctx.ellipse(0, -6, 11, 10, cMain, cSub, 1.6);
-        ctx.ellipse(0, -16, 8, 8, cSub, cMain, 1.4);
-        ctx.ellipse(-3, -16, 1.8, 2, '#111827', null, 0);
-        ctx.ellipse(3, -16, 1.8, 2, '#111827', null, 0);
-        for (let i = 0; i < 3; i++) {
-            const a = tick * 0.09 + (Math.PI * 2 / 3) * i;
-            ctx.ellipse(Math.cos(a) * 16, -8 + Math.sin(a) * 6, 3.5, 3.5, cSub, cMain, 1);
+        // 소용돌이 하체 & 다층 원소 코어
+        ctx.curveFill(-12.5, -4, -16.5, 8.5, 16.5, 8.5, 0, 14.5, cMain, '#111', 1.3);
+        ctx.ellipse(0, -6, 11.5, 10.5, cMain, cSub, 1.6);
+        ctx.ellipse(0, -6, 7.2, 6.5, cSub, null, 0);
+        ctx.ellipse(0, -16, 8.2, 8.2, cSub, cMain, 1.4);
+        ctx.ellipse(-3, -16, 1.9, 2.2, '#111827', null, 0);
+        ctx.ellipse(3, -16, 1.9, 2.2, '#111827', null, 0);
+        for (let i = 0; i < 4; i++) {
+            const a = tick * 0.09 + (Math.PI / 2) * i;
+            ctx.ellipse(Math.cos(a) * 16.5, -8 + Math.sin(a) * 6.5, 3.6, 3.6, cSub, cMain, 1.1);
         }
         if (isBoss) {
-            ctx.poly([[-8, -22], [-5, -30], [0, -24], [5, -30], [8, -22]], '#facc15', '#b45309', 1.3);
+            ctx.poly([[-8.5, -22], [-5.5, -31], [0, -24.5], [5.5, -31], [8.5, -22]], '#facc15', '#b45309', 1.4);
         }
     }
     // 11. 사막 파라오 / 수호병 / 해골 / 리치 킹(B) / 망령군주
@@ -1625,64 +1811,75 @@ export function drawMonster(ctx, x, y, m, tick) {
         const isPharaoh = n.includes("람세스") || n.includes("파라오");
         const isLich = n.includes("리치") || n.includes("망령군주");
         const isPirateGhost = n.includes("선원") || n.includes("갑판장");
-        const sc = isBoss ? 2.0 : 1.18;
+        const sc = isBoss ? 2.04 : 1.20;
         ctx.scale(sc, sc);
 
         if (isPharaoh) {
-            ctx.poly([[-13, -18], [13, -18], [16, -2], [-16, -2]], '#1d4ed8', '#facc15', 1.8);
-            ctx.poly([[-10, -5], [10, -5], [12, 12], [-12, 12]], '#facc15', '#78350f', 1.5);
-            ctx.ellipse(0, -13, 8, 8, '#fef3c7', '#78350f', 1.3);
-            ctx.ellipse(-3, -14, 2, 2, '#38bdf8', null, 0);
-            ctx.ellipse(3, -14, 2, 2, '#38bdf8', null, 0);
-            ctx.poly([[12, -24], [14, -24], [14, 12], [12, 12]], '#facc15', '#78350f', 1.3);
-            ctx.ellipse(13, -26, 4.5, 4.5, '#ef4444', '#fde047', 1.2);
+            ctx.poly([[-13.5, -18], [13.5, -18], [16.5, -1.5], [-16.5, -1.5]], '#1d4ed8', '#facc15', 1.8);
+            ctx.poly([[-10.5, -5], [10.5, -5], [12.5, 12.5], [-12.5, 12.5]], '#facc15', '#78350f', 1.5);
+            ctx.ellipse(0, -13, 8.2, 8.2, '#fef3c7', '#78350f', 1.3);
+            ctx.ellipse(0, -21, 2.5, 3.2, '#ef4444', '#facc15', 1.0);
+            ctx.ellipse(-3, -14, 2.1, 2.1, '#38bdf8', null, 0);
+            ctx.ellipse(3, -14, 2.1, 2.1, '#38bdf8', null, 0);
+            ctx.poly([[12, -25], [14.2, -25], [14.2, 12.5], [12, 12.5]], '#facc15', '#78350f', 1.3);
+            ctx.ellipse(13.1, -27, 4.8, 4.8, '#ef4444', '#fde047', 1.3);
         } else if (isLich || n.includes("망령")) {
-            ctx.curveFill(-13, 12, -16, -18, 16, -18, 13, 12, '#1e1b4b', '#a855f7', 1.5);
-            ctx.ellipse(0, -13, 8, 8, '#e2e8f0', '#111', 1.3);
-            ctx.ellipse(-3, -14, 2, 2, '#2dd4bf', null, 0);
-            ctx.ellipse(3, -14, 2, 2, '#2dd4bf', null, 0);
+            ctx.curveFill(-13.5, 12.5, -16.5, -18, 16.5, -18, 13.5, 12.5, '#1e1b4b', '#a855f7', 1.5);
+            ctx.poly([[-6, -5], [6, -5], [8, 11], [-8, 11]], '#312e81', null, 0);
+            ctx.ellipse(0, -13, 8.2, 8.2, '#e2e8f0', '#111', 1.3);
+            ctx.ellipse(-3, -14, 2.1, 2.1, '#2dd4bf', null, 0);
+            ctx.ellipse(3, -14, 2.1, 2.1, '#2dd4bf', null, 0);
             if (isBoss || isLich) {
-                ctx.poly([[-8, -20], [-8, -28], [-3, -22], [0, -30], [3, -22], [8, -28], [8, -20]], '#38bdf8', '#1e3a8a', 1.3);
+                ctx.poly([[-8.5, -20], [-8.5, -29], [-3, -22.5], [0, -31], [3, -22.5], [8.5, -29], [8.5, -20]], '#38bdf8', '#1e3a8a', 1.3);
             }
-            ctx.poly([[11, -22], [13, -22], [13, 12], [11, 12]], '#64748b', '#111', 1.2);
-            ctx.ellipse(12, -25, 5, 5, '#2dd4bf', '#ffffff', 1.3);
+            ctx.poly([[11, -23], [13.2, -23], [13.2, 12], [11, 12]], '#64748b', '#111', 1.2);
+            ctx.ellipse(12.1, -26, 5.2, 5.2, '#2dd4bf', '#ffffff', 1.3);
         } else {
-            ctx.poly([[-8, -5], [8, -5], [9, 10], [-9, 10]], isPirateGhost ? '#7f1d1d' : '#cbd5e1', '#334155', 1.4);
-            ctx.ellipse(0, -13, 8, 8, '#f8fafc', '#475569', 1.4);
-            ctx.ellipse(-3, -14, 2, 2, '#ef4444', null, 0);
-            ctx.ellipse(3, -14, 2, 2, '#ef4444', null, 0);
-            ctx.poly([[10, -2], [20, -16], [22, -13], [12, 2]], '#94a3b8', '#1e293b', 1.2);
+            // 해골 병사: 갈비뼈 디테일 + 방패 + 시미터 도검
+            ctx.poly([[-8.5, -5], [8.5, -5], [9.5, 10], [-9.5, 10]], isPirateGhost ? '#7f1d1d' : '#cbd5e1', '#334155', 1.4);
+            ctx.poly([[-5, -2], [5, -2], [5, 0], [-5, 0]], '#475569', null, 0);
+            ctx.poly([[-4.5, 2], [4.5, 2], [4.5, 4], [-4.5, 4]], '#475569', null, 0);
+            ctx.ellipse(0, -13, 8.2, 8.2, '#f8fafc', '#475569', 1.4);
+            ctx.ellipse(-3, -14, 2.1, 2.1, '#ef4444', null, 0);
+            ctx.ellipse(3, -14, 2.1, 2.1, '#ef4444', null, 0);
+            ctx.ellipse(-11, -1, 4.5, 6.0, '#64748b', '#1e293b', 1.2);
+            ctx.poly([[10, -2], [21, -17], [23.5, -13.5], [12.5, 2]], '#e2e8f0', '#1e293b', 1.2);
         }
     }
     // 12. 독사 / 리자드맨 / 악어 / 역병의 히드라(B)
     else if (n.includes("독사") || n.includes("리자드맨") || n.includes("악어") || n.includes("히드라")) {
         if (n.includes("히드라")) {
-            ctx.scale(2.05, 2.05);
-            ctx.ellipse(0, 6, 16, 10, '#065f46', '#022c22', 1.6);
-            [[-12, -16, -0.25], [0, -21, 0], [12, -16, 0.25]].forEach(([hx, hy]) => {
-                ctx.poly([[-3, 2], [3, 2], [hx + 3, hy], [hx - 3, hy]], '#047857', '#022c22', 1.3);
-                ctx.ellipse(hx, hy, 6.5, 5, '#10b981', '#022c22', 1.3);
-                ctx.ellipse(hx - 2, hy - 1, 1.5, 1.5, '#ef4444', null, 0);
-                ctx.ellipse(hx + 2, hy - 1, 1.5, 1.5, '#ef4444', null, 0);
+            ctx.scale(2.08, 2.08);
+            ctx.ellipse(0, 6.5, 16.5, 10.5, '#065f46', '#022c22', 1.6);
+            ctx.ellipse(0, 7.5, 11, 6, '#34d399', null, 0);
+            [[-12.5, -16.5, -1], [0, -21.5, 0], [12.5, -16.5, 1]].forEach(([hx, hy, dirIdx]) => {
+                const sway = Math.sin(tick * 0.12 + dirIdx) * 2.0;
+                ctx.poly([[-3.2, 2], [3.2, 2], [hx + sway + 3.2, hy], [hx + sway - 3.2, hy]], '#047857', '#022c22', 1.3);
+                ctx.ellipse(hx + sway, hy, 6.8, 5.2, '#10b981', '#022c22', 1.3);
+                ctx.ellipse(hx + sway - 2.2, hy - 1, 1.6, 1.6, '#ef4444', null, 0);
+                ctx.ellipse(hx + sway + 2.2, hy - 1, 1.6, 1.6, '#ef4444', null, 0);
             });
         } else if (n.includes("악어")) {
-            ctx.scale(1.3, 1.3);
-            ctx.poly([[-18, 2], [14, 0], [22, 6], [-18, 9]], '#14532d', '#052e16', 1.4);
-            ctx.poly([[10, 0], [25, 2], [24, 7], [10, 6]], '#166534', '#052e16', 1.2);
-            ctx.ellipse(13, 0, 2, 2, '#facc15', '#000', 0.8);
+            ctx.scale(1.32, 1.32);
+            ctx.poly([[-18.5, 2], [14, 0], [22.5, 6], [-18.5, 9.5]], '#14532d', '#052e16', 1.4);
+            ctx.poly([[-12, 0], [-9, -4], [-6, 0], [-3, -4], [0, 0], [3, -4], [6, 0]], '#16a34a', '#052e16', 1);
+            ctx.poly([[10, 0], [25.5, 2], [24.5, 7.5], [10, 6.5]], '#166534', '#052e16', 1.2);
+            ctx.ellipse(13, 0, 2.1, 2.1, '#facc15', '#000', 0.8);
         } else if (n.includes("리자드맨")) {
-            ctx.scale(1.18, 1.18);
-            ctx.poly([[-8, 4], [-20, 10], [-16, 12], [-6, 8]], '#15803d', '#052e16', 1.2);
-            ctx.poly([[-9, -5], [9, -5], [10, 10], [-10, 10]], '#16a34a', '#052e16', 1.4);
-            ctx.ellipse(0, -13, 8.5, 7, '#22c55e', '#052e16', 1.4);
-            ctx.poly([[10, -20], [12, -20], [12, 12], [10, 12]], '#eab308', '#713f12', 1.2);
+            ctx.scale(1.20, 1.20);
+            ctx.poly([[-8, 4], [-21, 10.5], [-16.5, 12.5], [-6, 8]], '#15803d', '#052e16', 1.2);
+            ctx.poly([[-9.5, -5], [9.5, -5], [10.5, 10.5], [-10.5, 10.5]], '#16a34a', '#052e16', 1.4);
+            ctx.ellipse(-11, 1, 4.5, 6.0, '#eab308', '#713f12', 1.2);
+            ctx.ellipse(0, -13, 8.8, 7.2, '#22c55e', '#052e16', 1.4);
+            ctx.poly([[10, -21], [12.2, -21], [12.2, 12], [10, 12]], '#eab308', '#713f12', 1.2);
+            ctx.poly([[8, -21], [11.1, -27], [14.2, -21]], '#fef08a', '#713f12', 1);
         } else {
-            ctx.scale(1.12, 1.12);
-            ctx.ellipse(0, 6, 12, 5, '#15803d', '#052e16', 1.3);
-            ctx.ellipse(0, -6, 10, 8, '#4ade80', '#14532d', 1.3);
-            ctx.ellipse(0, -9, 6, 5, '#166534', '#052e16', 1.3);
-            ctx.ellipse(-2.5, -10, 1.5, 1.5, '#ef4444', null, 0);
-            ctx.ellipse(2.5, -10, 1.5, 1.5, '#ef4444', null, 0);
+            ctx.scale(1.15, 1.15);
+            ctx.ellipse(0, 6.5, 12.5, 5.2, '#15803d', '#052e16', 1.3);
+            ctx.ellipse(0, -5.5, 10.5, 8.2, '#4ade80', '#14532d', 1.3);
+            ctx.ellipse(0, -9, 6.2, 5.2, '#166534', '#052e16', 1.3);
+            ctx.ellipse(-2.5, -10, 1.6, 1.6, '#ef4444', null, 0);
+            ctx.ellipse(2.5, -10, 1.6, 1.6, '#ef4444', null, 0);
         }
     }
     // 13. 해적 / 약탈자 / 암살자 / 대사제 / 선장 바르보(B) / 배교자 카엘런(B) / 공허의 기사
@@ -1690,50 +1887,70 @@ export function drawMonster(ctx, x, y, m, tick) {
         const isBarbo = n.includes("바르보");
         const isKaelen = n.includes("카엘런");
         const isVoid = n.includes("공허") || isKaelen;
-        const sc = isBoss ? 2.0 : 1.18;
+        const sc = isBoss ? 2.05 : 1.20;
         ctx.scale(sc, sc);
 
         if (isKaelen) {
-            ctx.ellipse(0, -16, 20, 20, '#090514', '#c084fc', 2.2);
+            ctx.ellipse(0, -16, 20.5, 20.5, '#090514', '#c084fc', 2.2);
             for (let i = 0; i < 6; i++) {
                 const a = tick * 0.06 + (Math.PI / 3) * i;
-                ctx.ellipse(Math.cos(a) * 24, -16 + Math.sin(a) * 14, 3.5, 3.5, '#e879f9', '#ffffff', 1.2);
+                ctx.ellipse(Math.cos(a) * 24.5, -16 + Math.sin(a) * 14.5, 3.6, 3.6, '#e879f9', '#ffffff', 1.2);
             }
         }
         const coatCol = isVoid ? '#1e1b4b' : (isBarbo || n.includes("해적") ? '#7f1d1d' : '#1f2937');
-        ctx.poly([[-11, -5], [11, -5], [14, 12], [-14, 12]], coatCol, '#facc15', 1.5);
-        ctx.ellipse(0, -13, 8.5, 8.5, '#fde68a', '#111', 1.3);
+        ctx.poly([[-11.5, -5], [11.5, -5], [14.5, 12.5], [-14.5, 12.5]], coatCol, '#facc15', 1.5);
+        ctx.poly([[-4.5, -4.5], [4.5, -4.5], [3.5, 11], [-3.5, 11]], isVoid ? '#7e22ce' : '#b91c1c', null, 0);
+        ctx.ellipse(0, -13, 8.6, 8.6, '#fde68a', '#111', 1.3);
         if (isBarbo || n.includes("해적")) {
-            ctx.poly([[-14, -16], [0, -26], [14, -16], [9, -13], [-9, -13]], '#111827', '#facc15', 1.4);
+            ctx.poly([[-14.5, -16], [0, -26.5], [14.5, -16], [9.5, -13], [-9.5, -13]], '#111827', '#facc15', 1.4);
+            ctx.ellipse(0, -18.5, 2.2, 2.2, '#f8fafc', null, 0);
         } else {
-            ctx.curveFill(-10, -14, -10, -26, 10, -26, 10, -14, isVoid ? '#4c1d95' : '#334155', '#facc15', 1.3);
+            ctx.curveFill(-10.5, -14, -10.5, -26.5, 10.5, -26.5, 10.5, -14, isVoid ? '#4c1d95' : '#334155', '#facc15', 1.3);
         }
-        ctx.ellipse(-3, -14, 1.8, 1.8, isVoid ? '#e879f9' : '#ef4444', null, 0);
-        ctx.ellipse(3, -14, 1.8, 1.8, isVoid ? '#e879f9' : '#ef4444', null, 0);
-        ctx.poly([[11, -4], [22, -18], [25, -14], [13, 2]], isVoid ? '#c084fc' : '#e2e8f0', '#111', 1.3);
+        ctx.ellipse(-3, -14, 1.9, 1.9, isVoid ? '#e879f9' : '#ef4444', null, 0);
+        ctx.ellipse(3, -14, 1.9, 1.9, isVoid ? '#e879f9' : '#ef4444', null, 0);
+        ctx.poly([[11, -4], [22.5, -18.5], [25.5, -14.5], [13.5, 2]], isVoid ? '#c084fc' : '#e2e8f0', '#111', 1.3);
     }
     // 14. 드레이크 / 화염드래곤 / 고룡 / 에이션트 레드(B) / 발록(B) / 임프
     else {
         const isBalrog = n.includes("발록");
         const isImp = n.includes("임프");
-        const sc = isBoss ? 2.25 : (isImp ? 0.95 : 1.55);
+        const sc = isBoss ? 2.28 : (isImp ? 0.98 : 1.58);
         ctx.scale(sc, sc);
         const mainCol = isBalrog ? '#450a0a' : '#dc2626';
         const wingCol = isBalrog ? '#f97316' : '#991b1b';
-        const flap = Math.sin(tick * 0.18) * 5;
+        const flap = Math.sin(tick * 0.18) * 5.5;
 
-        ctx.poly([[-8, -6], [-28, -22 + flap], [-22, 4]], wingCol, '#111', 1.5);
-        ctx.poly([[8, -6], [28, -22 + flap], [22, 4]], wingCol, '#111', 1.5);
-        ctx.poly([[-11, -6], [11, -6], [13, 12], [-13, 12]], mainCol, '#111', 1.5);
-        ctx.poly([[-5, -4], [5, -4], [6, 11], [-6, 11]], '#facc15', '#b45309', 1);
-        ctx.poly([[-6, -18], [-14, -28], [-2, -20]], '#fde047', '#111', 1.2);
-        ctx.poly([[6, -18], [14, -28], [2, -20]], '#fde047', '#111', 1.2);
-        ctx.ellipse(0, -14, 9.5, 8.5, mainCol, '#111', 1.5);
-        ctx.ellipse(-3.5, -15, 2, 2, '#fef08a', null, 0);
-        ctx.ellipse(3.5, -15, 2, 2, '#fef08a', null, 0);
-        if (isBalrog) {
-            ctx.poly([[12, -2], [26, -22], [29, -18], [14, 3]], '#f97316', '#fde047', 1.5);
+        // 드래곤 꼬리 & 이중 막 날개
+        ctx.poly([[-8, 6], [-22, 11 + swing * 0.4], [-18, 4]], mainCol, '#111', 1.2);
+        ctx.poly([[-8, -6], [-29, -22.5 + flap], [-22.5, 4]], wingCol, '#111', 1.5);
+        ctx.poly([[8, -6], [29, -22.5 + flap], [22.5, 4]], wingCol, '#111', 1.5);
+        ctx.poly([[-8, -5], [-21, -15 + flap * 0.8], [-17, 1]], isBalrog ? '#fde047' : '#ef4444', null, 0);
+        ctx.poly([[8, -5], [21, -15 + flap * 0.8], [17, 1]], isBalrog ? '#fde047' : '#ef4444', null, 0);
+        // 몸통 & 황금 비늘 배
+        ctx.poly([[-11.5, -6], [11.5, -6], [13.5, 12.5], [-13.5, 12.5]], mainCol, '#111', 1.5);
+        ctx.poly([[-5.5, -4], [5.5, -4], [6.5, 11.5], [-6.5, 11.5]], '#facc15', '#b45309', 1.1);
+        // 드래곤 뿔 & 머리 & 안광
+        ctx.poly([[-6, -18], [-14.5, -28.5], [-2, -20]], '#fde047', '#111', 1.2);
+        ctx.poly([[6, -18], [14.5, -28.5], [2, -20]], '#fde047', '#111', 1.2);
+        ctx.ellipse(0, -14, 9.8, 8.8, mainCol, '#111', 1.5);
+        ctx.ellipse(-3.5, -15, 2.2, 2.2, '#fef08a', '#000', 0.7);
+        ctx.ellipse(3.5, -15, 2.2, 2.2, '#fef047', '#000', 0.7);
+        if (isBalrog || isBoss) {
+            ctx.poly([[12, -2], [27, -23], [30, -18.5], [14.5, 3]], '#f97316', '#fde047', 1.5);
         }
+    }
+
+    // 💫 스턴(기절) 및 방어력 감소(디버프) 상태이상 시각 피드백
+    if (m.stunUntil && m.stunUntil > now) {
+        const sRot = tick * 0.16;
+        for (let i = 0; i < 3; i++) {
+            const sa = sRot + (i * Math.PI * 2) / 3;
+            ctx.ellipse(Math.cos(sa) * 11, -28 + Math.sin(sa) * 3.5, 2.4, 2.4, '#fef08a', '#ca8a04', 0.9);
+        }
+    }
+    if (m.defDownUntil && m.defDownUntil > now) {
+        ctx.poly([[13, -18], [17, -18], [15, -13]], '#c084fc', '#3b0764', 0.9);
     }
 
     ctx.restore();

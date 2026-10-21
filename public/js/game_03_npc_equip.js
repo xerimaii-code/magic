@@ -749,15 +749,72 @@ window.closeNpcModal = function() {
   }
 };
 
+window.questUiTab = 'active'; // 'active' | 'region' | 'done'
+window.questUiDoneRegionFilter = 'ALL';
+
+window.setQuestUiTab = function(tabName) {
+  window.questUiTab = tabName || 'active';
+  window.renderQuestUI();
+};
+
+window.setQuestDoneRegionFilter = function(regId) {
+  window.questUiDoneRegionFilter = regId || 'ALL';
+  window.renderQuestUI();
+};
+
+window.guideToQuestTarget = function(qId) {
+  const q = (GameDB.Quests || []).find(x => x && x.id === qId);
+  if (!q || !window.player) return;
+  const st = player.quests?.[q.id] || { status: 'AVAILABLE', count: 0 };
+  const regObj = (GameDB.Regions || []).find(r => r.id === q.region);
+  const regName = regObj ? regObj.name : q.region;
+
+  if (q.region !== currentRegionKey) {
+    window.addChat(`🧭 [${q.name}] 임무는 [${regName}] 지역 퀘스트입니다. 마을 포탈(아리아)을 통해 이동하세요.`, 'log-sys');
+    return;
+  }
+
+  const ui = document.getElementById('quest-ui');
+  if (ui) ui.classList.add('hidden');
+
+  if (st.status === 'ACTIVE' && st.count < q.reqCount && q.targetName) {
+    const liveMob = (monsterList || []).find(m => m && !m.isDead && ((m.rawName || m.name || '').includes(q.targetName)));
+    if (liveMob && typeof window.findPath === 'function') {
+      player.targetEntity = { type: 'MONSTER', ref: liveMob };
+      player.path = window.findPath(player.x, player.y, liveMob.x, liveMob.y);
+      player.isMoving = true;
+      player.manualMoving = false;
+      updateTopTargetUI?.(liveMob);
+      window.addChat(`🧭 퀘스트 목표 '${q.targetName}' 위치로 이동합니다.`, 'log-sys');
+      return;
+    }
+  }
+
+  const qNpc = (npcList || []).find(n => n && n.role === 'QUEST');
+  if (qNpc && typeof window.findPath === 'function') {
+    player.targetEntity = { type: 'NPC', ref: qNpc };
+    player.path = window.findPath(player.x, player.y, qNpc.x, qNpc.y);
+    player.isMoving = true;
+    player.manualMoving = false;
+    window.addChat(`🧭 퀘스트 NPC '${qNpc.name}'에게 이동합니다.`, 'log-sys');
+  } else {
+    window.addChat(`🧭 [${regName}] '${q.objective}' 목표를 확인하세요. (캐릭터 주변 방향 화살표 안내 활성화됨)`, 'log-sys');
+  }
+};
+
 window.toggleQuestUI = function() {
   const ui = document.getElementById('quest-ui');
   if (!ui) return;
+  const wasHidden = ui.classList.contains('hidden');
   ui.classList.toggle('hidden');
   if (!ui.classList.contains('hidden')) {
+    // 창을 새로 열 때는 항상 '진행중' 탭을 기본 표시하여 긴 리스트 스크롤 현상 원천 차단
+    window.questUiTab = 'active';
     window.bringModalToFront?.(ui);
     window.renderQuestUI();
-    window.centerModalOnScreen?.(ui);
-    setTimeout(() => window.focusLastActiveQuestRow?.(), 40);
+    if (wasHidden && !ui._hasCustomDragPos) {
+      window.centerModalOnScreen?.(ui);
+    }
   }
 };
 
@@ -768,111 +825,262 @@ function getQuestRewardItemId(q) {
   return q.rewardItem;
 }
 
-function buildQuestListHTML(isFromNpc = false) {
-  const activeQuests = GameDB.Quests.filter(q => player.quests[q.id]?.status === 'ACTIVE');
-  let html = '';
+function getRegionNameById(regId) {
+  const r = (GameDB.Regions || []).find(x => x && x.id === regId);
+  return r ? r.name : (regId || 'R01');
+}
 
-  if (!isFromNpc) {
-    html += `<div style="background:#1a1510; border:1px solid #5a462a; border-radius:5px; padding:5px 7px; margin-bottom:5px; font-size:10px; color:#fde047; display:flex; justify-content:space-between; align-items:center;">
-      <span>🔥 진행 중: <b>${activeQuests.length}건</b></span>
-      <span style="font-size:9px; color:#93c5fd;">※ 수락·보상 수령: 마을/야영지 퀘스트 NPC</span>
+function renderSingleQuestRowHTML(q, st, isFromNpc = false, compactDone = false) {
+  const rewardId = getQuestRewardItemId(q);
+  const rItem = window.itemDict?.[rewardId]?.name || rewardId;
+  const regName = getRegionNameById(q.region);
+  const isReady = st.status === 'ACTIVE' && st.count >= q.reqCount;
+  const pct = Math.min(100, Math.round(((st.count || 0) / Math.max(1, q.reqCount || 1)) * 100));
+
+  if (compactDone && st.status === 'DONE') {
+    return `
+      <div class="shop-row" style="border-color:#2d3748; background:#12141a; padding:4px 7px; margin-bottom:2px; opacity:0.86;">
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+            <span style="font-size:9px; background:#1e293b; color:#93c5fd; padding:0 4px; border-radius:3px;">${regName}</span>
+            <span style="font-weight:bold; color:${q.isRegionFinale ? '#e879f9' : '#d1d5db'}; font-size:11.5px;">[${q.id}] ${q.name}</span>
+          </div>
+          <div style="font-size:9.5px; color:#9ca3af; margin-top:1px;">🎯 ${q.objective} · 보상: <b>${rItem}</b> x${q.rewardQty}</div>
+        </div>
+        <span style="font-size:10px; color:#4ade80; font-weight:bold; white-space:nowrap;">완료 ✔️</span>
+      </div>
+    `;
+  }
+
+  let btnHtml = '';
+  if (isFromNpc) {
+    if (st.status === 'AVAILABLE' || st.status === 'ABANDONED') {
+      btnHtml = `<button class="shop-buy-btn" onclick="acceptQuest('${q.id}')">${st.everAccepted ? '재수락' : '수락하기'}</button>`;
+    } else if (st.status === 'ACTIVE') {
+      if (isReady) {
+        btnHtml = `<button class="shop-buy-btn" style="background:#16a34a; border-color:#4ade80; box-shadow:0 0 8px rgba(34,197,94,0.45);" onclick="completeQuest('${q.id}')">🎁 보상 수령</button>`;
+      } else {
+        btnHtml = `<span style="font-size:9.5px; color:#fde047; font-weight:bold; white-space:nowrap;">진행 (${st.count}/${q.reqCount})</span>`;
+      }
+    } else {
+      btnHtml = `<span style="font-size:10px; color:#6b7280; white-space:nowrap;">완료됨 ✔️</span>`;
+    }
+  } else {
+    if (st.status === 'ACTIVE') {
+      btnHtml = `<div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end; flex-shrink:0;">`;
+      if (isReady) {
+        btnHtml += `<span style="font-size:9px; color:#4ade80; font-weight:bold; background:#052e16; padding:2px 5px; border:1px solid #22c55e; border-radius:4px; white-space:nowrap;">달성! (NPC 보상)</span>`;
+      } else {
+        btnHtml += `<span style="font-size:9.5px; color:#fde047; font-weight:bold; white-space:nowrap;">진행 (${st.count}/${q.reqCount})</span>`;
+      }
+      btnHtml += `<div style="display:flex; gap:3px;">`;
+      if (q.region === currentRegionKey) {
+        btnHtml += `<button type="button" class="shop-buy-btn" style="background:#1e3a8a; border-color:#60a5fa; padding:2px 5px; font-size:9px;" onclick="guideToQuestTarget('${q.id}')">📍안내</button>`;
+      }
+      btnHtml += `<button type="button" class="shop-buy-btn" style="background:#7f1d1d; border-color:#f87171; padding:2px 6px; font-size:9px;" onclick="abandonQuest('${q.id}')">포기</button>`;
+      btnHtml += `</div></div>`;
+    } else if (st.status === 'ABANDONED') {
+      btnHtml = `<div style="display:flex; flex-direction:column; gap:3px; align-items:flex-end; flex-shrink:0;">
+        <span style="font-size:9px; color:#fca5a5;">포기 상태</span>
+        <button type="button" class="shop-buy-btn" style="background:#1d4ed8; border-color:#60a5fa; padding:2px 7px; font-size:9.5px;" onclick="resumeQuest('${q.id}')">🔄 재진행</button>
+      </div>`;
+    } else if (st.status === 'DONE') {
+      btnHtml = `<span style="font-size:10px; color:#4ade80; font-weight:bold; white-space:nowrap;">완료됨 ✔️</span>`;
+    } else {
+      btnHtml = `<div style="display:flex; flex-direction:column; gap:3px; align-items:flex-end; flex-shrink:0;">
+        <span style="font-size:9px; color:#93c5fd;">미수락 (NPC)</span>
+        ${q.region === currentRegionKey ? `<button type="button" class="shop-buy-btn" style="background:#1e3a8a; border-color:#60a5fa; padding:2px 6px; font-size:9px;" onclick="guideToQuestTarget('${q.id}')">📍NPC이동</button>` : ''}
+      </div>`;
+    }
+  }
+
+  const rowBorder = isReady ? '#22c55e' : (st.status === 'ACTIVE' ? '#eab308' : (st.status === 'ABANDONED' ? '#7f1d1d' : '#3d3020'));
+  const progressBarHtml = st.status === 'ACTIVE' ? `
+    <div style="width:100%; height:5px; background:#090d16; border:1px solid #374151; border-radius:999px; overflow:hidden; margin-top:3px;">
+      <div style="width:${pct}%; height:100%; background:${isReady ? 'linear-gradient(90deg,#16a34a,#4ade80)' : 'linear-gradient(90deg,#ca8a04,#fde047)'}; transition:width 0.2s;"></div>
+    </div>
+  ` : '';
+
+  return `
+    <div class="shop-row" ${st.status === 'ACTIVE' ? 'data-active-quest-row="true"' : ''} style="border-color:${rowBorder}; padding:6px 7px; margin-bottom:2px; flex-shrink:0;">
+      <div style="flex:1; min-width:0;">
+        <div style="display:flex; align-items:center; gap:4px; margin-bottom:1px; flex-wrap:wrap;">
+          <span style="font-size:9px; background:#1e293b; border:1px solid #334155; color:#bae6fd; padding:0 4px; border-radius:3px; font-weight:bold;">📍${regName}</span>
+          ${q.chapter ? `<span style="font-size:9px; color:#38bdf8; font-weight:bold;">📖 ${q.chapter}</span>` : ''}
+        </div>
+        <div style="font-weight:bold; color:${q.isRegionFinale ? '#e879f9' : '#facc15'}; font-size:12.5px; line-height:1.25;">[${q.id}] ${q.name}</div>
+        ${q.story ? `<div style="font-size:10.5px; color:#cbd5e1; margin:1px 0; line-height:1.25;">"${q.story}"</div>` : ''}
+        <div style="font-size:11.2px; color:#fff; line-height:1.25;">🎯 목표: ${q.objective}</div>
+        <div style="font-size:9px; color:${q.isRegionFinale ? '#fde047' : '#93c5fd'}; margin-top:1px;">보상: EXP +${(Number(q.exp) || 0).toLocaleString()} / 💰${(Number(q.gold) || 0).toLocaleString()} G / <b>${rItem}</b> x${q.rewardQty}</div>
+        ${progressBarHtml}
+      </div>
+      <div>${btnHtml}</div>
+    </div>
+  `;
+}
+
+function buildQuestListHTML(isFromNpc = false) {
+  const seenIds = new Set();
+  const uniqueQuests = (GameDB.Quests || []).filter(q => {
+    if (!q || !q.id || seenIds.has(q.id)) return false;
+    seenIds.add(q.id);
+    return true;
+  });
+
+  if (isFromNpc) {
+    let html = `<div style="font-size:10px; color:#4ade80; margin-bottom:5px; flex-shrink:0;">지역 최종 보스 퀘스트 완수 시 <b>[퀘스트전용] 클래스 맞춤 무기</b>가 지급됩니다!</div>`;
+    const regionQuests = uniqueQuests.filter(q => q.region === currentRegionKey || player.quests[q.id]?.status === 'ACTIVE');
+    const rawQuests = regionQuests.length > 0 ? regionQuests : uniqueQuests.filter(q => q.region === 'R01');
+
+    // NPC 대화창에서도 달성/진행중/수락가능 임무를 맨 위에 배치하고 완료된 임무는 하단에 컴팩트하게 정리 (불필요한 스크롤 제거)
+    const activeReady = [];
+    const activeInProg = [];
+    const availList = [];
+    const doneList = [];
+
+    rawQuests.forEach(q => {
+      const st = player.quests[q.id] || { status: 'AVAILABLE', count: 0, everAccepted: false };
+      if (st.status === 'ACTIVE') {
+        if ((st.count || 0) >= q.reqCount) activeReady.push({ q, st });
+        else activeInProg.push({ q, st });
+      } else if (st.status === 'DONE') {
+        doneList.push({ q, st });
+      } else {
+        availList.push({ q, st });
+      }
+    });
+
+    html += `<div class="shop-list" style="scroll-behavior:auto;">`;
+    [...activeReady, ...activeInProg, ...availList].forEach(({ q, st }) => {
+      html += renderSingleQuestRowHTML(q, st, true, false);
+    });
+    if (doneList.length > 0) {
+      html += `<div style="font-size:9.5px; color:#94a3b8; font-weight:bold; margin:4px 0 2px 2px;">✔️ 완료한 임무 (${doneList.length}건)</div>`;
+      doneList.forEach(({ q, st }) => {
+        html += renderSingleQuestRowHTML(q, st, true, true);
+      });
+    }
+    html += `</div>`;
+    return html;
+  }
+
+  const activeQuests = uniqueQuests.filter(q => player.quests[q.id]?.status === 'ACTIVE');
+  const abandonedQuests = uniqueQuests.filter(q => player.quests[q.id]?.status === 'ABANDONED' && player.quests[q.id]?.everAccepted);
+  const doneQuests = uniqueQuests.filter(q => player.quests[q.id]?.status === 'DONE');
+  const curRegQuests = uniqueQuests.filter(q => q.region === currentRegionKey);
+  const curRegName = getRegionNameById(currentRegionKey);
+
+  const curTab = window.questUiTab || 'active';
+  let html = `
+    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:4px; margin-bottom:4px; flex-shrink:0;">
+      <button type="button" onclick="setQuestUiTab('active')" style="padding:5px 4px; border-radius:5px; font-size:10.5px; font-weight:bold; cursor:pointer; background:${curTab === 'active' ? 'linear-gradient(180deg,#92400e,#451a03)' : '#14171f'}; border:1px solid ${curTab === 'active' ? '#facc15' : '#374151'}; color:${curTab === 'active' ? '#fef08a' : '#9ca3af'};">
+        🔥 진행중 (${activeQuests.length})
+      </button>
+      <button type="button" onclick="setQuestUiTab('region')" style="padding:5px 4px; border-radius:5px; font-size:10.5px; font-weight:bold; cursor:pointer; background:${curTab === 'region' ? 'linear-gradient(180deg,#1e3a8a,#172554)' : '#14171f'}; border:1px solid ${curTab === 'region' ? '#60a5fa' : '#374151'}; color:${curTab === 'region' ? '#e0f2fe' : '#9ca3af'};">
+        📍 ${curRegName} (${curRegQuests.length})
+      </button>
+      <button type="button" onclick="setQuestUiTab('done')" style="padding:5px 4px; border-radius:5px; font-size:10.5px; font-weight:bold; cursor:pointer; background:${curTab === 'done' ? 'linear-gradient(180deg,#065f46,#022c22)' : '#14171f'}; border:1px solid ${curTab === 'done' ? '#34d399' : '#374151'}; color:${curTab === 'done' ? '#a7f3d0' : '#9ca3af'};">
+        📚 완료 (${doneQuests.length})
+      </button>
+    </div>
+  `;
+
+  if (curTab === 'active') {
+    html += `<div style="background:#1a1510; border:1px solid #5a462a; border-radius:5px; padding:4px 7px; margin-bottom:4px; font-size:9.8px; color:#fde047; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+      <span>🔥 현재 진행 중: <b>${activeQuests.length}건</b>${abandonedQuests.length > 0 ? ` · 포기: ${abandonedQuests.length}건` : ''}</span>
+      <span style="font-size:9px; color:#93c5fd;">※ 수락·보상: 마을/야영지 퀘스트 NPC</span>
     </div>`;
 
-    const seenHistIds = new Set();
-    const historyQuests = GameDB.Quests.filter(q => {
-      if (!q || !player.quests[q.id]?.everAccepted || seenHistIds.has(q.id)) return false;
-      seenHistIds.add(q.id);
-      return true;
-    });
-    if (historyQuests.length === 0) {
-      html += `<div style="padding:16px 10px; text-align:center; color:#9ca3af; font-size:10.5px; background:#141210; border:1px dashed #3d3020; border-radius:6px;">
-        아직 수락한 퀘스트가 없습니다.<br>
-        <span style="color:#4ade80; font-size:9.5px;">마을(S) 또는 야영지(S1)의 퀘스트 NPC에게서 임무를 수락하세요!</span>
+    if (activeQuests.length === 0 && abandonedQuests.length === 0) {
+      const nextCurRegQuest = curRegQuests.find(q => {
+        const st = player.quests[q.id]?.status;
+        return !st || st === 'AVAILABLE';
+      });
+      html += `<div style="padding:12px 10px; text-align:center; color:#cbd5e1; font-size:10.5px; background:#141210; border:1px dashed #4a3b2c; border-radius:6px; margin-bottom:4px;">
+        현재 진행 중인 퀘스트가 없습니다.<br>
+        <span style="color:#4ade80; font-size:9.5px;">마을(S) 또는 야영지(S1)의 퀘스트 NPC에게서 새 임무를 수락하세요!</span>
       </div>`;
+      if (nextCurRegQuest) {
+        const stNext = player.quests[nextCurRegQuest.id] || { status: 'AVAILABLE', count: 0 };
+        html += `<div style="font-size:9.5px; color:#fde047; font-weight:bold; margin:2px 0 3px 2px;">💡 현재 지역(${curRegName}) 추천 다음 임무</div>`;
+        html += `<div class="shop-list" style="scroll-behavior:auto;">${renderSingleQuestRowHTML(nextCurRegQuest, stNext, false, false)}</div>`;
+      }
       return html;
     }
 
-    html += `<div class="shop-list">`;
-    historyQuests.forEach(q => {
-      const st = player.quests[q.id];
-      const rewardId = getQuestRewardItemId(q);
-      const rItem = window.itemDict[rewardId]?.name || rewardId;
-      let btnHtml = '';
+    // 최신/현재 지역 및 달성 완료 임무가 항상 맨 위에 오도록 정렬 (스크롤 없이 즉시 확인!)
+    const sortedActive = [...activeQuests].sort((a, b) => {
+      const stA = player.quests[a.id];
+      const stB = player.quests[b.id];
+      const readyA = (stA?.count || 0) >= a.reqCount ? 1 : 0;
+      const readyB = (stB?.count || 0) >= b.reqCount ? 1 : 0;
+      if (readyA !== readyB) return readyB - readyA;
+      const curA = a.region === currentRegionKey ? 1 : 0;
+      const curB = b.region === currentRegionKey ? 1 : 0;
+      if (curA !== curB) return curB - curA;
+      return String(b.id).localeCompare(String(a.id));
+    });
 
-      if (st.status === 'ACTIVE') {
-        btnHtml = `<div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">`;
-        if (st.count >= q.reqCount) {
-          btnHtml += `<span style="font-size:9px; color:#4ade80; font-weight:bold; background:#052e16; padding:2px 5px; border:1px solid #22c55e; border-radius:4px;">달성! (NPC 보상)</span>`;
-        } else {
-          btnHtml += `<span style="font-size:9.5px; color:#fde047; font-weight:bold;">진행 (${st.count}/${q.reqCount})</span>`;
-        }
-        btnHtml += `<button class="shop-buy-btn" style="background:#7f1d1d; border-color:#f87171; padding:2px 6px; font-size:9px;" onclick="abandonQuest('${q.id}')">포기</button>`;
-        btnHtml += `</div>`;
-      } else if (st.status === 'ABANDONED') {
-        btnHtml = `<div style="display:flex; flex-direction:column; gap:3px; align-items:flex-end;">
-          <span style="font-size:9px; color:#fca5a5;">포기 상태</span>
-          <button class="shop-buy-btn" style="background:#1d4ed8; border-color:#60a5fa; padding:2px 7px; font-size:9.5px;" onclick="resumeQuest('${q.id}')">🔄 재진행</button>
-        </div>`;
-      } else if (st.status === 'DONE') {
-        btnHtml = `<span style="font-size:10px; color:#6b7280; white-space:nowrap;">완료됨 ✔️</span>`;
-      }
+    html += `<div class="shop-list" style="scroll-behavior:auto;">`;
+    sortedActive.forEach(q => {
+      html += renderSingleQuestRowHTML(q, player.quests[q.id], false, false);
+    });
+    if (abandonedQuests.length > 0) {
+      html += `<div style="font-size:9.5px; color:#fca5a5; font-weight:bold; margin:4px 0 2px 2px;">🔄 재진행 가능한 포기 임무 (${abandonedQuests.length}건)</div>`;
+      [...abandonedQuests].reverse().forEach(q => {
+        html += renderSingleQuestRowHTML(q, player.quests[q.id], false, false);
+      });
+    }
+    html += `</div>`;
+    return html;
+  }
 
-      const rowBorder = st.status === 'ACTIVE' ? '#eab308' : (st.status === 'ABANDONED' ? '#7f1d1d' : '#3d3020');
-      html += `
-        <div class="shop-row" ${st.status === 'ACTIVE' ? 'data-active-quest-row="true"' : ''} style="border-color:${rowBorder}; padding:5px 6px; margin-bottom:2px;">
-          <div style="flex:1;">
-            ${q.chapter ? `<div style="font-size:9px; color:#38bdf8; font-weight:bold;">📖 ${q.chapter}</div>` : ''}
-            <div style="font-weight:bold; color:${q.isRegionFinale ? '#e879f9' : '#facc15'}; font-size:12.5px; line-height:1.25;">[${q.id}] ${q.name}</div>
-            ${q.story ? `<div style="font-size:11px; color:#cbd5e1; margin:1px 0; line-height:1.25;">"${q.story}"</div>` : ''}
-            <div style="font-size:11.5px; color:#fff; line-height:1.25;">🎯 목표: ${q.objective}</div>
-            <div style="font-size:9px; color:${q.isRegionFinale ? '#fde047' : '#93c5fd'};">보상: EXP +${(Number(q.exp) || 0).toLocaleString()} / 💰${(Number(q.gold) || 0).toLocaleString()} G / <b>${rItem}</b> x${q.rewardQty}</div>
-          </div>
-          <div>${btnHtml}</div>
-        </div>
-      `;
+  if (curTab === 'region') {
+    const doneInReg = curRegQuests.filter(q => player.quests[q.id]?.status === 'DONE').length;
+    html += `<div style="background:#0f172a; border:1px solid #334155; border-radius:5px; padding:4px 7px; margin-bottom:4px; font-size:10px; color:#bae6fd; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+      <span>📍 <b>${curRegName}</b> 지역 임무 현황</span>
+      <span style="color:#4ade80; font-weight:bold;">완료 ${doneInReg} / ${curRegQuests.length}건</span>
+    </div>`;
+
+    const orderedRegQuests = [...curRegQuests].sort((a, b) => {
+      const sA = player.quests[a.id]?.status || 'AVAILABLE';
+      const sB = player.quests[b.id]?.status || 'AVAILABLE';
+      const rank = { ACTIVE: 0, ABANDONED: 1, AVAILABLE: 2, DONE: 3 };
+      return (rank[sA] ?? 2) - (rank[sB] ?? 2);
+    });
+
+    html += `<div class="shop-list" style="scroll-behavior:auto;">`;
+    orderedRegQuests.forEach(q => {
+      const st = player.quests[q.id] || { status: 'AVAILABLE', count: 0, everAccepted: false };
+      html += renderSingleQuestRowHTML(q, st, false, st.status === 'DONE');
     });
     html += `</div>`;
     return html;
   }
 
-  html += `<div style="font-size:10px; color:#4ade80; margin-bottom:5px;">지역 최종 보스 퀘스트 완수 시 <b>[퀘스트전용] 클래스 맞춤 무기</b>가 지급됩니다!</div>`;
-  const regionQuests = GameDB.Quests.filter(q => q.region === currentRegionKey || player.quests[q.id]?.status === 'ACTIVE');
-  const rawQuests = regionQuests.length > 0 ? regionQuests : GameDB.Quests.filter(q => q.region === 'R01');
-  const seenQ = new Set();
-  const displayQuests = rawQuests.filter(q => { if (!q || seenQ.has(q.id)) return false; seenQ.add(q.id); return true; });
+  // 'done' 탭: 최근 완료 지역 역순 정렬 + 지역별 빠른 필터 제공
+  const doneRegions = Array.from(new Set(doneQuests.map(q => q.region))).reverse();
+  const selReg = window.questUiDoneRegionFilter || 'ALL';
+  const filteredDone = [...doneQuests].reverse().filter(q => selReg === 'ALL' || q.region === selReg);
 
-  html += `<div class="shop-list">`;
-  displayQuests.forEach(q => {
-    const st = player.quests[q.id] || { status: 'AVAILABLE', count: 0, everAccepted: false };
-    const rewardId = getQuestRewardItemId(q);
-    const rItem = window.itemDict[rewardId]?.name || rewardId;
-    let btnHtml = '';
+  html += `<div style="display:flex; justify-content:space-between; align-items:center; gap:6px; background:#0f172a; border:1px solid #334155; border-radius:5px; padding:4px 7px; margin-bottom:4px; font-size:10px; flex-shrink:0;">
+    <span style="color:#a7f3d0;">✔️ 누적 완료 임무: <b>${doneQuests.length}건</b></span>
+    <select onchange="setQuestDoneRegionFilter(this.value)" style="background:#1e293b; color:#fde047; border:1px solid #475569; border-radius:4px; font-size:9.5px; padding:1px 4px; outline:none;">
+      <option value="ALL" ${selReg === 'ALL' ? 'selected' : ''}>전체 지역 (${doneQuests.length})</option>
+      ${doneRegions.map(rId => `<option value="${rId}" ${selReg === rId ? 'selected' : ''}>${getRegionNameById(rId)}</option>`).join('')}
+    </select>
+  </div>`;
 
-    if (st.status === 'AVAILABLE' || st.status === 'ABANDONED') {
-      btnHtml = `<button class="shop-buy-btn" onclick="acceptQuest('${q.id}')">${st.everAccepted ? '재수락' : '수락하기'}</button>`;
-    } else if (st.status === 'ACTIVE') {
-      if (st.count >= q.reqCount) {
-        btnHtml = `<button class="shop-buy-btn" style="background:#16a34a; border-color:#4ade80;" onclick="completeQuest('${q.id}')">🎁 보상 수령</button>`;
-      } else {
-        btnHtml = `<span style="font-size:9.5px; color:#fde047; font-weight:bold;">진행 (${st.count}/${q.reqCount})</span>`;
-      }
-    } else {
-      btnHtml = `<span style="font-size:10px; color:#6b7280; white-space:nowrap;">완료됨 ✔️</span>`;
-    }
+  if (filteredDone.length === 0) {
+    html += `<div style="padding:16px 10px; text-align:center; color:#9ca3af; font-size:10.5px; background:#141210; border:1px dashed #3d3020; border-radius:6px;">
+      아직 완료한 퀘스트 기록이 없습니다.
+    </div>`;
+    return html;
+  }
 
-    const rowBorder = st.status === 'ACTIVE' ? '#eab308' : '#3d3020';
-    html += `
-      <div class="shop-row" ${st.status === 'ACTIVE' ? 'data-active-quest-row="true"' : ''} style="border-color:${rowBorder}; padding:5px 6px; margin-bottom:2px;">
-        <div style="flex:1;">
-          ${q.chapter ? `<div style="font-size:9px; color:#38bdf8; font-weight:bold;">📖 ${q.chapter}</div>` : ''}
-          <div style="font-weight:bold; color:${q.isRegionFinale ? '#e879f9' : '#facc15'}; font-size:12.5px; line-height:1.25;">[${q.id}] ${q.name} ${st.status === 'ACTIVE' ? '<span style="color:#4ade80; font-size:9px;">[진행중]</span>' : ''}</div>
-          ${q.story ? `<div style="font-size:11px; color:#cbd5e1; margin:1px 0; line-height:1.25;">"${q.story}"</div>` : ''}
-          <div style="font-size:11.5px; color:#fff; line-height:1.25;">🎯 목표: ${q.objective}</div>
-          <div style="font-size:9px; color:${q.isRegionFinale ? '#fde047' : '#93c5fd'};">보상: EXP +${(Number(q.exp) || 0).toLocaleString()} / 💰${(Number(q.gold) || 0).toLocaleString()} G / <b>${rItem}</b> x${q.rewardQty}</div>
-        </div>
-        <div>${btnHtml}</div>
-      </div>
-    `;
+  html += `<div class="shop-list" style="scroll-behavior:auto;">`;
+  filteredDone.forEach(q => {
+    html += renderSingleQuestRowHTML(q, player.quests[q.id], false, true);
   });
   html += `</div>`;
   return html;
@@ -893,7 +1101,7 @@ window.renderQuestUI = function() {
 
   updateQuestTrackerHUD();
   updateQuestButtonBadge();
-  setTimeout(() => window.focusLastActiveQuestRow?.(), 30);
+  window.focusLastActiveQuestRow?.();
 };
 
 function updateQuestButtonBadge() {
@@ -2347,25 +2555,25 @@ window.centerModalOnScreen = function(modalElOrId) {
 };
 
 function makeDraggable(modalId) {
-  const modal = document.getElementById(modalId);
-  if (!modal) return;
-  const header = modal.querySelector('.drag-handle');
-  if (!header) return;
+  const modal = typeof modalId === 'string' ? document.getElementById(modalId) : modalId;
+  if (!modal || modal._draggableBound) return;
+  modal._draggableBound = true;
 
   let isDragging = false;
+  let activeHandle = null;
   let startX = 0;
   let startY = 0;
   let initialLeft = 0;
   let initialTop = 0;
 
-  modal.addEventListener('pointerdown', () => {
+  modal.addEventListener('pointerdown', (e) => {
     window.bringModalToFront(modal);
-  });
+    const handle = e.target.closest('.drag-handle');
+    if (!handle || !modal.contains(handle)) return;
+    if (e.target.closest('button, input, select, a')) return;
 
-  header.addEventListener('pointerdown', (e) => {
-    if (e.target.tagName === 'BUTTON') return;
     isDragging = true;
-    window.bringModalToFront(modal);
+    activeHandle = handle;
 
     const rect = modal.getBoundingClientRect();
     const parentRect = (modal.offsetParent || document.body).getBoundingClientRect();
@@ -2378,10 +2586,13 @@ function makeDraggable(modalId) {
 
     startX = e.clientX;
     startY = e.clientY;
-    header.setPointerCapture(e.pointerId);
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch (err) {}
+    e.preventDefault();
   });
 
-  header.addEventListener('pointermove', (e) => {
+  modal.addEventListener('pointermove', (e) => {
     if (!isDragging) return;
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
@@ -2391,12 +2602,23 @@ function makeDraggable(modalId) {
     const newTop = Math.max(5, Math.min(maxH, initialTop + dy));
     modal.style.left = `${newLeft}px`;
     modal.style.top = `${newTop}px`;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      modal._hasCustomDragPos = true;
+    }
   });
 
-  const stopDrag = () => { isDragging = false; };
-  header.addEventListener('pointerup', stopDrag);
-  header.addEventListener('pointercancel', stopDrag);
+  const stopDrag = (e) => {
+    if (!isDragging) return;
+    isDragging = false;
+    if (activeHandle && e && e.pointerId !== undefined) {
+      try { activeHandle.releasePointerCapture(e.pointerId); } catch (err) {}
+    }
+    activeHandle = null;
+  };
+  modal.addEventListener('pointerup', stopDrag);
+  modal.addEventListener('pointercancel', stopDrag);
 }
+window.makeDraggable = makeDraggable;
 
 let app, cameraContainer, bgContainer, entityContainer, uiContainer, mCtx;
 let mainG, uiG, pCtx;
@@ -2815,15 +3037,8 @@ window.updateHotbarCooldowns = function() {
 
 
 window.focusLastActiveQuestRow = function() {
+  // 진행 중 임무 및 보상 수령 가능 임무가 항상 최상단에 배치되므로 주루룩 올라가는 강제 스크롤 애니메이션 없이 즉시 상단 고정
   document.querySelectorAll('#quest-ui-body .shop-list, #npc-modal-body .shop-list').forEach(listEl => {
-    const rows = listEl.querySelectorAll('[data-active-quest-row="true"]');
-    if (rows.length > 0) {
-      rows[rows.length - 1].scrollIntoView({ block: 'center', behavior: 'smooth' });
-    } else {
-      const allRows = listEl.querySelectorAll('.shop-row');
-      if (allRows.length > 0) {
-        allRows[allRows.length - 1].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      }
-    }
+    listEl.scrollTop = 0;
   });
 };

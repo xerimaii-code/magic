@@ -149,7 +149,7 @@ cameraContainer.addChild(window.bottomMagicCircleG);
   app.ticker.add(gameLoop);
   app.ticker.add(() => window.updateHotbarCooldowns());
 
-  ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui'].forEach(id => makeDraggable(id));
+  ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui', 'stat-alloc-modal', 'immersive-20-modal'].forEach(id => makeDraggable(id));
   setupChatWindowDragAndResize();
   await authInitPromise;
 };
