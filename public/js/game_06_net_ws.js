@@ -884,9 +884,12 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
       const classBaseSpd = CLASS_STATS[newP.class || existing.class]?.baseSpeed || 1.90;
       const reportedSpd = typeof newP.speed === 'number' ? newP.speed : (existing.speed || classBaseSpd);
 
-      // 100ms(6프레임) 동안 현재 화면 위치에서 새 서버 위치까지 끊김 없이 등속으로 도달하도록 보간 속도 산출
+      // 패킷 수신 간격(100ms~250ms)에 맞춰 현재 화면 위치에서 서버 위치까지 끊김 없이 등속 글라이드 보간 속도 산출
+      const pktGapFrames = existing.lastPacketTime
+        ? Math.max(5.5, Math.min(16.0, (nowTs - existing.lastPacketTime) / 16.6667))
+        : 6.0;
       existing._interpSpeed = distFromRender > 0.5
-        ? Math.max(reportedSpd * 0.88, Math.min(reportedSpd * 1.45, distFromRender / 6.0))
+        ? Math.max(reportedSpd * 0.88, Math.min(reportedSpd * 1.45, distFromRender / pktGapFrames))
         : reportedSpd;
       existing.speed = reportedSpd;
       existing.lastPacketTime = nowTs;
@@ -905,7 +908,7 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
           existing.dir = newP.dir || existing.dir;
         }
         existing.serverWalking = Boolean(newP.isWalking || movedDelta > 0.5);
-        existing.isWalking = Boolean(existing.serverWalking || (nowTs - (existing.lastMoveVisualTime || 0) < 240));
+        existing.isWalking = Boolean(existing.serverWalking || (nowTs - (existing.lastMoveVisualTime || 0) < 360));
         existing.lastAttackTime = newP.lastAttackTime || existing.lastAttackTime || 0;
         existing.hp = newP.hp ?? existing.hp;
         existing.maxHp = newP.maxHp ?? existing.maxHp;
@@ -924,19 +927,22 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
       if (newP.targetMobId !== undefined) existing.targetMobId = newP.targetMobId;
 
       if (!isMiniOnly) {
-        if (newP.mercenary && newP.mercenary.hired) {
+        if (newP.mercenary && newP.mercenary.hired !== false) {
           if (existing.mercenary) {
             const mRenderDist = Math.hypot(
               (newP.mercenary.x || 0) - (existing.mercenary.x ?? newP.mercenary.x ?? 0),
               (newP.mercenary.y || 0) - (existing.mercenary.y ?? newP.mercenary.y ?? 0)
             );
-            const mReportedSpd = typeof newP.mercenary.speed === 'number' ? newP.mercenary.speed : (reportedSpd * 1.02);
+            const mReportedSpd = typeof newP.mercenary.speed === 'number'
+              ? newP.mercenary.speed
+              : (existing.mercenary.speed || reportedSpd * 1.02);
             const mInterpSpd = mRenderDist > 0.5
-              ? Math.max(mReportedSpd * 0.88, Math.min(mReportedSpd * 1.45, mRenderDist / 6.0))
+              ? Math.max(mReportedSpd * 0.88, Math.min(mReportedSpd * 1.45, mRenderDist / pktGapFrames))
               : mReportedSpd;
             existing.mercenary = {
               ...existing.mercenary,
               ...newP.mercenary,
+              hired: true,
               x: existing.mercenary.x ?? newP.mercenary.x,
               y: existing.mercenary.y ?? newP.mercenary.y,
               serverX: newP.mercenary.x,
@@ -950,6 +956,7 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
             };
           } else {
             existing.mercenary = {
+              hired: true,
               ...newP.mercenary,
               serverX: newP.mercenary.x,
               serverY: newP.mercenary.y,
@@ -1320,7 +1327,7 @@ function handleCentralServerPacket(msg) {
             if (tup[9] !== undefined) m.respawnTimer = tup[9];
             if (tup[10] !== undefined) {
               m.isElite = !m.isBoss && Boolean(tup[10]);
-              m.scaleMult = m.isElite ? 1.42 : 1.0;
+              m.scaleMult = m.isElite ? 1.90 : 1.0;
             }
           } else {
             if (tup[5] !== undefined) m.respawnTimer = tup[5];
@@ -1411,22 +1418,22 @@ function handleCentralServerPacket(msg) {
     const dmgKind = msg.isCrit ? 'crit' : (isSkillHit ? 'skill' : (msg.isMercAtk ? 'merc' : 'normal'));
     const dmgNumStr = Number(msg.dmg || 0).toLocaleString();
     const txtLabel = msg.isCrit
-      ? `💥CRIT! -${dmgNumStr}`
-      : (isSkillHit ? `✦ -${dmgNumStr}` : (msg.isMercAtk ? `⚔-${dmgNumStr}` : `-${dmgNumStr}`));
+      ? `⚡${dmgNumStr}`
+      : `-${dmgNumStr}`;
     const txtCol = msg.isCrit
       ? 0xfacc15
-      : (msg.isMercAtk ? 0x34d399 : (isSkillHit ? (msg.dmgType === 'magic' ? 0x38bdf8 : 0xe879f9) : (msg.dmgType === 'magic' ? 0x7dd3fc : 0xfef08a)));
-    const jitterX = (Math.random() - 0.5) * 14 + (msg.isMercAtk ? 14 : 0);
+      : (msg.isMercAtk ? 0x6ee7b7 : (isSkillHit ? (msg.dmgType === 'magic' ? 0x38bdf8 : 0xf472b6) : (msg.dmgType === 'magic' ? 0x93c5fd : 0xfef08a)));
+    const jitterX = (Math.random() - 0.5) * 10 + (msg.isMercAtk ? 12 : 0);
     floatingTexts.push({
       x: ent.x + jitterX,
-      y: ent.y - (msg.isCrit ? 44 : 36),
+      y: ent.y - (ent.isElite ? 48 : 34),
       text: txtLabel,
       color: txtCol,
       dmgKind,
-      fontSize: msg.isCrit ? 16.5 : (isSkillHit ? 14.5 : (msg.isMercAtk ? 11.5 : 13)),
-      strokeColor: msg.isCrit ? '#7f1d1d' : '#000000',
-      life: msg.isCrit ? 44 : 35,
-      maxLife: msg.isCrit ? 44 : 35
+      fontSize: msg.isCrit ? 13 : (isSkillHit ? 11.5 : (msg.isMercAtk ? 10.5 : 11)),
+      strokeColor: '#000000',
+      life: msg.isCrit ? 28 : 22,
+      maxLife: msg.isCrit ? 28 : 22
     });
 
     // 내 공격일 경우 피흡/마나흡수 반영
@@ -1548,7 +1555,7 @@ function handleCentralServerPacket(msg) {
       ent.mp = sm.mp;
       ent.maxMp = sm.maxMp;
       ent.isElite = !ent.isBoss && Boolean(sm.isElite);
-      ent.scaleMult = sm.scaleMult || (ent.isElite ? 1.42 : 1.0);
+      ent.scaleMult = sm.scaleMult || (ent.isElite ? 1.90 : 1.0);
       ent.x = sm.x;
       ent.y = sm.y;
       ent.serverX = sm.x;
@@ -1557,8 +1564,8 @@ function handleCentralServerPacket(msg) {
       ent.defDownUntil = 0;
       if (ent.isBoss) {
         window.addChat(`👑 [보스 출현] '${ent.name}'이(가) 성역에 다시 나타났습니다!`, 'log-kill');
-      } else if (ent.isElite && Math.hypot(ent.x - player.x, ent.y - player.y) <= 950) {
-        window.addChat(`⚡ [★거대정예 출현] 근처에 일반 몬스터보다 거대한 정예 '${ent.name}'이(가) 나타났습니다!`, 'log-kill');
+      } else if (ent.isElite && Math.hypot(ent.x - player.x, ent.y - player.y) <= 850) {
+        window.addChat(`⚡ 근처에 거대한 [★거대 ${ent.name}]이(가) 나타났습니다!`, 'log-kill');
       }
     }
     return;

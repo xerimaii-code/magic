@@ -160,7 +160,7 @@ window.openNpcModal = function(npc) {
   setTimeout(() => window.centerModalOnScreen?.(modal), 0);
 
   if (npc.role === 'GUIDE') {
-    window.addChat(`💬 [${npc.name}] "모험가님 환영합니다! 대마법 시대의 기초 조작부터 용병 보급·카이팅, 서클 마법, 장비 강화, 파티 점사, 에테르 도감 20종까지 자세히 안내해 드릴게요!"`, 'log-chat', 'chat');
+    window.addChat(`💬 [${npc.name}] "모험가님 환영합니다! 기초 조작부터 용병 보급·카이팅, 서클 마법, 장비 강화, 파티 점사, 몬스터 도감까지 안내해 드릴게요!"`, 'log-chat', 'chat');
     window.renderBeginnerGuideNpcBody('basic');
     return;
   }
@@ -327,7 +327,7 @@ window.renderBeginnerGuideNpcBody = function(tabKey = 'basic') {
     { key: 'merc',  label: '🛡️ 용병·전술·보급' },
     { key: 'equip', label: '✨ 장비·강화·가방' },
     { key: 'party', label: '🎗️ 파티·보스·월드' },
-    { key: 'ether', label: '📖 에테르도감 10선' }
+    { key: 'ether', label: '📖 몬스터 도감' }
   ];
 
   const tabBarHtml = `
@@ -426,17 +426,16 @@ window.renderBeginnerGuideNpcBody = function(tabKey = 'basic') {
     contentHtml = `
       <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.52; color:#f3f4f6;">
         <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
-          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">⚡ 사냥 돌발 이벤트 & 전투 가속 (1 ~ 3)</div>
-          1. <b>👑 거대 정예 몬스터 출현</b> (사냥 중 일반 몬스터보다 1.42배 거대한 정예 돌발 출현 · 보상 2.2배)<br>
-          2. <b>💰 황금 보물 고블린 조우</b> (차원 틈새 돌발 출현 · 추가 골드 주머니 자동 지급)<br>
-          3. <b>🔥 연속 사냥 콤보 & 각성 피버</b> (12초 내 연속 처치 시 각성 오라 & 자동 체력 회복)
+          <div style="color:#fde047; font-weight:bold; font-size:12.5px; margin-bottom:3px;">📖 지역별 몬스터 · 드롭 도감</div>
+          • 우상단 미니맵 아래의 <b>[📖 몬스터 도감]</b> 버튼을 누르면 15개 지역의 출현 몬스터·보스 정보와 <b>드롭 장비·마법서</b>를 한눈에 확인할 수 있습니다.<br>
+          • 현재 지역의 몬스터는 도감에서 <b>[📍이동]</b> 버튼을 눌러 서식 위치로 바로 찾아갈 수 있습니다.
         </div>
         <div style="background:#161922; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px;">
-          <div style="color:#38bdf8; font-weight:bold; font-size:12.5px; margin-bottom:3px;">📖 자동 누적 성장 & 환경 교감 (4 ~ 10)</div>
-          4. <b>몬스터 생태 도감</b> · 5. <b>지역 수호 칭호</b> · 6. <b>무기 숙련도 & 훈장</b> · 7. <b>보스 성물함 & 전광판</b> · 8. <b>15차원 탐사 발자취</b> · 9. <b>마을 모닥불 온기</b> · 10. <b>실시간 기류 & 용병 교감</b><br>
-          <span style="color:#86efac; font-size:11.5px;">※ 모든 항목은 별도로 버튼을 누르거나 관리하지 않아도 사냥 중 100% 자동으로 작동하고 영구 능력치가 누적됩니다!</span>
+          <div style="color:#38bdf8; font-weight:bold; font-size:12.5px; margin-bottom:3px;">★거대 몬스터 & 💰행운 보너스 골드</div>
+          • 사냥터에서 일반 몬스터보다 약 2배 거대한 <b>[★거대 몬스터]</b>가 자연스럽게 출현하며, 처치 시 <b>경험치·골드 2배 이상 및 높은 장비 드롭률</b>을 제공합니다.<br>
+          • 일반 사냥 중에도 일정 확률로 <b>💰행운 보너스 골드</b>가 즉시 지급됩니다.
         </div>
-        <button type="button" class="auth-primary-btn" style="padding:7px; font-size:12px;" onclick="closeNpcModal(); window.toggleImmersive20Modal && window.toggleImmersive20Modal();">📖 에테르 도감 (자동형 10선) 바로 열기</button>
+        <button type="button" class="auth-primary-btn" style="padding:7px; font-size:12px;" onclick="closeNpcModal(); window.toggleImmersive20Modal && window.toggleImmersive20Modal();">📖 몬스터 · 드롭 도감 바로 열기</button>
       </div>
     `;
   }
@@ -1362,16 +1361,6 @@ function calculateCombatStats(includePending = false) {
   let passiveCritDmgPct = 0;
   let passiveMaxHpPct = 0;
   let passiveMaxMpPct = 0;
-
-  // 📘 에테르 도감(자동형 10선)에서 누적된 영구 능력치 자동 반영
-  if (window.ImmersiveSystem && typeof window.ImmersiveSystem.getPassiveBonusSummary === 'function') {
-    const immBon = window.ImmersiveSystem.getPassiveBonusSummary();
-    passiveAtkBonus += (immBon.atkBonus || 0);
-    passiveMAtkBonus += (immBon.atkBonus || 0);
-    passiveDefBonus += (immBon.defBonus || 0);
-    passiveMDefBonus += Math.floor((immBon.defBonus || 0) * 0.8);
-    bonusHp += (immBon.hpBonus || 0);
-  }
 
   const mySkillList = SKILLS_DB[player.class] || [];
   mySkillList.forEach(sk => {

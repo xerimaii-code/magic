@@ -1082,16 +1082,13 @@ export function drawNPC(ctx, x, y, npc, tick) {
 // ============================================================================
 export const ISO_TILT = 4.5 / 14;
 
-// 부드러운 글로우 파티클(4중 고밀도 소프트 알파 블렌딩 - 마법 파티클 시인성 및 스케일 대폭 강화)
+// 선명하고 깔끔한 글로우 파티클 (과도한 4중 번짐을 제거하고 2중 크리스탈 코어+후광으로 가독성 및 FPS 향상)
 function drawSoftGlowParticle(g, x, y, radius, colorHex, alpha = 1.0, coreColorHex = 0xffffff) {
     const a = Math.max(0, Math.min(1, alpha));
     if (a <= 0.01 || radius <= 0.2) return;
-    const rScaled = radius * 1.38;
     g.lineStyle(0);
-    g.beginFill(colorHex, a * 0.16).drawCircle(x, y, rScaled * 2.55).endFill();
-    g.beginFill(colorHex, a * 0.34).drawCircle(x, y, rScaled * 1.72).endFill();
-    g.beginFill(colorHex, a * 0.68).drawCircle(x, y, rScaled * 1.12).endFill();
-    g.beginFill(coreColorHex, a * 0.94).drawCircle(x, y, rScaled * 0.56).endFill();
+    g.beginFill(colorHex, a * 0.42).drawCircle(x, y, radius * 1.35).endFill();
+    g.beginFill(coreColorHex, a * 0.92).drawCircle(x, y, radius * 0.58).endFill();
 }
 
 // 2.5D 바닥 원근감이 적용된 부드러운 타원 글로우 헬퍼
@@ -1286,7 +1283,7 @@ export function drawMonster(ctx, x, y, m, tick) {
     const n = m.rawName || m.name || "";
     const isBoss = Boolean(m.isBoss);
     const isElite = !isBoss && Boolean(m.isElite);
-    const eliteScale = isElite ? (Number(m.scaleMult) || 1.42) : 1.0;
+    const eliteScale = isElite ? (Number(m.scaleMult) || 1.90) : 1.0;
     const now = Date.now();
 
     // 🌟 몬스터 공격 모션 (공격 후 280ms 동안 전방 런지 찌르기 및 반동 - 2.5D 각도 반영)
@@ -1295,7 +1292,7 @@ export function drawMonster(ctx, x, y, m, tick) {
     let atkLungeY = 0;
     if (isAttacking) {
         const progress = (now - m.lastAtkTime) / 280;
-        const lungeDist = isBoss ? 26 : (isElite ? 21 : 16);
+        const lungeDist = isBoss ? 26 : (isElite ? 22 : 16);
         const lungeFactor = Math.sin(progress * Math.PI);
         const ang = m.atkAngle || 0;
         atkLungeX = Math.cos(ang) * lungeDist * lungeFactor;
@@ -1303,20 +1300,19 @@ export function drawMonster(ctx, x, y, m, tick) {
     }
 
     // 🌟 2.5D 그림자 렌더링 (플레이어 그림자 기울기 비율 ISO_TILT 적용)
-    const shadowRx = isBoss ? 26 : (isElite ? 20 : 14);
+    const shadowRx = isBoss ? 27 : (isElite ? 25 : 14);
     const shadowRy = shadowRx * ISO_TILT;
     ctx.ellipse(0, 12, shadowRx, shadowRy, 'rgba(0,0,0,0.45)', null, 0);
 
-    // 보스 몬스터 바닥 위압감 왕관 오라 링 / ★거대정예 이벤트 몬스터 황금·자수정 오라 링
+    // 보스 몬스터 바닥 오라 링 / ★거대 몬스터 황금 링
     if (isBoss) {
         const pulse = Math.sin(tick * 0.08) * 2.5;
         const bossRx = 29 + pulse;
         ctx.ellipse(0, 12, bossRx, bossRx * ISO_TILT, null, '#dc2626', 1.8);
     } else if (isElite) {
-        const pulse = Math.sin(tick * 0.11) * 2.2;
-        const eliteRx = 23 + pulse;
+        const pulse = Math.sin(tick * 0.10) * 2.0;
+        const eliteRx = 27 + pulse;
         ctx.ellipse(0, 12, eliteRx, eliteRx * ISO_TILT, 'rgba(250, 204, 21, 0.14)', '#facc15', 1.8);
-        ctx.ellipse(0, 12, (eliteRx - 4), (eliteRx - 4) * ISO_TILT, null, '#c084fc', 1.2);
     }
 
     const bounce = Math.sin(tick * 0.1 + x * 0.05) * (isBoss ? 1.5 : 2.5);
@@ -1969,10 +1965,10 @@ export function drawSacredMagicCircle(mainG, cx, cy, baseRadius, progress, isBos
         else powerTier = 1;
     }
 
-    // 피해량 티어에 비례한 마법진 반경 스케일 (티어가 높을수록 확실히 거대하고 웅장함)
-    const tierScaleMap = { 1: 0.82, 2: 1.04, 3: 1.28, 4: 1.56 };
-    const dmgBonusScale = Math.min(0.32, Math.max(0, (dmgAmount || 0) / 8000));
-    const tierScale = isBossCircle ? 1.15 : ((tierScaleMap[powerTier] || 1.0) + dmgBonusScale);
+    // 피해량 티어에 비례한 마법진 반경 스케일 (세련되고 절제된 비율 유지)
+    const tierScaleMap = { 1: 0.76, 2: 0.90, 3: 1.06, 4: 1.22 };
+    const dmgBonusScale = Math.min(0.18, Math.max(0, (dmgAmount || 0) / 10000));
+    const tierScale = isBossCircle ? 1.08 : ((tierScaleMap[powerTier] || 0.90) + dmgBonusScale);
 
     const pulseScale = 0.88 + 0.14 * Math.sin(Math.min(1, progress * 1.4) * (Math.PI / 2));
     const R = baseRadius * tierScale * pulseScale;
@@ -2113,15 +2109,15 @@ export function drawEffect(mainG, eff, progress) {
 
     const sName = String(eff.skillName || "");
     const isAoe = Boolean(eff.isAoe);
-    const maxR = (eff.aoeRadius || (isAoe ? 175 : 88)) * 1.24;
+    const maxR = (eff.aoeRadius || (isAoe ? 160 : 78)) * 1.08;
     const alpha = Math.max(0, Math.sin((1 - progress) * (Math.PI / 2)));
-    const pts = ensureEffectParticles(eff, isAoe ? 64 : 38);
+    const pts = ensureEffectParticles(eff, isAoe ? 26 : 16);
     // 화면 밖 상단 시작 Y좌표 (시전자/카메라 기준 화면 상단 바깥)
     const skyTopY = typeof eff.skyStartY === 'number' ? eff.skyStartY : (eff.y - 540);
 
-    // 3. 💥 피격 파티클 (hit_particle - 묵직한 타격 충격파 & 방향성 슬래시 스파크 대폭 강화)
+    // 3. 💥 피격 파티클 (hit_particle - 깔끔하고 절도 있는 타격 스파크)
     if (eff.type === 'hit_particle') {
-        const hitPts = ensureEffectParticles(eff, eff.isCrit ? 32 : 20);
+        const hitPts = ensureEffectParticles(eff, eff.isCrit ? 11 : 7);
         const isPlayerHit = eff.targetType === 'player';
         const isMercHit = eff.targetType === 'mercenary';
         const isMagicHit = eff.dmgType === 'magic';

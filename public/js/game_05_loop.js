@@ -598,18 +598,22 @@ function calcMonsterDamageToDefender(rawMobAtk, defenderDef, mobLv = 1, isBoss =
     ? Math.max(0, Math.round((defenderMDef || 0) * 0.80 + (defenderDef || 0) * 0.35))
     : Math.max(0, defenderDef || 0);
 
-  const reqDefStandard = mobLv >= 30 ? Math.floor(mobLv * 2.15) : Math.floor(mobLv * 1.4);
+  // 클래스별 적정 방어력 기준 차등 (궁수/마법사는 방패 미착용을 고려해 과도한 방어 부족 페널티 완화)
+  const isKnightDef = !checkPlayerArmor || player.class === 'knight';
+  const reqDefStandard = mobLv >= 30
+    ? Math.floor(mobLv * (isKnightDef ? 1.95 : 1.48))
+    : Math.floor(mobLv * (isKnightDef ? 1.35 : 1.05));
   const isWellGeared = effectiveDef >= reqDefStandard;
 
   if (!isWellGeared && mobLv >= 30 && !isBoss) {
     const deficitRatio = (reqDefStandard - effectiveDef) / Math.max(20, reqDefStandard);
-    unarmoredMult += Math.min(0.58, deficitRatio * 0.65);
+    unarmoredMult += Math.min(0.38, deficitRatio * 0.45);
   }
 
-  const maxDefCap = isWellGeared ? 0.86 : 0.72;
-  const defRatio = Math.min(maxDefCap, effectiveDef / (effectiveDef + 115 + mobLv * (isWellGeared ? 8.2 : 11.5)));
-  const flatReduce = Math.min(rawMobAtk * (isWellGeared ? 0.36 : 0.22), effectiveDef * (isWellGeared ? 0.34 : 0.20));
-  const floorRatio = isBoss ? (isWellGeared ? 0.16 : 0.26) : (isWellGeared ? 0.04 : 0.18);
+  const maxDefCap = isWellGeared ? 0.86 : 0.76;
+  const defRatio = Math.min(maxDefCap, effectiveDef / (effectiveDef + 110 + mobLv * (isWellGeared ? 8.0 : 10.2)));
+  const flatReduce = Math.min(rawMobAtk * (isWellGeared ? 0.36 : 0.25), effectiveDef * (isWellGeared ? 0.34 : 0.24));
+  const floorRatio = isBoss ? (isWellGeared ? 0.15 : 0.24) : (isWellGeared ? 0.04 : 0.12);
   const minPenetration = Math.max(2, Math.floor(rawMobAtk * floorRatio * unarmoredMult));
 
   let mitigated = Math.max(minPenetration, Math.floor(((rawMobAtk - flatReduce) * (1 - defRatio)) * unarmoredMult));
@@ -2029,15 +2033,15 @@ function gameLoop(rawDelta) {
     }
 
     if (player.targetEntity && player.targetEntity.ref === m) {
-      drawIsoSelectionRing(window.bottomMagicCircleG, m.x, m.y + 12, m.isBoss ? 34 : (m.isElite ? 27 : 20), 0xef4444, 0xfca5a5, tick, Boolean(m.isBoss || m.isElite), 'target');
+      drawIsoSelectionRing(window.bottomMagicCircleG, m.x, m.y + 12, m.isBoss ? 34 : (m.isElite ? 31 : 20), 0xef4444, 0xfca5a5, tick, Boolean(m.isBoss || m.isElite), 'target');
     }
 
     drawMonster(pCtx, m.x, m.y, m, tick);
 
-    let barW = m.isBoss ? 68 : (m.isElite ? 54 : 42);
+    let barW = m.isBoss ? 68 : (m.isElite ? 56 : 42);
     let hpH = m.isBoss ? 6 : (m.isElite ? 5 : 4);
     let barX = Math.round(m.x - barW / 2);
-    let barY = Math.round(m.y - (m.isBoss ? 54 : (m.isElite ? 42 : 32)));
+    let barY = Math.round(m.y - (m.isBoss ? 56 : (m.isElite ? 54 : 32)));
 
     uiG.lineStyle(1, m.isElite ? 0xfacc15 : 0x000000, 0.9);
     uiG.beginFill(0x1f2937, 0.85);
@@ -2046,7 +2050,7 @@ function gameLoop(rawDelta) {
 
     let hpRatio = Math.max(0, Math.min(1, m.hp / m.maxHp));
     uiG.lineStyle(0);
-    uiG.beginFill(m.isBoss ? 0xf43f5e : (m.isElite ? 0xa855f7 : 0xef4444), 1);
+    uiG.beginFill(m.isBoss ? 0xf43f5e : (m.isElite ? 0xf59e0b : 0xef4444), 1);
     uiG.drawRect(barX + 0.5, barY + 0.5, (barW - 1) * hpRatio, hpH - 1);
     uiG.endFill();
 
@@ -2065,7 +2069,7 @@ function gameLoop(rawDelta) {
       uiG.endFill();
     }
 
-    const dispMobName = (m.isElite && !String(m.name || '').includes('거대정예')) ? `👑[★거대정예] ${m.name}` : m.name;
+    const dispMobName = (m.isElite && !String(m.name || '').includes('★거대')) ? `★거대 ${m.name}` : m.name;
     const mCol = m.isBoss ? 0xfacc15 : (m.isElite ? 0xfde047 : ((m.lv - player.level >= 5) ? 0xf87171 : (m.maxMp > 0 ? 0x93c5fd : 0xffffff)));
     if (!m.nameTag) {
       m.nameTag = createCrispPixiText(dispMobName, m.isBoss ? 12 : (m.isElite ? 11.5 : 11), mCol);
@@ -2107,23 +2111,25 @@ function gameLoop(rawDelta) {
             else if (Math.abs(dyOp) > Math.abs(dxOp) * 1.15) op.dir = dyOp > 0 ? 'down' : 'up';
             else if (op.serverDir) op.dir = op.serverDir;
           }
-        } else if (op.serverWalking && typeof op.moveX === 'number' && typeof op.moveY === 'number' && (now - (op.lastPacketTime || 0) < 220)) {
-          // 다음 100ms 패킷이 도착하기 전 미세한 공백 프레임에서도 목표 방향(moveX, moveY)으로 끊김 없이 예측 보행(Dead Reckoning)
+        } else if (op.serverWalking && typeof op.moveX === 'number' && typeof op.moveY === 'number' && (now - (op.lastPacketTime || 0) < 420)) {
+          // 다음 패킷(200ms~350ms 주기)이 도착하기 전 공백 프레임에서도 목표 방향(moveX, moveY)으로 끊김 없이 예측 보행(Dead Reckoning)
           const exDx = op.moveX - op.x;
           const exDy = op.moveY - op.y;
           const exDist = Math.hypot(exDx, exDy);
           if (exDist > 1.0) {
-            const exStep = Math.min(exDist, baseOpSpd * 0.90 * delta);
+            const exStep = Math.min(exDist, baseOpSpd * 0.92 * delta);
             op.x += (exDx / exDist) * exStep;
             op.y += (exDy / exDist) * exStep;
             op.lastMoveVisualTime = now;
             op.isWalking = true;
           } else {
-            op.isWalking = (now - (op.lastMoveVisualTime || 0)) < 240;
+            op.isWalking = (now - (op.lastMoveVisualTime || 0)) < 340;
           }
         } else {
-          // 패킷 사이 미세 간격 동안 보행 모션이 idle로 툭툭 끊기지 않도록 240ms 홀드
-          op.isWalking = Boolean(op.serverWalking || (now - (op.lastMoveVisualTime || 0) < 240));
+          // 패킷 사이 간격 동안 보행 모션이 idle로 툭툭 끊기지 않도록 340ms 홀드 (AOI 이탈 시 자동 정지)
+          const pktAge = now - (op.lastPacketTime || 0);
+          if (pktAge > 650) op.serverWalking = false;
+          op.isWalking = Boolean((op.serverWalking && pktAge <= 650) || (now - (op.lastMoveVisualTime || 0) < 340));
           if (!op.isWalking && op.serverDir) op.dir = op.serverDir;
         }
       }
@@ -2149,7 +2155,8 @@ function gameLoop(rawDelta) {
               om.dir = dxOm >= 0 ? 'right' : 'left';
             }
           } else {
-            om.isWalking = Boolean(om.serverWalking || (now - (om.lastMoveVisualTime || 0) < 240));
+            const pktAge = now - (op.lastPacketTime || 0);
+            om.isWalking = Boolean((om.serverWalking && pktAge <= 650) || (now - (om.lastMoveVisualTime || 0) < 340));
           }
         }
       }
@@ -2444,12 +2451,12 @@ function gameLoop(rawDelta) {
   // 멀티플레이어 실시간 위치 동기화 패킷 전송 (120ms 간격)
   window.tickMultiplayerSync?.(now);
 
-  // 스마트폰 LTE/다수 교전 환경에서 파티클·플로팅텍스트 과다 누적으로 인한 가비지컬렉션(GC) 스파이크 방지
-  if (activeEffects.length > 46) {
-    activeEffects.splice(0, activeEffects.length - 46);
+  // 스마트폰 LTE/다수 교전 환경에서 파티클·플로팅텍스트 과다 누적으로 인한 화면 혼잡 및 가비지컬렉션(GC) 스파이크 방지
+  if (activeEffects.length > 30) {
+    activeEffects.splice(0, activeEffects.length - 30);
   }
-  if (floatingTexts.length > 38) {
-    const overflowCnt = floatingTexts.length - 38;
+  if (floatingTexts.length > 18) {
+    const overflowCnt = floatingTexts.length - 18;
     for (let k = 0; k < overflowCnt; k++) {
       const oldFt = floatingTexts[k];
       if (oldFt && oldFt.pixiText) {
@@ -2462,33 +2469,31 @@ function gameLoop(rawDelta) {
 
   for (let i = floatingTexts.length - 1; i >= 0; i--) {
     let ft = floatingTexts[i];
-    if (!ft.maxLife) ft.maxLife = ft.life || 35;
+    if (!ft.maxLife) ft.maxLife = ft.life || 26;
     if (!ft.pixiText) {
-      const fSize = ft.fontSize || (ft.dmgKind === 'crit' ? 16.5 : (ft.dmgKind === 'skill' ? 14.5 : 13));
+      const fSize = ft.fontSize || (ft.dmgKind === 'crit' ? 13 : (ft.dmgKind === 'skill' ? 11.5 : 11));
       ft.pixiText = createCrispPixiText(ft.text, fSize, ft.color || 0xffffff);
       if (ft.strokeColor) {
         ft.pixiText.style.stroke = ft.strokeColor;
-        ft.pixiText.style.strokeThickness = ft.dmgKind === 'crit' ? 3.4 : 2.5;
+        ft.pixiText.style.strokeThickness = ft.dmgKind === 'crit' ? 2.6 : 2.2;
       }
       ft.pixiText.anchor.set(0.5);
       uiContainer.addChild(ft.pixiText);
     }
     const progress = 1 - (ft.life / ft.maxLife);
-    // 타격 종류별 팝업 스케일 애니메이션 (크리티컬은 강렬하게 튕겨 오름)
+    // 절제되고 깔끔한 스케일 애니메이션
     let sc = 1.0;
     if (ft.dmgKind === 'crit') {
-      sc = progress < 0.22 ? (0.85 + (progress / 0.22) * 0.65) : Math.max(1.05, 1.50 - (progress - 0.22) * 0.55);
-    } else if (ft.dmgKind === 'skill') {
-      sc = progress < 0.20 ? (0.90 + (progress / 0.20) * 0.35) : Math.max(1.0, 1.25 - (progress - 0.20) * 0.30);
+      sc = progress < 0.20 ? (0.95 + (progress / 0.20) * 0.18) : Math.max(1.0, 1.13 - (progress - 0.20) * 0.16);
     }
     ft.pixiText.scale.set(sc);
 
-    const riseSpd = ft.dmgKind === 'crit' ? 1.05 : 0.82;
+    const riseSpd = ft.dmgKind === 'crit' ? 0.85 : 0.72;
     ft.y -= riseSpd * delta;
     ft.life -= delta;
     ft.pixiText.x = Math.round(ft.x);
     ft.pixiText.y = Math.round(ft.y);
-    ft.pixiText.alpha = Math.min(1, ft.life / 14);
+    ft.pixiText.alpha = Math.min(1, ft.life / 10);
 
     if (ft.life <= 0) {
       uiContainer.removeChild(ft.pixiText);

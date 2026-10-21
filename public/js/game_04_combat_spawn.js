@@ -2167,22 +2167,22 @@ window.applyDamage = function(ent, rawDmg, dmgType, opts = {}) {
 
   const dmgKind = isCrit ? 'crit' : (isSkillHit ? 'skill' : (isMercAtk ? 'merc' : 'normal'));
   const txtLabel = isCrit
-    ? `💥CRIT! -${mitigated.toLocaleString()}`
-    : (isSkillHit ? `✦ -${mitigated.toLocaleString()}` : (isMercAtk ? `⚔-${mitigated}` : `-${mitigated.toLocaleString()}`));
+    ? `⚡${mitigated.toLocaleString()}`
+    : `-${mitigated.toLocaleString()}`;
   const txtCol = isCrit
     ? 0xfacc15
-    : (isMercAtk ? 0x34d399 : (isSkillHit ? (dmgType === 'magic' ? 0x38bdf8 : 0xe879f9) : (dmgType === 'magic' ? 0x7dd3fc : 0xfef08a)));
-  const jitterX = (Math.random() - 0.5) * 14 + (isMercAtk ? 14 : 0);
+    : (isMercAtk ? 0x6ee7b7 : (isSkillHit ? (dmgType === 'magic' ? 0x38bdf8 : 0xf472b6) : (dmgType === 'magic' ? 0x93c5fd : 0xfef08a)));
+  const jitterX = (Math.random() - 0.5) * 10 + (isMercAtk ? 12 : 0);
   floatingTexts.push({
     x: ent.x + jitterX,
-    y: ent.y - (isCrit ? 44 : 36),
+    y: ent.y - (ent.isElite ? 48 : 34),
     text: txtLabel,
     color: txtCol,
     dmgKind,
-    fontSize: isCrit ? 16.5 : (isSkillHit ? 14.5 : (isMercAtk ? 11.5 : 13)),
-    strokeColor: isCrit ? '#7f1d1d' : '#000000',
-    life: isCrit ? 44 : 35,
-    maxLife: isCrit ? 44 : 35
+    fontSize: isCrit ? 13 : (isSkillHit ? 11.5 : (isMercAtk ? 10.5 : 11)),
+    strokeColor: '#000000',
+    life: isCrit ? 28 : 22,
+    maxLife: isCrit ? 28 : 22
   });
 
   if (ent.hp <= 0) {
@@ -2529,7 +2529,7 @@ function createMonsterInstance(id, baseMob, x, y, forceBoss = false) {
     drop: baseMob.drop || [],
     isBoss: isBoss,
     isElite: isElite,
-    scaleMult: baseMob.scaleMult || (isElite ? 1.42 : 1.0),
+    scaleMult: baseMob.scaleMult || (isElite ? 1.90 : 1.0),
     isAggro: baseMob.aggro === 'Y' || isElite,
     x: x, y: y,
     spawnX: x, spawnY: y,
