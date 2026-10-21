@@ -45,7 +45,7 @@ const AI_SLOT_START = Number(process.env.AI_SLOT_START || 100);
 const cliPoolArg = process.argv[2] ? parseInt(process.argv[2], 10) : NaN;
 const AI_TOTAL_POOL = (!isNaN(cliPoolArg) && cliPoolArg >= 50)
   ? cliPoolArg
-  : Number(process.env.AI_TOTAL_POOL || 300);
+  : Number(process.env.AI_TOTAL_POOL || 600);
 const FALLBACK_AI_USER_ID = 'e0000000-0000-4000-8000-000000000100';
 
 // =====================================================================
@@ -147,7 +147,7 @@ function buildUniqueAIPoolNames(totalCount) {
   return list;
 }
 
-const AI_PLAYER_NAMES = buildUniqueAIPoolNames(Math.max(1000, AI_TOTAL_POOL));
+const AI_PLAYER_NAMES = buildUniqueAIPoolNames(Math.max(1200, AI_TOTAL_POOL));
 
 // =====================================================================
 // 2. 다양한 인간형 게이머 페르소나 (24종 성향 및 파티 선호도)
@@ -532,7 +532,7 @@ function buildHiredMercenaryForAI(ownerClass, level, posX, posY) {
 }
 
 function generateAICharacterRecord(slotIndex, userId) {
-  const idx = Math.max(0, slotIndex - AI_SLOT_START); // 0 ~ 299
+  const idx = Math.max(0, slotIndex - AI_SLOT_START); // 0 ~ 599 (600명 풀)
   const rawName = AI_PLAYER_NAMES[idx] || `모험가${slotIndex}`;
   const classes = ['knight', 'ranger', 'wizard'];
   const charClass = classes[idx % classes.length];
@@ -803,5 +803,6 @@ module.exports = {
   generateLocal50AIPool,
   ensure50AICharactersSeeded,
   ensure300AICharactersSeeded: ensure50AICharactersSeeded,
+  ensure600AICharactersSeeded: ensure50AICharactersSeeded,
   resetAndReseedAICharacters
 };

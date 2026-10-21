@@ -2,13 +2,137 @@
  * aiAgentRunner.js
  * =====================================================================
  * Age of Magic - 자율형 인간화 AI 에이전트 시스템 (Human-like AI Agent Runner)
- * - xerimaii@gmail.com 300명 풀(슬롯 100~399) 중 동시접속 50명 상시 유지 및 자동 로테이션
+ * - xerimaii@gmail.com 600명 풀(슬롯 100~699) 생성 후 100명씩 배치 순환 로테이션 & CPU 65% 이하 자동 제어
  * - 인간 플레이어와 100% 동일한 전체 마법/기술(GameDB.Skills 83종: 전사 W01~10, 궁수 AS1~5/A01~15, 마법사 MP1~3/M01~50) 구사
  * - 인간 플레이어와 동일한 전투/버프/힐/디버프/보스 장판 회피/물약/인챈트/스킬북 습득/용병 스킬 제어
  * - AI끼리의 파티에 인간 플레이어 합류 허용 및 인간 플레이어의 파티장 요구 즉시 위임 지원
  * =====================================================================
  */
-const WebSocket = require('ws');
+let WebSocket;
+try {
+  WebSocket = require('ws');
+} catch (_) {
+  const http = require('http');
+  const crypto = require('crypto');
+  const { EventEmitter } = require('events');
+
+  class FallbackWebSocket extends EventEmitter {
+    constructor(urlStr) {
+      super();
+      this.readyState = 0;
+      const u = new URL(urlStr);
+      const key = crypto.randomBytes(16).toString('base64');
+      const req = http.request({
+        hostname: u.hostname || '127.0.0.1',
+        port: Number(u.port || 80),
+        path: (u.pathname || '/ws') + (u.search || ''),
+        headers: {
+          Connection: 'Upgrade',
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Version': '13',
+          'Sec-WebSocket-Key': key
+        }
+      });
+      req.on('upgrade', (res, socket, head) => {
+        try { socket.setNoDelay(true); } catch (_) {}
+        this.socket = socket;
+        this.readyState = 1;
+        let recvBuffer = (head && head.length > 0) ? Buffer.from(head) : Buffer.alloc(0);
+        socket.on('data', (chunk) => {
+          recvBuffer = Buffer.concat([recvBuffer, chunk]);
+          while (recvBuffer.length >= 2) {
+            const opcode = recvBuffer[0] & 0x0f;
+            if (opcode === 0x08) {
+              this.readyState = 3;
+              socket.end();
+              this.emit('close');
+              return;
+            }
+            const isMasked = Boolean(recvBuffer[1] & 0x80);
+            let payloadLen = recvBuffer[1] & 0x7f;
+            let offset = 2;
+            if (payloadLen === 126) {
+              if (recvBuffer.length < 4) return;
+              payloadLen = recvBuffer.readUInt16BE(2);
+              offset = 4;
+            } else if (payloadLen === 127) {
+              if (recvBuffer.length < 10) return;
+              payloadLen = Number(recvBuffer.readBigUInt64BE(2));
+              offset = 10;
+            }
+            const totalLen = offset + (isMasked ? 4 : 0) + payloadLen;
+            if (recvBuffer.length < totalLen) return;
+            let dataBuf = recvBuffer.slice(offset + (isMasked ? 4 : 0), totalLen);
+            if (isMasked) {
+              const mask = recvBuffer.slice(offset, offset + 4);
+              dataBuf = Buffer.from(dataBuf);
+              for (let i = 0; i < payloadLen; i++) dataBuf[i] ^= mask[i % 4];
+            }
+            recvBuffer = recvBuffer.slice(totalLen);
+            if (opcode === 0x01 || opcode === 0x02) {
+              this.emit('message', dataBuf);
+            }
+          }
+        });
+        socket.on('close', () => {
+          if (this.readyState !== 3) {
+            this.readyState = 3;
+            this.emit('close');
+          }
+        });
+        socket.on('error', (err) => this.emit('error', err));
+        this.emit('open');
+      });
+      req.on('error', (err) => {
+        this.readyState = 3;
+        this.emit('error', err);
+        this.emit('close');
+      });
+      req.end();
+    }
+    send(data) {
+      if (this.readyState !== 1 || !this.socket || this.socket.destroyed) return;
+      const payload = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8');
+      const len = payload.length;
+      const mask = crypto.randomBytes(4);
+      let header;
+      if (len < 126) {
+        header = Buffer.alloc(6);
+        header[0] = 0x81;
+        header[1] = 0x80 | len;
+        mask.copy(header, 2);
+      } else if (len < 65536) {
+        header = Buffer.alloc(8);
+        header[0] = 0x81;
+        header[1] = 0x80 | 126;
+        header.writeUInt16BE(len, 2);
+        mask.copy(header, 4);
+      } else {
+        header = Buffer.alloc(14);
+        header[0] = 0x81;
+        header[1] = 0x80 | 127;
+        header.writeBigUInt64BE(BigInt(len), 2);
+        mask.copy(header, 10);
+      }
+      const masked = Buffer.alloc(len);
+      for (let i = 0; i < len; i++) masked[i] = payload[i] ^ mask[i % 4];
+      this.socket.write(Buffer.concat([header, masked]));
+    }
+    close() {
+      if (this.readyState === 3) return;
+      this.readyState = 3;
+      if (this.socket && !this.socket.destroyed) {
+        try { this.socket.end(); } catch (_) {}
+      }
+      this.emit('close');
+    }
+  }
+  FallbackWebSocket.CONNECTING = 0;
+  FallbackWebSocket.OPEN = 1;
+  FallbackWebSocket.CLOSING = 2;
+  FallbackWebSocket.CLOSED = 3;
+  WebSocket = FallbackWebSocket;
+}
 const {
   AI_ACCOUNT_EMAIL,
   AI_SLOT_START,
@@ -23,13 +147,33 @@ const {
   resetAndReseedAICharacters
 } = require('./seed_ai_50.js');
 
-require('dotenv').config()
+try { require('dotenv').config(); } catch (_) {}
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PORT = Number(process.env.PORT || 4000);
 const SERVER_WS_URL = process.env.SERVER_WS_URL || `ws://127.0.0.1:${PORT}/ws`;
 let maxConcurrentAI = Math.min(AI_TOTAL_POOL, Math.max(0, Number(process.env.MAX_CONCURRENT_AI || 100)));
 const MAX_PARTY_MEMBERS = 5;
 const MAX_AGENTS_PER_MAP = 8; // 단일 맵(필드/던전) 최대 상주 인원 캡(7~9명 기준 8명)
+const CPU_LIMIT_PCT = Math.min(85, Math.max(35, Number(process.env.MAX_CPU_PERCENT || 65)));
+
+// 📊 AI 러너 실시간 CPU 점유율 모니터 (최대 65% 이하 자동 스로틀링 보장)
+let _lastCpuUsage = process.cpuUsage();
+let _lastCpuCheckTs = Date.now();
+let currentRunnerCpuPct = 10;
+setInterval(() => {
+  const now = Date.now();
+  const elapsedUs = Math.max(1000, (now - _lastCpuCheckTs) * 1000);
+  const diff = process.cpuUsage(_lastCpuUsage);
+  _lastCpuUsage = process.cpuUsage();
+  _lastCpuCheckTs = now;
+  const rawPct = ((diff.user + diff.system) / elapsedUs) * 100;
+  currentRunnerCpuPct = Math.round(currentRunnerCpuPct * 0.6 + rawPct * 0.4);
+}, 1000);
+
+// 100명 에이전트 중앙 통합 루프 타이머 (개별 setInterval 100개 생성으로 인한 타이머 오버헤드 제거)
+let masterAiTickTimer = null;
+let rotationCursor = 0; // 600명 풀(6개 조 x 100명) 순차 순환 커서
+let lastRegionChatReplyTs = new Map(); // mapKey -> timestamp (일반 지역채팅 동시 응답 폭주 방지)
 
 const fastHypot = (dx, dy) => Math.sqrt(dx * dx + dy * dy);
 
@@ -301,13 +445,14 @@ class AIAgentClient {
       ? cd.autoInviteChance
       : INVITE_WEIGHT_MAP[hash % INVITE_WEIGHT_MAP.length];
 
-    // 생애 주기 및 자연스러운 순차 로테이션 (초기 기동 시 25~180분 분산, 이후 접속 시 60~180분)
+    // 생애 주기 및 600명 풀 -> 100명씩 자연스러운 순환 로테이션 (초기 기동 시 15~90분 균등 위상 분산, 이후 35~95분)
     this.sessionStart = Date.now();
-    const randomMinutes = isInitialBoot
-      ? (Math.floor(Math.random() * 156) + 25)
-      : (Math.floor(Math.random() * 121) + 60);
-    this.sessionDuration = randomMinutes * 60 * 1000;
+    const phaseMinutes = isInitialBoot
+      ? (15 + ((this.slotIndex - AI_SLOT_START) % 75) + Math.floor(Math.random() * 6))
+      : (35 + Math.floor(Math.random() * 60));
+    this.sessionDuration = phaseMinutes * 60 * 1000;
     this.isLoggingOut = false;
+    this._isDirty = false;
     this.sessionToken = `ai_sess_${this.slotIndex}_${Date.now()}`;
 
     this.ws = null;
@@ -322,7 +467,7 @@ class AIAgentClient {
     this.lastRegenTime = Date.now();
     this.lastItemManageTime = Date.now();
     this.lastMapCheckTime = Date.now();
-    this.lastSupabaseSyncTime = Date.now();
+    this.lastSupabaseSyncTime = Date.now() - ((this.slotIndex * 613) % 60000);
     this.lastBuffPotTime = 0;
 
     // 끼임(Stuck) 방지 추적
@@ -552,11 +697,11 @@ class AIAgentClient {
 
     this.ws.on('close', () => {
       this.partyData = null;
-      // 🛡️ 소켓 종료 시 좀비 setInterval 타이머 및 메모리 누수 원천 차단
-      if (this.loopTimer) {
+      // 🛡️ 소켓 종료 시 루프 플래그 해제 및 메모리 누수 원천 차단
+      if (this.loopTimer && typeof this.loopTimer === 'object') {
         clearInterval(this.loopTimer);
-        this.loopTimer = null;
       }
+      this.loopTimer = null;
     });
 
     this.ws.on('error', () => {});
@@ -904,107 +1049,116 @@ class AIAgentClient {
   // 메인 자율 루프 (전투, 1~6서클 스킬/마법, 버프/힐, 루팅, 용병 제어)
   // =====================================================================
   startLoop() {
-    this.lastTickTime = Date.now();
+    const now = Date.now();
+    this.lastTickTime = now;
     // 100명의 에이전트가 동일 밀리초에 동시에 몬스터 탐색을 수행하지 않도록 슬롯 기반 위상 분산
-    this.lastAiDecisionTime = Date.now() - ((this.slotIndex * 37) % 350);
-    this.lastSyncSentTime = Date.now() - ((this.slotIndex * 19) % 200);
+    this.lastAiDecisionTime = now - ((this.slotIndex * 37) % 360);
+    this.lastSyncSentTime = now - ((this.slotIndex * 19) % 220);
     this._lastSentMoveX = Math.round(this.x);
     this._lastSentMoveY = Math.round(this.y);
     this._lastSentWalk = false;
+    this.loopTimer = true;
+    ensureMasterAiLoopRunning();
+  }
 
-    // 100ms 물리 이동 틱 + 350ms 의사결정 주기 + 200ms/목표변경 스로틀링 패킷 전송
-    this.loopTimer = setInterval(() => {
-      if (this.isLoggingOut) return;
-      const now = Date.now();
-      const dtMs = Math.min(220, Math.max(20, now - (this.lastTickTime || (now - 100))));
-      this.lastTickTime = now;
+  stepTick(now, cpuLoadPct = 15) {
+    if (this.isLoggingOut || !this.loopTimer) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-      // 1) 세션 만료 체크 (Graceful Logout -> 300명 풀에서 신규 에이전트 자동 교체 투입)
-      if (now - this.sessionStart >= this.sessionDuration) {
-        this.gracefulLogout();
-        return;
-      }
+    const dtMs = Math.min(240, Math.max(20, now - (this.lastTickTime || (now - 100))));
+    this.lastTickTime = now;
 
-      // 2) 자연 회복 (2초마다)
-      if (now - this.lastRegenTime >= 2000) {
-        this.lastRegenTime = now;
-        const mpPassiveBonus = this.learnedSkills.includes('MP2') ? 6 : 0;
-        const focusBonus = this.hasBuff('MENTAL_FOCUS') ? 5 : 0;
-        this.hp = Math.min(this.maxHp, this.hp + 8 + Math.floor(this.level * 0.5));
-        this.mp = Math.min(this.maxMp, this.mp + 7 + Math.floor(this.level * 0.5) + mpPassiveBonus + focusBonus);
-        this.checkDrinkPotion();
-      }
+    // 1) 세션 만료 체크 (Graceful Logout -> 600명 풀에서 다음 순번 에이전트 자동 교체 투입)
+    if (now - this.sessionStart >= this.sessionDuration) {
+      this.gracefulLogout();
+      return;
+    }
 
-      // 3) 주기적 장비 평가, 안전 인챈트(+6/+4), 가방 정리, 물약 도핑 (10초마다)
-      if (now - this.lastItemManageTime >= 10000) {
-        this.lastItemManageTime = now;
-        this.manageEquipmentAndEnchant();
-        this.sellJunkItemsInBag();
-        this.checkMercenaryNeeds();
-        this.checkBuffPotions(now);
-        if (this.invitedHistory.size > 30) this.invitedHistory.clear();
-        if (this.rejectedTargets.size > 30) this.rejectedTargets.clear();
-      }
+    // 2) 자연 회복 (2초마다)
+    if (now - this.lastRegenTime >= 2000) {
+      this.lastRegenTime = now;
+      const mpPassiveBonus = this.learnedSkills.includes('MP2') ? 6 : 0;
+      const focusBonus = this.hasBuff('MENTAL_FOCUS') ? 5 : 0;
+      this.hp = Math.min(this.maxHp, this.hp + 8 + Math.floor(this.level * 0.5));
+      this.mp = Math.min(this.maxMp, this.mp + 7 + Math.floor(this.level * 0.5) + mpPassiveBonus + focusBonus);
+      this.checkDrinkPotion();
+    }
 
-      // 4) 주기적 Supabase 저장 (45초마다)
-      if (now - this.lastSupabaseSyncTime >= 45000) {
-        this.lastSupabaseSyncTime = now;
+    // 3) 주기적 장비 평가, 안전 인챈트(+6/+4), 가방 정리, 물약 도핑 (10초마다)
+    if (now - this.lastItemManageTime >= 10000) {
+      this.lastItemManageTime = now;
+      this.manageEquipmentAndEnchant();
+      this.sellJunkItemsInBag();
+      this.checkMercenaryNeeds();
+      this.checkBuffPotions(now);
+      if (this.invitedHistory.size > 30) this.invitedHistory.clear();
+      if (this.rejectedTargets.size > 30) this.rejectedTargets.clear();
+    }
+
+    // 4) 주기적 Supabase 저장 (60초 주기 + 변경사항 있을 때만 분산 저장하여 네트워크/CPU 스파이크 방지)
+    if (now - this.lastSupabaseSyncTime >= 60000) {
+      this.lastSupabaseSyncTime = now + ((this.slotIndex * 131) % 15000);
+      if (this._isDirty) {
+        this._isDirty = false;
         this.saveToSupabase(false);
       }
+    }
 
-      // 5) 몬스터 거리 탐색 및 타겟 의사결정 주기: 350ms(초당 약 3회)로 완화하여 CPU 부하 대폭 절감
-      if (now - (this.lastAiDecisionTime || 0) >= 350) {
-        this.lastAiDecisionTime = now;
-        this.processBuffsAndPartySupport(now);
-        this.checkProactivePartyInvite(now);
-        this.checkSmartMapNavigation(now);
-        this.checkAndResolveStuck(now);
-        if (this.state !== 'SHOPPING') {
-          this.executeCombatAndLootRoutine(now);
-        }
-      }
-
-      // 6) 매 100ms마다 에이전트 및 동반 용병 연속 이동 업데이트
+    // 5) CPU 점유율(65% 캡) 연동 적응형 의사결정 주기 (평시 350ms, 부하 52%+ 시 460ms, 60%+ 시 580ms)
+    const decisionInterval = cpuLoadPct >= (CPU_LIMIT_PCT - 5) ? 580 : (cpuLoadPct >= (CPU_LIMIT_PCT - 13) ? 460 : 350);
+    if (now - (this.lastAiDecisionTime || 0) >= decisionInterval) {
+      this.lastAiDecisionTime = now;
+      this.processBuffsAndPartySupport(now);
+      this.checkProactivePartyInvite(now);
+      this.checkSmartMapNavigation(now);
+      this.checkAndResolveStuck(now);
       if (this.state !== 'SHOPPING') {
-        this.updateMovement(dtMs);
+        this.executeCombatAndLootRoutine(now);
       }
-      this.updateMercenaryRoutine(dtMs, now);
+    }
 
-      // 7) PLAYER_SYNC 스로틀링: 목표 지점(moveX, moveY) 변경 시 또는 200ms 주기로만 전송, 정지/비전투 시 900ms 주기 전송
-      const curMoveX = (this.isWalking && typeof this.moveX === 'number') ? Math.round(this.moveX) : Math.round(this.x);
-      const curMoveY = (this.isWalking && typeof this.moveY === 'number') ? Math.round(this.moveY) : Math.round(this.y);
-      const moveTargetChanged = (
-        Boolean(this.isWalking) !== Boolean(this._lastSentWalk) ||
-        (this.isWalking && (Math.abs(curMoveX - (this._lastSentMoveX || 0)) >= 8 || Math.abs(curMoveY - (this._lastSentMoveY || 0)) >= 8))
-      );
-      const isActiveNow = Boolean(
-        this.isWalking ||
-        (this.mercenary && this.mercenary.isWalking) ||
-        (now - (this.lastAttackTime || 0) < 600) ||
-        (this.mercenary && (now - (this.mercenary.lastAttackTime || 0) < 600))
-      );
-      const elapsedSinceSync = now - (this.lastSyncSentTime || 0);
-      const shouldSendSync =
-        moveTargetChanged ||
-        (isActiveNow && elapsedSinceSync >= 200) ||
-        (!isActiveNow && elapsedSinceSync >= 900);
+    // 6) 매 100ms마다 에이전트 및 동반 용병 연속 이동 업데이트
+    if (this.state !== 'SHOPPING') {
+      this.updateMovement(dtMs);
+    }
+    this.updateMercenaryRoutine(dtMs, now);
 
-      if (shouldSendSync) {
-        this.lastSyncSentTime = now;
-        this._lastSentMoveX = curMoveX;
-        this._lastSentMoveY = curMoveY;
-        this._lastSentWalk = Boolean(this.isWalking);
-        const needFullMeta = (now - (this._lastFullSyncTs || 0)) >= 12000;
-        if (needFullMeta) this._lastFullSyncTs = now;
-        this.sendWs({
-          type: 'PLAYER_SYNC',
-          charId: this.charId,
-          mapKey: this.mapKey,
-          regionKey: this.regionKey,
-          player: this.buildPlayerSyncPayload(needFullMeta)
-        });
-      }
-    }, 100);
+    // 7) PLAYER_SYNC 스로틀링: 목표 지점(moveX, moveY) 변경 시 또는 200ms(부하 시 280ms) 주기로만 전송, 정지/비전투 시 950ms 주기 전송
+    const curMoveX = (this.isWalking && typeof this.moveX === 'number') ? Math.round(this.moveX) : Math.round(this.x);
+    const curMoveY = (this.isWalking && typeof this.moveY === 'number') ? Math.round(this.moveY) : Math.round(this.y);
+    const moveTargetChanged = (
+      Boolean(this.isWalking) !== Boolean(this._lastSentWalk) ||
+      (this.isWalking && (Math.abs(curMoveX - (this._lastSentMoveX || 0)) >= 8 || Math.abs(curMoveY - (this._lastSentMoveY || 0)) >= 8))
+    );
+    const isActiveNow = Boolean(
+      this.isWalking ||
+      (this.mercenary && this.mercenary.isWalking) ||
+      (now - (this.lastAttackTime || 0) < 600) ||
+      (this.mercenary && (now - (this.mercenary.lastAttackTime || 0) < 600))
+    );
+    const activeSyncGap = cpuLoadPct >= (CPU_LIMIT_PCT - 8) ? 280 : 200;
+    const idleSyncGap = cpuLoadPct >= (CPU_LIMIT_PCT - 8) ? 1200 : 900;
+    const elapsedSinceSync = now - (this.lastSyncSentTime || 0);
+    const shouldSendSync =
+      moveTargetChanged ||
+      (isActiveNow && elapsedSinceSync >= activeSyncGap) ||
+      (!isActiveNow && elapsedSinceSync >= idleSyncGap);
+
+    if (shouldSendSync) {
+      this.lastSyncSentTime = now;
+      this._lastSentMoveX = curMoveX;
+      this._lastSentMoveY = curMoveY;
+      this._lastSentWalk = Boolean(this.isWalking);
+      const needFullMeta = (now - (this._lastFullSyncTs || 0)) >= 12000;
+      if (needFullMeta) this._lastFullSyncTs = now;
+      this.sendWs({
+        type: 'PLAYER_SYNC',
+        charId: this.charId,
+        mapKey: this.mapKey,
+        regionKey: this.regionKey,
+        player: this.buildPlayerSyncPayload(needFullMeta)
+      });
+    }
   }
 
   checkBuffPotions(now) {
@@ -1535,6 +1689,7 @@ class AIAgentClient {
   // =====================================================================
   onLootedItem(item) {
     if (!item) return;
+    this._isDirty = true;
     if (item.type === 'gold') {
       this.gold += Number(item.amount || item.count || 100);
       return;
@@ -1792,6 +1947,7 @@ class AIAgentClient {
   }
 
   gainExpAndGold(expGain, goldGain) {
+    this._isDirty = true;
     this.exp += Number(expGain || 0);
     this.gold += Number(goldGain || 0);
     let leveledUp = false;
@@ -2175,11 +2331,20 @@ class AIAgentClient {
       isAddressedToMe = true;
     }
 
+    // 다른 맵(예: 필드 <-> 던전)에서 보낸 일반 지역채팅은 직접 호명하지 않은 경우 무시
+    if (chatStyle === 'region' && msg.mapKey && msg.mapKey !== this.mapKey && !isAddressedToMe) {
+      return;
+    }
+
     if (!isWhisperToMe && !isPartyChat && !isAddressedToMe) {
       const senderEnt = this.worldPlayers.get(msg.charId);
       if (senderEnt && fastHypot((senderEnt.x || 0) - this.x, (senderEnt.y || 0) - this.y) <= 420) {
         if (text.includes('파티') || text.includes('님') || text.includes('혹시') || text.includes('?') || text.includes('힐') || text.includes('버프')) {
-          isAddressedToMe = true;
+          const lastMapReply = lastRegionChatReplyTs.get(this.mapKey) || 0;
+          if (Date.now() - lastMapReply >= 6000) {
+            lastRegionChatReplyTs.set(this.mapKey, Date.now());
+            isAddressedToMe = true;
+          }
         }
       }
     }
@@ -2473,10 +2638,10 @@ ${situationContext}
 
   async logout(skipDbSave = false) {
     this.isLoggingOut = true;
-    if (this.loopTimer) {
+    if (this.loopTimer && typeof this.loopTimer === 'object') {
       clearInterval(this.loopTimer);
-      this.loopTimer = null;
     }
+    this.loopTimer = null;
     this.sendWs({ type: 'LEAVE_CHAR', charId: this.charId });
     if (!skipDbSave) {
       await this.saveToSupabase(true);
@@ -2491,6 +2656,24 @@ ${situationContext}
   }
 }
 
+function ensureMasterAiLoopRunning() {
+  if (masterAiTickTimer) return;
+  masterAiTickTimer = setInterval(() => {
+    const now = Date.now();
+    const cpuPct = currentRunnerCpuPct;
+    // CPU가 65% 한계에 근접하면 홀/짝 서브배치 분할 틱으로 순간 부하를 즉시 평탄화
+    const throttleSubBatch = cpuPct >= CPU_LIMIT_PCT;
+    const subParity = Math.floor(now / 100) % 2;
+    for (let i = 0; i < activeAgents.length; i++) {
+      if (throttleSubBatch && (i % 2 !== subParity)) continue;
+      const ag = activeAgents[i];
+      if (ag && !ag.isLoggingOut) {
+        ag.stepTick(now, cpuPct);
+      }
+    }
+  }, 100);
+}
+
 let isFirstRotationWave = true;
 let isRebuildingPool = false;
 let controlWs = null;
@@ -2498,6 +2681,7 @@ let controlWs = null;
 async function manageAgentRotation() {
   if (isRebuildingPool) return;
   try {
+    ensureMasterAiLoopRunning();
     const aliveList = [];
     for (let i = 0; i < activeAgents.length; i++) {
       const a = activeAgents[i];
@@ -2506,11 +2690,11 @@ async function manageAgentRotation() {
       if (isSocketAlive) {
         aliveList.push(a);
       } else {
-        // 🛡️ 끊어진 에이전트의 인터벌 타이머 및 맵 객체 즉시 해제로 메모리 누수 차단
-        if (a.loopTimer) {
+        // 🛡️ 끊어진 에이전트의 타이머 및 맵 객체 즉시 해제로 메모리 누수 차단
+        if (a.loopTimer && typeof a.loopTimer === 'object') {
           clearInterval(a.loopTimer);
-          a.loopTimer = null;
         }
+        a.loopTimer = null;
         a.worldMonsters?.clear();
         a.worldPlayers?.clear();
         a.worldItems?.clear();
@@ -2525,15 +2709,23 @@ async function manageAgentRotation() {
       await Promise.all(toRemove.map(ag => ag.logout(false)));
     }
 
-    // 2) 상시 인원보다 적은 경우 오프라인 풀에서 즉시 충원
+    // 2) 600명 풀에서 100명씩 순차 순환 로테이션 충원 (라운드 로빈 커서 기반으로 600명 전원이 고르게 교대 접속)
     if (activeAgents.length < maxConcurrentAI && allAiDbRecords.length > 0) {
       const needed = maxConcurrentAI - activeAgents.length;
-      const offlinePool = allAiDbRecords.filter(rec => !activeAgents.some(a => a.charId === rec.id));
+      const activeIdSet = new Set(activeAgents.map(a => a.charId));
+      const totalPoolLen = allAiDbRecords.length;
+      let spawned = 0;
+      let scanned = 0;
 
-      for (let i = 0; i < needed && offlinePool.length > 0; i++) {
-        const randIdx = Math.floor(Math.random() * offlinePool.length);
-        const picked = offlinePool.splice(randIdx, 1)[0];
-        activeAgents.push(new AIAgentClient(picked, isFirstRotationWave));
+      while (spawned < needed && scanned < totalPoolLen) {
+        const idx = rotationCursor % totalPoolLen;
+        rotationCursor = (rotationCursor + 1) % totalPoolLen;
+        scanned++;
+        const candidate = allAiDbRecords[idx];
+        if (!candidate || activeIdSet.has(candidate.id)) continue;
+        activeIdSet.add(candidate.id);
+        activeAgents.push(new AIAgentClient(candidate, isFirstRotationWave));
+        spawned++;
       }
       isFirstRotationWave = false;
     }
@@ -2578,14 +2770,14 @@ async function setConcurrentAICount(newMax, requesterCharId = null) {
 /**
  * 운영자 명령어 (/모험가생성 <숫자>) 처리: 기존 AI 전체 삭제 후 신규 생성 및 기본 50명 상시 로테이션 시작
  */
-async function rebuildAIPool(newTotalCount, defaultConcurrent = 50, requesterCharId = null) {
+async function rebuildAIPool(newTotalCount = 600, defaultConcurrent = 100, requesterCharId = null) {
   if (isRebuildingPool) {
     sendControlReport(requesterCharId, `⚠️ 이미 모험가 생성 작업이 진행 중입니다. 완료될 때까지 잠시만 기다려주세요.`, 'log-hit');
     return;
   }
   isRebuildingPool = true;
-  const targetTotal = Math.max(1, Math.min(1000, Number(newTotalCount) || 300));
-  const targetConcurrent = Math.min(targetTotal, Math.max(1, Number(defaultConcurrent) || 50));
+  const targetTotal = Math.max(1, Math.min(1000, Number(newTotalCount) || 600));
+  const targetConcurrent = Math.min(targetTotal, Math.max(1, Number(defaultConcurrent) || 100));
 
   try {
     console.log(`⚙️ [GM 모험가생성 시작] 기존 AI 에이전트 접속 종료 및 삭제 후 ${targetTotal}명 재생성을 시작합니다...`);
@@ -2648,7 +2840,7 @@ function connectRunnerControlSocket() {
     if (msg.action === 'SET_CONCURRENT') {
       await setConcurrentAICount(msg.concurrentCount, msg.requesterCharId);
     } else if (msg.action === 'REBUILD_POOL') {
-      await rebuildAIPool(msg.totalCount, msg.concurrentCount || 50, msg.requesterCharId);
+      await rebuildAIPool(msg.totalCount || 600, msg.concurrentCount || 100, msg.requesterCharId);
     }
   });
 
@@ -2681,6 +2873,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  WebSocket,
   startAIAgentRunner,
   setConcurrentAICount,
   rebuildAIPool,
