@@ -354,11 +354,92 @@ function findServerSafeSpot(mapInst, tx, ty) {
   return { x: Math.round(tx), y: Math.round(ty) };
 }
 
+// ============================================================================
+// 📐 400x400px 공간 분할 격자(Spatial Grid / AOI) 시스템
+// - 동일 맵 전수 비교 O(N^2) 및 O(M*N) 완전 제거
+// - 반경 500px (동일 및 인접 9개 격자 + 경계 보정) 고속 탐색 보장
+// ============================================================================
+const SPATIAL_GRID_SIZE = 400;
+const PLAYER_AOI_RADIUS = 500;
+const PLAYER_AOI_HYSTERESIS = 560; // 격자 경계선 통과 시 깜빡임(Flicker) 원천 차단 버퍼
+
+function getSpatialBucketKey(gx, gy) {
+  return ((gx & 0xffff) << 16) | (gy & 0xffff);
+}
+
+function rebuildMapSpatialGrids(mapInst, mapPlayers) {
+  if (!mapInst.playerGrid) mapInst.playerGrid = new Map();
+  else mapInst.playerGrid.clear();
+
+  if (!mapInst.monsterGrid) mapInst.monsterGrid = new Map();
+  else mapInst.monsterGrid.clear();
+
+  for (let i = 0; i < mapPlayers.length; i++) {
+    const entry = mapPlayers[i];
+    const p = entry?.player;
+    if (!p) continue;
+    const gx = Math.floor((Number(p.x) || 0) / SPATIAL_GRID_SIZE);
+    const gy = Math.floor((Number(p.y) || 0) / SPATIAL_GRID_SIZE);
+    const key = getSpatialBucketKey(gx, gy);
+    let bucket = mapInst.playerGrid.get(key);
+    if (!bucket) {
+      bucket = [];
+      mapInst.playerGrid.set(key, bucket);
+    }
+    bucket.push(entry);
+  }
+
+  const mobs = mapInst.monsters;
+  for (let i = 0; i < mobs.length; i++) {
+    const m = mobs[i];
+    if (!m || m.isDead) continue;
+    const gx = Math.floor((Number(m.x) || 0) / SPATIAL_GRID_SIZE);
+    const gy = Math.floor((Number(m.y) || 0) / SPATIAL_GRID_SIZE);
+    const key = getSpatialBucketKey(gx, gy);
+    let bucket = mapInst.monsterGrid.get(key);
+    if (!bucket) {
+      bucket = [];
+      mapInst.monsterGrid.set(key, bucket);
+    }
+    bucket.push(m);
+  }
+}
+
+// 중심 좌표 (x, y)의 동일 및 인접 9개 격자(3x3) 탐색 (+ 반경 500px 경계 걸침 시 인접 셀 자동 포함)
+function querySpatialGrid9(grid, x, y, cover500Border = false) {
+  if (!grid || grid.size === 0) return [];
+  const gx = Math.floor(x / SPATIAL_GRID_SIZE);
+  const gy = Math.floor(y / SPATIAL_GRID_SIZE);
+  const localX = x - gx * SPATIAL_GRID_SIZE;
+  const localY = y - gy * SPATIAL_GRID_SIZE;
+
+  const minDx = (cover500Border && localX < 105) ? -2 : -1;
+  const maxDx = (cover500Border && localX > 295) ? 2 : 1;
+  const minDy = (cover500Border && localY < 105) ? -2 : -1;
+  const maxDy = (cover500Border && localY > 295) ? 2 : 1;
+
+  const result = [];
+  for (let dx = minDx; dx <= maxDx; dx++) {
+    for (let dy = minDy; dy <= maxDy; dy++) {
+      const bucket = grid.get(getSpatialBucketKey(gx + dx, gy + dy));
+      if (bucket) {
+        for (let i = 0; i < bucket.length; i++) {
+          result.push(bucket[i]);
+        }
+      }
+    }
+  }
+  return result;
+}
+
 function checkServerUnitCollision(mapInst, nx, ny, selfMob = null, mapPlayers = []) {
   const selfR = selfMob?.isBoss ? 24 : 15;
-  // 1) 다른 살아있는 몬스터와의 충돌 체크
-  for (let i = 0; i < mapInst.monsters.length; i++) {
-    const other = mapInst.monsters[i];
+  const nearbyMobs = mapInst.monsterGrid
+    ? querySpatialGrid9(mapInst.monsterGrid, nx, ny, false)
+    : mapInst.monsters;
+  // 1) 인접 9개 격자 내 살아있는 몬스터와의 충돌 체크
+  for (let i = 0; i < nearbyMobs.length; i++) {
+    const other = nearbyMobs[i];
     if (!other || other.isDead || other === selfMob) continue;
     const otherR = other.isBoss ? 24 : 15;
     const minDist = selfR + otherR;
@@ -367,9 +448,12 @@ function checkServerUnitCollision(mapInst, nx, ny, selfMob = null, mapPlayers = 
       return true;
     }
   }
-  // 2) 플레이어 및 용병과의 중심 겹침 방지
-  for (let i = 0; i < mapPlayers.length; i++) {
-    const entry = mapPlayers[i];
+  // 2) 인접 9개 격자 내 플레이어 및 용병과의 중심 겹침 방지
+  const nearbyPlayers = mapInst.playerGrid
+    ? querySpatialGrid9(mapInst.playerGrid, nx, ny, false)
+    : mapPlayers;
+  for (let i = 0; i < nearbyPlayers.length; i++) {
+    const entry = nearbyPlayers[i];
     if (!entry || entry.gmInvisible || !entry.player) continue;
     const p = entry.player;
     if ((p.hp ?? 100) > 0) {
@@ -380,7 +464,7 @@ function checkServerUnitCollision(mapInst, nx, ny, selfMob = null, mapPlayers = 
       }
     }
     const merc = p.mercenary;
-    if (merc && merc.hired && !merc.isDead && merc.x !== undefined) {
+    if (merc && merc.hired !== false && !merc.isDead && merc.x !== undefined) {
       const minMDist = selfR + 15;
       const dm = Math.hypot(nx - merc.x, ny - merc.y);
       if (dm < minMDist && dm < Math.hypot((selfMob?.x ?? nx) - merc.x, (selfMob?.y ?? ny) - merc.y)) {
@@ -409,17 +493,22 @@ function findServerOpenSteerPoint(mapInst, curX, curY, baseAngle, stepDist, disa
 }
 
 function resolveServerMonsterSeparation(mapInst, mapPlayers = []) {
-  const alive = mapInst.monsters.filter(m => m && !m.isDead);
-  for (let i = 0; i < alive.length; i++) {
-    const a = alive[i];
+  const mobs = mapInst.monsters;
+  for (let i = 0; i < mobs.length; i++) {
+    const a = mobs[i];
+    if (!a || a.isDead) continue;
     const rA = a.isBoss ? 24 : 15;
-    // 몬스터 간 밀어내기
-    for (let j = i + 1; j < alive.length; j++) {
-      const b = alive[j];
+    const nearMobs = mapInst.monsterGrid
+      ? querySpatialGrid9(mapInst.monsterGrid, a.x, a.y, false)
+      : mobs;
+    for (let j = 0; j < nearMobs.length; j++) {
+      const b = nearMobs[j];
+      if (!b || b.isDead || b === a || b.id < a.id) continue;
       const rB = b.isBoss ? 24 : 15;
       const minDist = rA + rB;
       const dx = b.x - a.x;
       const dy = b.y - a.y;
+      if (Math.abs(dx) >= minDist || Math.abs(dy) >= minDist) continue;
       const dist = Math.hypot(dx, dy);
       if (dist < minDist) {
         const overlap = (minDist - Math.max(0.1, dist)) * 0.45;
@@ -438,38 +527,44 @@ function resolveServerMonsterSeparation(mapInst, mapPlayers = []) {
         }
       }
     }
-    // 플레이어 및 동행 용병과의 중심 겹침 밀어내기
-    for (let k = 0; k < mapPlayers.length; k++) {
-      const p = mapPlayers[k]?.player;
-      if (!p || mapPlayers[k].gmInvisible || (p.hp !== undefined && p.hp <= 0)) continue;
+    const nearPlayers = mapInst.playerGrid
+      ? querySpatialGrid9(mapInst.playerGrid, a.x, a.y, false)
+      : mapPlayers;
+    for (let k = 0; k < nearPlayers.length; k++) {
+      const p = nearPlayers[k]?.player;
+      if (!p || nearPlayers[k].gmInvisible || (p.hp !== undefined && p.hp <= 0)) continue;
       const minPDist = rA + 18;
       const dx = a.x - p.x;
       const dy = a.y - p.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < minPDist) {
-        const push = (minPDist - Math.max(0.1, dist)) * 0.65;
-        const ang = dist > 0.1 ? Math.atan2(dy, dx) : (i % 6);
-        const nx = a.x + Math.cos(ang) * push;
-        const ny = a.y + Math.sin(ang) * push;
-        if (!checkServerCollision(mapInst, nx, ny) && !isInsideServerWarpSafeZone(mapInst, nx, ny)) {
-          a.x = nx;
-          a.y = ny;
+      if (Math.abs(dx) < minPDist && Math.abs(dy) < minPDist) {
+        const dist = Math.hypot(dx, dy);
+        if (dist < minPDist) {
+          const push = (minPDist - Math.max(0.1, dist)) * 0.65;
+          const ang = dist > 0.1 ? Math.atan2(dy, dx) : (i % 6);
+          const nx = a.x + Math.cos(ang) * push;
+          const ny = a.y + Math.sin(ang) * push;
+          if (!checkServerCollision(mapInst, nx, ny) && !isInsideServerWarpSafeZone(mapInst, nx, ny)) {
+            a.x = nx;
+            a.y = ny;
+          }
         }
       }
       const merc = p.mercenary;
-      if (merc && merc.hired && !merc.isDead && merc.x !== undefined && merc.y !== undefined) {
+      if (merc && merc.hired !== false && !merc.isDead && merc.x !== undefined && merc.y !== undefined) {
         const minMDist = rA + 17;
         const mdx = a.x - merc.x;
         const mdy = a.y - merc.y;
-        const mdist = Math.hypot(mdx, mdy);
-        if (mdist < minMDist) {
-          const mpush = (minMDist - Math.max(0.1, mdist)) * 0.65;
-          const mang = mdist > 0.1 ? Math.atan2(mdy, mdx) : ((i + 2) % 6);
-          const mnx = a.x + Math.cos(mang) * mpush;
-          const mny = a.y + Math.sin(mang) * mpush;
-          if (!checkServerCollision(mapInst, mnx, mny) && !isInsideServerWarpSafeZone(mapInst, mnx, mny)) {
-            a.x = mnx;
-            a.y = mny;
+        if (Math.abs(mdx) < minMDist && Math.abs(mdy) < minMDist) {
+          const mdist = Math.hypot(mdx, mdy);
+          if (mdist < minMDist) {
+            const mpush = (minMDist - Math.max(0.1, mdist)) * 0.65;
+            const mang = mdist > 0.1 ? Math.atan2(mdy, mdx) : ((i + 2) % 6);
+            const mnx = a.x + Math.cos(mang) * mpush;
+            const mny = a.y + Math.sin(mang) * mpush;
+            if (!checkServerCollision(mapInst, mnx, mny) && !isInsideServerWarpSafeZone(mapInst, mnx, mny)) {
+              a.x = mnx;
+              a.y = mny;
+            }
           }
         }
       }
@@ -479,11 +574,11 @@ function resolveServerMonsterSeparation(mapInst, mapPlayers = []) {
 
 function createServerMonsterInstance(id, baseMob, x, y, forceBoss = false) {
   const isBoss = forceBoss || String(baseMob.name || '').includes('(B)');
-  const isElite = !isBoss && Math.random() < 0.085;
+  const isElite = !isBoss && Math.random() < 0.10;
   const isMagicMob = (baseMob.type === '마법' || baseMob.type === '혼합' || (baseMob.mp && baseMob.mp > 0));
   const maxMpVal = isMagicMob ? (baseMob.mp && baseMob.mp > 0 ? baseMob.mp : 100) : 0;
   const baseHpVal = baseMob.hp || 50;
-  const maxHpVal = isElite ? Math.round(baseHpVal * 1.75) : baseHpVal;
+  const maxHpVal = isElite ? Math.round(baseHpVal * 1.85) : baseHpVal;
   const rx = Math.round(x);
   const ry = Math.round(y);
   return {
@@ -506,7 +601,7 @@ function createServerMonsterInstance(id, baseMob, x, y, forceBoss = false) {
     skill: baseMob.skill || null,
     isBoss: Boolean(isBoss),
     isElite: Boolean(isElite),
-    scaleMult: isElite ? 1.42 : 1.0,
+    scaleMult: isElite ? 1.90 : 1.0,
     isAggro: baseMob.aggro === 'Y' || isElite,
     x: rx,
     y: ry,
@@ -1164,6 +1259,27 @@ function broadcastToMap(rawMapKey, packetObj, excludeCharId = null) {
   });
 }
 
+// 📡 AOI 기반 선택적 브로드캐스트 (불필요한 루프백 시각 이펙트 패킷을 AI 소켓에서 제외하고 반경 내 유저에게만 전송)
+function broadcastToMapAoi(rawMapKey, cx, cy, humanRadius, aiRadius, packetObj, excludeCharId = null, alwaysIncludeCharId = null) {
+  const targetMapKey = normalizeMapKey(rawMapKey);
+  activeCharSockets.forEach(entry => {
+    if (entry.charId === excludeCharId) return;
+    if (normalizeMapKey(entry.mapKey) !== targetMapKey) return;
+    if (alwaysIncludeCharId && entry.charId === alwaysIncludeCharId) {
+      sendWsMessage(entry.conn, packetObj);
+      return;
+    }
+    const isAi = isAIEntry(entry);
+    const maxR = isAi ? aiRadius : humanRadius;
+    if (maxR <= 0) return;
+    const px = Number(entry.player?.x) || 0;
+    const py = Number(entry.player?.y) || 0;
+    if (Math.abs(px - cx) <= maxR && Math.abs(py - cy) <= maxR && Math.hypot(px - cx, py - cy) <= maxR) {
+      sendWsMessage(entry.conn, packetObj);
+    }
+  });
+}
+
 function broadcastToRegion(rawRegionKey, packetObj, excludeCharId = null) {
   const targetReg = String(rawRegionKey || 'R01').split('_')[0];
   activeCharSockets.forEach(entry => {
@@ -1249,6 +1365,8 @@ function buildMapInitStatePacket(rawMapKey, receiverEntry = null) {
       drop: m.drop,
       skill: m.skill,
       isBoss: m.isBoss,
+      isElite: Boolean(m.isElite),
+      scaleMult: m.scaleMult || (m.isElite ? 1.90 : 1.0),
       isAggro: m.isAggro,
       x: Math.round(m.x),
       y: Math.round(m.y),
@@ -2987,8 +3105,20 @@ function handleClientWsPacket(conn, msg) {
     const newCanonicalMap = normalizeMapKey(msg.mapKey || 'R01_sub1');
     entry.mapKey = newCanonicalMap;
     entry.regionKey = newCanonicalMap.split('_')[0] || 'R01';
-    if (msg.player) entry.player = msg.player;
+    if (msg.player) {
+      entry.player = {
+        ...(entry.player || {}),
+        ...msg.player,
+        mercenary: msg.player.mercenary
+          ? { ...(entry.player?.mercenary || {}), ...msg.player.mercenary }
+          : (msg.player.mercenary === null ? null : entry.player?.mercenary)
+      };
+    }
+    if (entry._knownMobs) entry._knownMobs.clear();
+    if (entry._knownPlayers) entry._knownPlayers.clear();
+    entry._lastSentOtherCount = -1;
     entry.lastSeen = Date.now();
+    entry.lastSyncMoveTs = entry.lastSeen;
 
     sendWsMessage(conn, buildMapInitStatePacket(newCanonicalMap, entry));
     if (oldMap && oldMap !== newCanonicalMap) {
@@ -3001,7 +3131,7 @@ function handleClientWsPacket(conn, msg) {
     return;
   }
 
-  // [3] 플레이어 위치/상태 실시간 동기화 (클라이언트 변조 데이터 필터링 포함)
+  // [3] 플레이어 위치/상태 실시간 동기화 (델타 병합 및 변조 데이터 필터링 포함)
   if (msg.type === 'PLAYER_SYNC' && msg.charId) {
     const entry = activeCharSockets.get(msg.charId);
     if (entry && entry.conn === conn) {
@@ -3010,9 +3140,10 @@ function handleClientWsPacket(conn, msg) {
       entry.mapKey = incomingMap;
       entry.regionKey = msg.regionKey || incomingMap.split('_')[0] || 'R01';
       const rawP = msg.player || entry.player || {};
+      const prevPlayer = entry.player || {};
       const safeLv = entry.isAdmin
-        ? Math.max(1, Math.min(999, Number(rawP.level) || 1))
-        : Math.max(1, Math.min(250, Number(rawP.level) || 1));
+        ? Math.max(1, Math.min(999, Number(rawP.level ?? prevPlayer.level) || 1))
+        : Math.max(1, Math.min(250, Number(rawP.level ?? prevPlayer.level) || 1));
       const myParty = getPartyByCharId(entry.charId);
       let leaderTargetChanged = false;
       if (myParty && myParty.leaderCharId === entry.charId && rawP.targetMobId !== undefined) {
@@ -3023,10 +3154,14 @@ function handleClientWsPacket(conn, msg) {
         }
       }
       entry.partyId = myParty ? myParty.partyId : null;
-      entry.bgInvincible = Boolean(rawP.bgInvincible || msg.bgInvincible);
+      entry.bgInvincible = Boolean(rawP.bgInvincible ?? msg.bgInvincible ?? entry.bgInvincible);
+      const mergedMerc = rawP.mercenary !== undefined
+        ? (rawP.mercenary ? { ...(prevPlayer.mercenary || { hired: true }), ...rawP.mercenary } : null)
+        : prevPlayer.mercenary;
       entry.player = {
-        ...(entry.player || {}),
+        ...prevPlayer,
         ...rawP,
+        mercenary: mergedMerc,
         level: safeLv,
         partyId: myParty ? myParty.partyId : null,
         isPartyLeader: Boolean(myParty && myParty.leaderCharId === entry.charId),
@@ -3035,8 +3170,12 @@ function handleClientWsPacket(conn, msg) {
         gmInvincible: Boolean(entry.gmInvincible),
         bgInvincible: Boolean(entry.bgInvincible)
       };
-      entry.lastSeen = Date.now();
+      const nowSync = Date.now();
+      entry.lastSeen = nowSync;
+      entry.lastSyncMoveTs = nowSync;
       if (oldMap && oldMap !== incomingMap) {
+        if (entry._knownMobs) entry._knownMobs.clear();
+        if (entry._knownPlayers) entry._knownPlayers.clear();
         sendWsMessage(conn, buildMapInitStatePacket(incomingMap, entry));
         if (myParty) broadcastPartyUpdate(myParty);
       } else if (leaderTargetChanged && myParty) {
@@ -3173,7 +3312,7 @@ function handleClientWsPacket(conn, msg) {
         const atkSrcY = Number(msg.attackerY) || ent.y;
         const hitAngle = Math.atan2(ent.y - atkSrcY, ent.x - atkSrcX);
 
-        broadcastToMap(mapInst.mapKey, {
+        broadcastToMapAoi(mapInst.mapKey, ent.x, ent.y, 1450, 550, {
           type: 'MONSTER_DAMAGED',
           mapKey: mapInst.mapKey,
           mobId: ent.id,
@@ -3184,7 +3323,7 @@ function handleClientWsPacket(conn, msg) {
           isSkill: Boolean(isSkillHit),
           skillName: opts.skillName || msg.skillName || null,
           dmgType: msg.dmgType || 'melee',
-          hitAngle,
+          hitAngle: Number(hitAngle.toFixed(2)),
           attackerCharId: msg.charId,
           isMercAtk,
           drainHeal,
@@ -3193,7 +3332,7 @@ function handleClientWsPacket(conn, msg) {
           y: Math.round(ent.y),
           stunUntil: ent.stunUntil,
           defDownUntil: ent.defDownUntil
-        });
+        }, null, msg.charId);
 
         if (ent.hp <= 0) {
           const wasElite = Boolean(ent.isElite);
@@ -3352,8 +3491,10 @@ function handleClientWsPacket(conn, msg) {
     }
     if (entry?.gmInvisible) return;
     
-    // ✅ 아래처럼 ...msg를 먼저 쓰고, 쉼표(,)를 찍은 뒤 type을 적어야 합니다!
-    broadcastToMap(msg.mapKey || entry?.mapKey, {
+    // ✅ 시각 전용 스킬 이펙트는 반경 1450px 내 실제 유저에게만 전송 (AI 루프백 제외)
+    const skX = Number(msg.tx ?? msg.targetX ?? msg.casterX ?? entry?.player?.x) || 2000;
+    const skY = Number(msg.ty ?? msg.targetY ?? msg.casterY ?? entry?.player?.y) || 9000;
+    broadcastToMapAoi(msg.mapKey || entry?.mapKey, skX, skY, 1450, 0, {
       ...msg,
       type: 'REMOTE_SKILL_EFFECT'
     }, msg.charId);
@@ -3368,13 +3509,15 @@ function handleClientWsPacket(conn, msg) {
         type: 'REMOTE_ALLY_SUPPORT',
         ...msg
       });
-      broadcastToMap(targetEntry.mapKey, {
+      const bx = Math.round(targetEntry.player?.x || msg.x || 2000);
+      const by = Math.round(targetEntry.player?.y || msg.y || 14250);
+      broadcastToMapAoi(targetEntry.mapKey, bx, by, 1450, 0, {
         type: 'REMOTE_PLAYER_ACTION_FX',
         fxKind: 'ally_buff',
         charId: msg.casterCharId || msg.charId,
         targetCharId: msg.targetCharId,
-        x: Math.round(targetEntry.player?.x || msg.x || 2000),
-        y: Math.round(targetEntry.player?.y || msg.y || 14250),
+        x: bx,
+        y: by,
         skillName: msg.skillName || '힐링',
         healAmt: msg.healAmt || 0
       }, msg.casterCharId || msg.charId);
@@ -3403,9 +3546,10 @@ function handleClientWsPacket(conn, msg) {
       }
     }
     if (entry?.gmInvisible) return;
-    
-    // ✅ 여기도 마찬가지로 ...msg 뒤에 쉼표(,)를 붙이고 type을 적어주세요!
-    broadcastToMap(msg.mapKey || entry?.mapKey, {
+
+    const fxX = Number(msg.x ?? msg.sx ?? entry?.player?.x) || 2000;
+    const fxY = Number(msg.y ?? msg.sy ?? entry?.player?.y) || 9000;
+    broadcastToMapAoi(msg.mapKey || entry?.mapKey, fxX, fxY, 1450, 0, {
       ...msg,
       type: 'REMOTE_PLAYER_ACTION_FX'
     }, msg.charId);
@@ -3662,9 +3806,29 @@ setInterval(() => {
     if (hasPlayers) {
       activeCharSockets.forEach(entry => {
         if (normalizeMapKey(entry.mapKey) === mapKey && entry.player) {
+          // 🏃 AI 러너가 200ms 주기로 PLAYER_SYNC를 보낼 때, 서버의 중간 100ms 틱에서도 목표 지점(moveX, moveY)으로 등속 예측 보행(Dead Reckoning) 수행
+          const p = entry.player;
+          const sinceSync = now - (entry.lastSyncMoveTs || entry.lastSeen || now);
+          if (p.isWalking && typeof p.moveX === 'number' && typeof p.moveY === 'number' && sinceSync >= 75 && sinceSync <= 260) {
+            const dx = p.moveX - p.x;
+            const dy = p.moveY - p.y;
+            const dist = Math.hypot(dx, dy);
+            const spd = (Number(p.speed) || 1.90) * DELTA_60;
+            if (dist > 1.0) {
+              const step = Math.min(dist, spd);
+              p.x = Math.round(p.x + (dx / dist) * step);
+              p.y = Math.round(p.y + (dy / dist) * step);
+              if (p.mercenary && p.mercenary.hired !== false && !p.mercenary.isDead && p.mercenary.isWalking) {
+                p.mercenary.x = Math.round((p.mercenary.x || p.x) + (dx / dist) * step);
+                p.mercenary.y = Math.round((p.mercenary.y || p.y) + (dy / dist) * step);
+              }
+            }
+          }
           mapPlayers.push(entry);
         }
       });
+      // 📐 매 틱 1회 O(N+M)으로 400x400px 공간 분할 격자(Spatial Grid) 갱신
+      rebuildMapSpatialGrids(mapInst, mapPlayers);
     }
 
     mapInst.monsters.forEach(m => {
@@ -3673,11 +3837,11 @@ setInterval(() => {
           m.respawnTimer = Math.max(0, m.respawnTimer - dtSec);
           if (m.respawnTimer <= 0) {
             const safeSpawn = findServerSafeSpot(mapInst, m.spawnX, m.spawnY);
-            const nextElite = !m.isBoss && Math.random() < 0.085;
+            const nextElite = !m.isBoss && Math.random() < 0.10;
             const baseHp = m.baseMaxHp || m.maxHp || 50;
             m.isElite = nextElite;
-            m.scaleMult = nextElite ? 1.42 : 1.0;
-            m.maxHp = nextElite ? Math.round(baseHp * 1.75) : baseHp;
+            m.scaleMult = nextElite ? 1.90 : 1.0;
+            m.maxHp = nextElite ? Math.round(baseHp * 1.85) : baseHp;
             m.isDead = false;
             m.hp = m.maxHp;
             m.mp = m.maxMp;
@@ -3722,15 +3886,18 @@ setInterval(() => {
       let bestTarget = null;
       let minTargetDist = Infinity;
 
-      for (const entry of mapPlayers) {
-        if (entry.gmInvisible || entry.bgInvincible) continue;
+      // 📐 공간 격자(Spatial Grid)를 사용하여 몬스터 주변 인접 격자 내 플레이어만 탐색 (전수 비교 제거)
+      const candidateEntries = querySpatialGrid9(mapInst.playerGrid, m.x, m.y, true);
+      for (let cIdx = 0; cIdx < candidateEntries.length; cIdx++) {
+        const entry = candidateEntries[cIdx];
+        if (!entry || entry.gmInvisible || entry.bgInvincible) continue;
         const p = entry.player;
         if (!p || (p.hp !== undefined && p.hp <= 0)) continue;
         if (isInsideServerWarpSafeZone(mapInst, p.x, p.y)) continue;
 
         const dPlayer = Math.hypot(p.x - m.x, p.y - m.y);
         const merc = p.mercenary;
-        const dMerc = (merc && merc.hired && !merc.isDead && merc.x !== undefined && !isInsideServerWarpSafeZone(mapInst, merc.x, merc.y))
+        const dMerc = (merc && merc.hired !== false && !merc.isDead && merc.x !== undefined && !isInsideServerWarpSafeZone(mapInst, merc.x, merc.y))
           ? Math.hypot(merc.x - m.x, merc.y - m.y)
           : Infinity;
 
@@ -3788,7 +3955,6 @@ setInterval(() => {
 
         if (targetDist > mobAtkRange) {
           const angle = Math.atan2(targetY - m.y, targetX - m.x);
-          // 상용 MMORPG(헤이스트 전 기본 속도 기준) 밸런스에 맞춘 몬스터 추격 속도 (보스 1.82 / 일반 1.45)
           const chaseSpd = m.isBoss ? 1.82 : 1.45;
           const step = chaseSpd * DELTA_60;
           const steer = findServerOpenSteerPoint(mapInst, m.x, m.y, angle, step, true, m, mapPlayers);
@@ -3801,7 +3967,7 @@ setInterval(() => {
           const atkAngle = Math.atan2(targetY - m.y, targetX - m.x);
           if (m.maxMp > 0 && m.mp >= 10) m.mp = Math.max(0, m.mp - 10);
 
-          broadcastToMap(mapKey, {
+          broadcastToMapAoi(mapKey, m.x, m.y, 1450, 0, {
             type: 'MONSTER_ATTACK_EVENT',
             mapKey,
             mobId: m.id,
@@ -3817,7 +3983,7 @@ setInterval(() => {
             atkAngle: Number(atkAngle.toFixed(2)),
             x: Math.round(m.x),
             y: Math.round(m.y)
-          });
+          }, null, bestTarget.charId);
         }
       } else {
         if (m.maxMp > 0 && m.mp < m.maxMp) m.mp = Math.min(m.maxMp, m.mp + 0.1 * DELTA_60);
@@ -3854,7 +4020,7 @@ setInterval(() => {
       if (now - tg.startTime >= tg.duration) {
         mapInst.bossTelegraphs.splice(i, 1);
         if (hasPlayers) {
-          broadcastToMap(mapKey, {
+          broadcastToMapAoi(mapKey, tg.x, tg.y, 1650, 0, {
             type: 'BOSS_TELEGRAPH_EXPLODE',
             mapKey,
             bossId: tg.boss.id,
@@ -3870,23 +4036,26 @@ setInterval(() => {
 
     if (hasPlayers && mapPlayers.length > 0) {
       refreshServerBuildVersionIfNeeded(false);
-      // 📡 [스마트 AOI(내 주변 필드 + 미니맵 1650px) & 바이너리 축약 패킷 동기화]
-      // - 기존 30틱(3초) 전역 델타 방식의 동기화 지연·끊김 문제를 해결하고,
-      // - 수신자(receiver)별로 내 화면·미니맵 반경(1650px 이내) 및 보스/교전 몬스터만 100ms 실시간 추적합니다.
-      // - 화면과 미니맵 바깥(1650px 초과)의 보이지 않는 몬스터는 매 틱 불필요하게 전송하지 않으며,
-      //   플레이어가 이동해 반경 내로 진입하는 즉시 최신 상태를 동기화하여 스마트폰 데이터 소모를 85% 이상 절감합니다!
+      // 📡 [400x400px Spatial Grid 기반 반경 500px AOI & 루프백 대역폭 50%+ 절감 패킷 동기화]
       mapInst._tickSeq = ((mapInst._tickSeq || 0) + 1) % 20;
       const tickSeq = mapInst._tickSeq;
-      const isNearRefreshTick = (tickSeq % 10 === 0); // 1.0초마다 내 주변 AOI 상태 보정
-      const isRadarTick = (tickSeq % 5 === 0);        // 0.5초마다 원거리 미니맵 레이더 갱신
+      const isNearRefreshTick = (tickSeq % 10 === 0); // 1.0초마다 AOI 전체 정합성 보정
+      const isRadarTick = (tickSeq % 5 === 0);        // 0.5초마다 실제 유저용 미니맵 원거리 레이더 갱신
 
-      const AOI_RADIUS = 1650; // 화면 시야 + 미니맵(반경 1100px) + 이동 버퍼 포함
+      const MOB_AOI_RADIUS = 1650;
 
-      mapPlayers.forEach(receiver => {
-        if (!receiver || !receiver.conn) return;
-        // 📶 스마트폰 LTE 음영/기지국 핸드오버 시 TCP 송신 버퍼 적체(Backpressure)로 인한 패킷 폭주 렉 방지
+      for (let rIdx = 0; rIdx < mapPlayers.length; rIdx++) {
+        const receiver = mapPlayers[rIdx];
+        if (!receiver || !receiver.conn) continue;
+
+        const isAiReceiver = isAIEntry(receiver);
+        // 🤖 AI 에이전트는 홀/짝 틱 분산(200ms 주기)으로 WORLD_STATE_TICK을 수신하여 루프백 트래픽 50% 즉시 절감
+        if (isAiReceiver && !isNearRefreshTick && (tickSeq % 2 !== (rIdx % 2))) {
+          continue;
+        }
+
         const bufferedBytes = receiver.conn?.bufferedAmount ?? receiver.conn?.socket?.writableLength ?? 0;
-        if (!isNearRefreshTick && bufferedBytes > 65536) return;
+        if (!isNearRefreshTick && bufferedBytes > 65536) continue;
 
         if (!receiver._knownMobs) receiver._knownMobs = new Map();
         if (!receiver._knownPlayers) receiver._knownPlayers = new Map();
@@ -3894,26 +4063,31 @@ setInterval(() => {
         const rPx = Number(receiver.player?.x) || 2000;
         const rPy = Number(receiver.player?.y) || 14250;
         const rTargetMobId = receiver.player?.targetMobId ? String(receiver.player.targetMobId) : null;
+        const recParty = getPartyByCharId(receiver.charId);
+        const recPartyId = recParty ? recParty.partyId : null;
 
-        // 1) 내 주변 필드 + 미니맵 범위 몬스터 선별 및 축약 튜플([id, x, y, hp, flags, mp, maxHp, stun, defDown, resp]) 생성
+        // 1) 내 주변 필드 + 미니맵 범위 몬스터 선별
         const compactMobs = [];
+        const mobRadius = isAiReceiver ? 1450 : MOB_AOI_RADIUS;
         for (let i = 0; i < mapInst.monsters.length; i++) {
           const m = mapInst.monsters[i];
           const rx = Math.round(m.x);
           const ry = Math.round(m.y);
-          const dist = Math.hypot(rx - rPx, ry - rPy);
-          const inAoi = (dist <= AOI_RADIUS) || m.isBoss || (rTargetMobId === m.id) || (!m.isDead && m.hp < m.maxHp && dist <= 2400);
+          const dxM = Math.abs(rx - rPx);
+          const dyM = Math.abs(ry - rPy);
+          const inBox = dxM <= mobRadius && dyM <= mobRadius;
+          const dist = inBox ? Math.hypot(dxM, dyM) : 99999;
+          const inAoi = (dist <= mobRadius) || m.isBoss || (rTargetMobId === m.id) || (!m.isDead && m.hp < m.maxHp && dist <= 2200);
 
           const prev = receiver._knownMobs.get(m.id);
           if (!inAoi) {
-            // AOI 바깥에 있더라도 이전에는 살아있던 것으로 알고 있었는데 사망/리스폰한 경우 상태만 1회 전달
             if (prev && prev.dead !== m.isDead) {
               prev.dead = m.isDead;
               prev.hp = m.hp;
               prev.x = rx;
               prev.y = ry;
               prev.inAoi = false;
-              compactMobs.push([m.id, rx, ry, m.hp, m.isDead ? 1 : 0, Math.round(m.mp), m.maxHp, 0, 0, Math.ceil(m.respawnTimer)]);
+              compactMobs.push([m.id, rx, ry, m.hp, m.isDead ? 1 : 0]);
             } else if (prev) {
               prev.inAoi = false;
             }
@@ -3928,7 +4102,7 @@ setInterval(() => {
           const ccChanged = (!prev) || Boolean(prev.stun) !== Boolean(m.stunUntil && m.stunUntil > now) || Boolean(prev.defDown) !== Boolean(m.defDownUntil && m.defDownUntil > now);
 
           if (enteredAoi || stateChanged || movedNow || stoppedNow || hpChanged || ccChanged || (isNearRefreshTick && !m.isDead)) {
-            const needFullMeta = enteredAoi || stateChanged || isNearRefreshTick;
+            const needFullMeta = !isAiReceiver && (enteredAoi || stateChanged || isNearRefreshTick);
             receiver._knownMobs.set(m.id, {
               x: rx,
               y: ry,
@@ -3960,48 +4134,78 @@ setInterval(() => {
           }
         }
 
-        // 2) 같은 맵의 타 플레이어 동기화 (근거리 AOI는 100ms 실시간 보간 데이터, 원거리는 미니맵 레이더 좌표만 전송)
+        // 2) 📐 400x400px Spatial Grid(동일 및 인접 9개 격자, 반경 500px AOI) 내 유닛만 탐색하여 O(N^2) 전수 비교 제거!
         const visiblePlayers = [];
-        const currentOtherIds = new Set();
-        mapPlayers.forEach(other => {
-          if (other.charId === receiver.charId) return;
-          if (other.gmInvisible && !receiver.isAdmin) return;
+        const currentAoiIds = new Set();
+        const aoiCandidates = querySpatialGrid9(mapInst.playerGrid, rPx, rPy, true);
+
+        // 같은 파티원이 500px 밖에 있더라도 파티 점사/추적을 위해 후보에 포함
+        if (recParty && Array.isArray(recParty.members)) {
+          for (let mIdx = 0; mIdx < recParty.members.length; mIdx++) {
+            const pMemEntry = activeCharSockets.get(recParty.members[mIdx]);
+            if (pMemEntry && pMemEntry !== receiver && normalizeMapKey(pMemEntry.mapKey) === mapKey && !aoiCandidates.includes(pMemEntry)) {
+              aoiCandidates.push(pMemEntry);
+            }
+          }
+        }
+
+        for (let cIdx = 0; cIdx < aoiCandidates.length; cIdx++) {
+          const other = aoiCandidates[cIdx];
+          if (!other || other.charId === receiver.charId) continue;
+          if (other.gmInvisible && !receiver.isAdmin) continue;
           const op = other.player;
-          if (!op) return;
-          currentOtherIds.add(other.charId);
+          if (!op) continue;
 
           const ox = Math.round(op.x || 2000);
           const oy = Math.round(op.y || 14250);
           const pDist = Math.hypot(ox - rPx, oy - rPy);
+          const prevP = receiver._knownPlayers.get(other.charId);
+          const isSameParty = Boolean(recPartyId && other.partyId === recPartyId);
+
+          // 반경 500px 진입 / 560px 이탈 히스테리시스 적용 (격자 경계선 깜빡임 100% 방지)
+          const effectiveRadius = prevP ? PLAYER_AOI_HYSTERESIS : PLAYER_AOI_RADIUS;
+          if (pDist > effectiveRadius && !isSameParty) {
+            continue;
+          }
+
+          currentAoiIds.add(other.charId);
           const oParty = getPartyByCharId(other.charId);
           const partyId = oParty ? oParty.partyId : null;
           const isLeader = Boolean(oParty && oParty.leaderCharId === other.charId);
-          const prevP = receiver._knownPlayers.get(other.charId);
 
-          const merc = (op.mercenary && op.mercenary.hired) ? op.mercenary : null;
-          const mx = merc ? Math.round(merc.x || ox) : 0;
-          const my = merc ? Math.round(merc.y || oy) : 0;
-          const metaSig = `${op.name}|${op.class}|${op.level}|${op.weaponType}|${op.hasShield?1:0}|${op.isAdmin?1:0}|${partyId||''}|${isLeader?1:0}|${merc ? `${merc.class}:${merc.name}:${merc.stance}:${merc.setTier||0}:${merc.isDead?1:0}` : 'none'}`;
-
-          if (pDist > AOI_RADIUS && prevP && prevP.metaSig === metaSig && !isNearRefreshTick) {
-            // 원거리(화면 밖) 플레이어는 미니맵 레이더 틱(0.5초)에 위치가 10px 이상 변했을 때만 경량 패킷 전송
-            if (isRadarTick && (Math.abs(prevP.x - ox) >= 10 || Math.abs(prevP.y - oy) >= 10 || prevP.hp !== op.hp)) {
-              prevP.x = ox;
-              prevP.y = oy;
-              prevP.hp = op.hp;
-              visiblePlayers.push({
+          // AI 수신자에게는 시각 렌더링용 메타데이터/용병 정보를 생략하고 핵심 좌표·파티·체력만 초경량 전송
+          if (isAiReceiver) {
+            const aiMoved = !prevP || Math.abs(prevP.x - ox) >= 2 || Math.abs(prevP.y - oy) >= 2 || prevP.hp !== op.hp || prevP.targetMobId !== (op.targetMobId || null) || prevP.partyId !== partyId;
+            if (aiMoved || isNearRefreshTick) {
+              const isNewForAi = !prevP || isNearRefreshTick;
+              receiver._knownPlayers.set(other.charId, {
+                x: ox, y: oy, hp: op.hp,
+                targetMobId: op.targetMobId || null,
+                partyId
+              });
+              const aiPkt = {
                 charId: other.charId,
                 x: ox,
                 y: oy,
                 hp: op.hp,
-                maxHp: op.maxHp,
-                partyId,
-                isPartyLeader: isLeader,
-                _minimapOnly: true
-              });
+                maxHp: op.maxHp
+              };
+              if (isNewForAi) {
+                aiPkt.name = op.name;
+                aiPkt.level = op.level;
+                aiPkt.class = op.class;
+              }
+              if (partyId) aiPkt.partyId = partyId;
+              if (op.targetMobId) aiPkt.targetMobId = op.targetMobId;
+              visiblePlayers.push(aiPkt);
             }
-            return;
+            continue;
           }
+
+          const merc = (op.mercenary && op.mercenary.hired !== false) ? op.mercenary : null;
+          const mx = merc ? Math.round(merc.x || ox) : 0;
+          const my = merc ? Math.round(merc.y || oy) : 0;
+          const metaSig = `${op.name}|${op.class}|${op.level}|${op.weaponType}|${op.hasShield?1:0}|${op.isAdmin?1:0}|${partyId||''}|${isLeader?1:0}|${merc ? `${merc.class}:${merc.name}:${merc.stance}:${merc.setTier||0}:${merc.isDead?1:0}` : 'none'}`;
 
           const pMoved = !prevP || Math.abs(prevP.x - ox) >= 1 || Math.abs(prevP.y - oy) >= 1 || prevP.dir !== op.dir || prevP.walk !== Boolean(op.isWalking);
           const mMoved = merc && (!prevP || Math.abs((prevP.mx || 0) - mx) >= 1 || Math.abs((prevP.my || 0) - my) >= 1 || prevP.mWalk !== Boolean(merc.isWalking));
@@ -4011,9 +4215,12 @@ setInterval(() => {
             const includeFullMeta = !prevP || prevP.metaSig !== metaSig || isNearRefreshTick;
             receiver._knownPlayers.set(other.charId, {
               x: ox, y: oy, dir: op.dir, walk: Boolean(op.isWalking),
-              hp: op.hp, mp: op.mp, atkTs: op.lastAttackTime,
+              hp: op.hp, maxHp: op.maxHp, mp: op.mp, maxMp: op.maxMp,
+              spd: op.speed, atkTs: op.lastAttackTime,
               targetMobId: op.targetMobId || null,
+              partyId, isLeader,
               mx, my, mWalk: Boolean(merc?.isWalking),
+              mHp: merc?.hp, mMp: merc?.mp, mAtkTs: merc?.lastAttackTime,
               metaSig
             });
 
@@ -4026,59 +4233,97 @@ setInterval(() => {
                 isPartyLeader: isLeader
               });
             } else {
-              // 축약 델타 플레이어 패킷 (변화한 위치/모션/속도/목표좌표/체력 전송)
-              visiblePlayers.push({
+              // 📉 정적 메타데이터를 제거한 초경량 델타 패킷 (루프백/모바일 대역폭 50% 이상 절감)
+              const deltaP = {
                 charId: other.charId,
                 x: ox,
                 y: oy,
-                moveX: typeof op.moveX === 'number' ? Math.round(op.moveX) : undefined,
-                moveY: typeof op.moveY === 'number' ? Math.round(op.moveY) : undefined,
-                speed: typeof op.speed === 'number' ? op.speed : undefined,
                 dir: op.dir,
                 isWalking: Boolean(op.isWalking),
-                lastAttackTime: op.lastAttackTime || 0,
-                hp: op.hp,
-                maxHp: op.maxHp,
-                mp: op.mp,
-                maxMp: op.maxMp,
-                partyId,
-                isPartyLeader: isLeader,
-                targetMobId: op.targetMobId || null,
-                mercenary: merc ? {
-                  hired: true,
-                  isDead: Boolean(merc.isDead),
+                _delta: true
+              };
+              if (op.isWalking && typeof op.moveX === 'number') {
+                deltaP.moveX = Math.round(op.moveX);
+                deltaP.moveY = Math.round(op.moveY);
+              }
+              if (prevP.spd !== op.speed && typeof op.speed === 'number') deltaP.speed = op.speed;
+              if (prevP.atkTs !== op.lastAttackTime) deltaP.lastAttackTime = op.lastAttackTime || 0;
+              if (prevP.hp !== op.hp) deltaP.hp = op.hp;
+              if (prevP.maxHp !== op.maxHp) deltaP.maxHp = op.maxHp;
+              if (prevP.mp !== op.mp) deltaP.mp = op.mp;
+              if (prevP.maxMp !== op.maxMp) deltaP.maxMp = op.maxMp;
+              if (prevP.targetMobId !== (op.targetMobId || null)) deltaP.targetMobId = op.targetMobId || null;
+
+              if (merc) {
+                const deltaM = {
                   x: mx,
                   y: my,
-                  speed: typeof merc.speed === 'number' ? merc.speed : undefined,
                   dir: merc.dir || 'down',
-                  isWalking: Boolean(merc.isWalking),
-                  stance: merc.stance || 'SUPPORT',
-                  lastAttackTime: merc.lastAttackTime || 0,
-                  hp: merc.hp,
-                  maxHp: merc.maxHp,
-                  mp: merc.mp,
-                  maxMp: merc.maxMp
-                } : null,
-                _delta: true
+                  isWalking: Boolean(merc.isWalking)
+                };
+                if (prevP.mAtkTs !== merc.lastAttackTime) deltaM.lastAttackTime = merc.lastAttackTime || 0;
+                if (prevP.mHp !== merc.hp) deltaM.hp = merc.hp;
+                if (prevP.mMp !== merc.mp) deltaM.mp = merc.mp;
+                deltaP.mercenary = deltaM;
+              }
+              visiblePlayers.push(deltaP);
+            }
+          }
+        }
+
+        // 실제 유저(Human)에게는 미니맵 레이더 틱(0.5초)마다 AOI(500px) 바깥 원거리 플레이어들의 미니맵 좌표 전송
+        if (!isAiReceiver && isRadarTick) {
+          for (let i = 0; i < mapPlayers.length; i++) {
+            const farOther = mapPlayers[i];
+            if (!farOther || farOther.charId === receiver.charId || currentAoiIds.has(farOther.charId)) continue;
+            if (farOther.gmInvisible && !receiver.isAdmin) continue;
+            const fop = farOther.player;
+            if (!fop) continue;
+            currentAoiIds.add(farOther.charId);
+            const fox = Math.round(fop.x || 2000);
+            const foy = Math.round(fop.y || 14250);
+            const prevFar = receiver._knownPlayers.get(farOther.charId);
+            if (!prevFar || Math.abs(prevFar.x - fox) >= 15 || Math.abs(prevFar.y - foy) >= 15) {
+              receiver._knownPlayers.set(farOther.charId, {
+                ...(prevFar || {}),
+                x: fox,
+                y: foy,
+                metaSig: 'minimap'
               });
+              visiblePlayers.push({
+                charId: farOther.charId,
+                x: fox,
+                y: foy,
+                partyId: farOther.partyId || null,
+                _minimapOnly: true
+              });
+            }
+          }
+        }
+
+        // AOI(또는 맵)를 벗어난 플레이어 캐시 정리
+        let otherRemoved = false;
+        receiver._knownPlayers.forEach((_, cId) => {
+          if (!currentAoiIds.has(cId)) {
+            if (!isAiReceiver && !isRadarTick) {
+              // 실제 유저의 경우 원거리 미니맵 유저가 일반 틱에서 지워지지 않도록 실제 맵 퇴장 여부만 확인
+              const stillInMap = activeCharSockets.get(cId);
+              if (!stillInMap || normalizeMapKey(stillInMap.mapKey) !== mapKey) {
+                receiver._knownPlayers.delete(cId);
+                otherRemoved = true;
+              }
+            } else {
+              receiver._knownPlayers.delete(cId);
+              otherRemoved = true;
             }
           }
         });
 
-        // 맵을 떠난 플레이어 캐시 정리
-        let otherRemoved = false;
-        receiver._knownPlayers.forEach((_, cId) => {
-          if (!currentOtherIds.has(cId)) {
-            receiver._knownPlayers.delete(cId);
-            otherRemoved = true;
-          }
-        });
-
-        const otherCountChanged = (receiver._lastSentOtherCount ?? -1) !== currentOtherIds.size || otherRemoved;
-        receiver._lastSentOtherCount = currentOtherIds.size;
+        const otherCountChanged = (receiver._lastSentOtherCount ?? -1) !== currentAoiIds.size || otherRemoved;
+        receiver._lastSentOtherCount = currentAoiIds.size;
 
         if (!isNearRefreshTick && compactMobs.length === 0 && visiblePlayers.length === 0 && !otherCountChanged) {
-          return;
+          continue;
         }
 
         const tickPacket = {
@@ -4093,15 +4338,19 @@ setInterval(() => {
         if (visiblePlayers.length > 0 || otherCountChanged) {
           tickPacket.players = visiblePlayers;
           tickPacket.playersDelta = true;
-          tickPacket.allCharIds = Array.from(currentOtherIds);
+          // 📉 매 틱마다 전체 UUID 배열(allCharIds)을 중복 전송하지 않고 인원 변동 또는 1초 보정 틱에만 포함
+          if (otherCountChanged || isNearRefreshTick) {
+            tickPacket.allCharIds = isAiReceiver
+              ? Array.from(currentAoiIds)
+              : mapPlayers.filter(e => e.charId !== receiver.charId && (!e.gmInvisible || receiver.isAdmin)).map(e => e.charId);
+          }
         }
         if (isNearRefreshTick) {
-          tickPacket.buildVersion = CURRENT_BUILD_VERSION;
-          const recParty = getPartyByCharId(receiver.charId);
+          if (!isAiReceiver) tickPacket.buildVersion = CURRENT_BUILD_VERSION;
           tickPacket.party = recParty ? buildPartySnapshot(recParty) : null;
         }
         sendWsMessage(receiver.conn, tickPacket, true);
-      });
+      }
     }
   });
 }, SERVER_TICK_MS);

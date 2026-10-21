@@ -537,15 +537,20 @@ function generateAICharacterRecord(slotIndex, userId) {
   const classes = ['knight', 'ranger', 'wizard'];
   const charClass = classes[idx % classes.length];
 
-  // 300명의 에이전트를 R01 ~ R15 전 지역 및 레벨대(Lv.5 ~ Lv.240)에 골고루 분포
+  // 300명의 에이전트를 R01 ~ R15 전 지역(필드 _sub1 & 던전 _dungeon 총 30개 맵) 및 레벨대(Lv.5 ~ Lv.245)에 고르게 분포
   const regionIdx = idx % REGION_CONFIGS.length;
   const regCfg = REGION_CONFIGS[regionIdx];
   const levelSpan = Math.max(1, regCfg.maxLv - regCfg.minLv);
   const level = regCfg.minLv + ((idx * 7) % (levelSpan + 1));
 
-  const mapKey = `${regCfg.id}_sub1`;
-  const posX = Math.round(1350 + ((idx * 173) % 1300));
-  const posY = Math.round(8300 + ((idx * 389) % 4400));
+  const isDungeonSpawn = (Math.floor(idx / REGION_CONFIGS.length) % 3 === 1);
+  const mapKey = isDungeonSpawn ? `${regCfg.id}_dungeon` : `${regCfg.id}_sub1`;
+  const posX = isDungeonSpawn
+    ? Math.round(950 + ((idx * 193) % 1150))
+    : Math.round(1350 + ((idx * 173) % 1300));
+  const posY = isDungeonSpawn
+    ? Math.round(950 + ((idx * 257) % 1150))
+    : Math.round(8300 + ((idx * 389) % 4400));
 
   let nameHash = idx * 31;
   for (let i = 0; i < rawName.length; i++) nameHash += rawName.charCodeAt(i);

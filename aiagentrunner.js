@@ -27,10 +27,93 @@ require('dotenv').config()
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PORT = Number(process.env.PORT || 4000);
 const SERVER_WS_URL = process.env.SERVER_WS_URL || `ws://127.0.0.1:${PORT}/ws`;
-let maxConcurrentAI = Math.min(AI_TOTAL_POOL, Math.max(0, Number(process.env.MAX_CONCURRENT_AI || 50)));
+let maxConcurrentAI = Math.min(AI_TOTAL_POOL, Math.max(0, Number(process.env.MAX_CONCURRENT_AI || 100)));
 const MAX_PARTY_MEMBERS = 5;
+const MAX_AGENTS_PER_MAP = 8; // 단일 맵(필드/던전) 최대 상주 인원 캡(7~9명 기준 8명)
 
 const fastHypot = (dx, dy) => Math.sqrt(dx * dx + dy * dy);
+
+// 특정 맵에 현재 상주 중인 AI 에이전트 인원수 조회
+function getMapAgentCount(mapKey, excludeCharId = null) {
+  let cnt = 0;
+  for (let i = 0; i < activeAgents.length; i++) {
+    const a = activeAgents[i];
+    if (!a || a.isLoggingOut || (excludeCharId && a.charId === excludeCharId)) continue;
+    if (a.mapKey === mapKey) cnt++;
+  }
+  return cnt;
+}
+
+// 15개 지역(R01~R15) 필드(_sub1) 및 던전(_dungeon) 총 30개 맵에 고르게 분산 배치 & 맵당 최대 8명 캡 보장
+function pickBalancedMapPlacement(level, slotIndex, excludeCharId = null, preferredRegionKey = null) {
+  let baseIdx = 0;
+  if (preferredRegionKey) {
+    const foundIdx = REGION_CONFIGS.findIndex(r => r.id === preferredRegionKey);
+    if (foundIdx >= 0) baseIdx = foundIdx;
+  } else {
+    for (let i = REGION_CONFIGS.length - 1; i >= 0; i--) {
+      if (level >= REGION_CONFIGS[i].minLv) {
+        baseIdx = i;
+        break;
+      }
+    }
+  }
+
+  // 레벨에 맞는 지역을 최우선으로 탐색하고, 인원 캡(8명) 도달 시 인접 지역(±1, ±2...)의 필드/던전으로 자동 분산
+  const regionOrder = [baseIdx];
+  for (let offset = 1; offset < REGION_CONFIGS.length; offset++) {
+    if (baseIdx - offset >= 0) regionOrder.push(baseIdx - offset);
+    if (baseIdx + offset < REGION_CONFIGS.length) regionOrder.push(baseIdx + offset);
+  }
+
+  const preferDungeonFirst = (slotIndex % 3 === 0);
+  let bestCandidate = null;
+  let minPop = Infinity;
+
+  for (let r = 0; r < regionOrder.length; r++) {
+    const regCfg = REGION_CONFIGS[regionOrder[r]];
+    const mapTypes = preferDungeonFirst ? ['dungeon', 'sub1'] : ['sub1', 'dungeon'];
+    for (let m = 0; m < mapTypes.length; m++) {
+      const mType = mapTypes[m];
+      const mapKey = `${regCfg.id}_${mType}`;
+      const pop = getMapAgentCount(mapKey, excludeCharId);
+      if (pop < MAX_AGENTS_PER_MAP) {
+        // 정원 미만인 첫 적정 레벨 맵 중 인원이 적은 곳 선택
+        if (r <= 2 && pop <= 5) {
+          const isDung = (mType === 'dungeon');
+          return {
+            regionKey: regCfg.id,
+            mapKey,
+            x: isDung ? Math.round(900 + ((slotIndex * 197) % 1200)) : Math.round(1250 + ((slotIndex * 173) % 1500)),
+            y: isDung ? Math.round(900 + ((slotIndex * 263) % 1200)) : Math.round(7800 + ((slotIndex * 389) % 4500))
+          };
+        }
+        if (pop < minPop) {
+          minPop = pop;
+          const isDung = (mType === 'dungeon');
+          bestCandidate = {
+            regionKey: regCfg.id,
+            mapKey,
+            x: isDung ? Math.round(900 + ((slotIndex * 197) % 1200)) : Math.round(1250 + ((slotIndex * 173) % 1500)),
+            y: isDung ? Math.round(900 + ((slotIndex * 263) % 1200)) : Math.round(7800 + ((slotIndex * 389) % 4500))
+          };
+        }
+      }
+    }
+    if (bestCandidate && minPop < MAX_AGENTS_PER_MAP) break;
+  }
+
+  if (bestCandidate) return bestCandidate;
+
+  const fallbackReg = REGION_CONFIGS[slotIndex % REGION_CONFIGS.length];
+  const isDung = (slotIndex % 2 === 1);
+  return {
+    regionKey: fallbackReg.id,
+    mapKey: isDung ? `${fallbackReg.id}_dungeon` : `${fallbackReg.id}_sub1`,
+    x: isDung ? Math.round(1000 + (slotIndex % 10) * 110) : Math.round(1400 + (slotIndex % 10) * 120),
+    y: isDung ? Math.round(1000 + (slotIndex % 10) * 110) : Math.round(8400 + (slotIndex % 12) * 320)
+  };
+}
 
 // 인간 플레이어와 동일한 전체 스킬 DB (83종 + 레거시 호환)
 const SKILL_DB = FULL_SKILL_DB;
@@ -145,12 +228,24 @@ class AIAgentClient {
     this.maxExp = Number(cd.maxExp) || Math.floor(100 * Math.pow(this.level, 1.38));
     this.gold = Math.max(Number(dbRow.gold) || 0, 300000 + this.level * 20000);
 
-    this.regionKey = dbRow.region_key || this.pickBestRegionForLevel();
-    this.mapKey = dbRow.map_key || `${this.regionKey}_sub1`;
-    this.x = Number(dbRow.pos_x) || (1500 + (this.slotIndex % 10) * 110);
-    this.y = Number(dbRow.pos_y) || (8500 + (this.slotIndex % 12) * 320);
-    if (isInTownSafeZone(this.mapKey, this.x, this.y)) {
-      this.y = 9500 + (this.slotIndex % 8) * 280;
+    const initReg = dbRow.region_key || this.pickBestRegionForLevel();
+    const initMap = dbRow.map_key || `${initReg}_sub1`;
+    const currentMapPop = getMapAgentCount(initMap, this.charId);
+
+    if (currentMapPop >= MAX_AGENTS_PER_MAP || (isInitialBoot && (this.slotIndex % 3 === 0))) {
+      const balanced = pickBalancedMapPlacement(this.level, this.slotIndex, this.charId, initReg);
+      this.regionKey = balanced.regionKey;
+      this.mapKey = balanced.mapKey;
+      this.x = balanced.x;
+      this.y = balanced.y;
+    } else {
+      this.regionKey = initReg;
+      this.mapKey = initMap;
+      this.x = Number(dbRow.pos_x) || (1500 + (this.slotIndex % 10) * 110);
+      this.y = Number(dbRow.pos_y) || (8500 + (this.slotIndex % 12) * 320);
+      if (isInTownSafeZone(this.mapKey, this.x, this.y)) {
+        this.y = 9500 + (this.slotIndex % 8) * 280;
+      }
     }
 
     this.angle = 0;
@@ -339,18 +434,53 @@ class AIAgentClient {
     return Number((base * spdBoost).toFixed(2));
   }
 
-  buildPlayerSyncPayload() {
-    const wType = this.equip?.weapon?.type || (this.charClass === 'ranger' ? 'W_BW02' : (this.charClass === 'wizard' ? 'W_ST02' : 'W_SW02'));
+  buildPlayerSyncPayload(isFull = false) {
     const curSpd60 = this.getBaseMoveSpeedFrame60();
+    const rx = Math.round(this.x);
+    const ry = Math.round(this.y);
+    const rMoveX = (this.isWalking && typeof this.moveX === 'number') ? Math.round(this.moveX) : rx;
+    const rMoveY = (this.isWalking && typeof this.moveY === 'number') ? Math.round(this.moveY) : ry;
+
+    if (!isFull) {
+      // 📉 루프백 대역폭 50%+ 절감을 위한 델타 페이로드 (이름/직업/장비/최대HP 등 정적 메타데이터 제외)
+      const deltaPayload = {
+        charId: this.charId,
+        x: rx,
+        y: ry,
+        moveX: rMoveX,
+        moveY: rMoveY,
+        speed: curSpd60,
+        dir: this.dir || 'down',
+        isWalking: Boolean(this.isWalking),
+        lastAttackTime: this.lastAttackTime || 0,
+        hp: Math.round(this.hp),
+        mp: Math.round(this.mp),
+        targetMobId: this.targetMobId || null
+      };
+      if (this.mercenary && this.mercenary.hired) {
+        deltaPayload.mercenary = {
+          x: Math.round(this.mercenary.x || rx + 40),
+          y: Math.round(this.mercenary.y || ry + 30),
+          dir: this.mercenary.dir || 'down',
+          isWalking: Boolean(this.mercenary.isWalking),
+          lastAttackTime: this.mercenary.lastAttackTime || 0,
+          hp: Math.round(this.mercenary.hp || 250),
+          mp: Math.round(this.mercenary.mp || 100)
+        };
+      }
+      return deltaPayload;
+    }
+
+    const wType = this.equip?.weapon?.type || (this.charClass === 'ranger' ? 'W_BW02' : (this.charClass === 'wizard' ? 'W_ST02' : 'W_SW02'));
     return {
       charId: this.charId,
       name: this.name,
       class: this.charClass,
       level: this.level,
-      x: Math.round(this.x),
-      y: Math.round(this.y),
-      moveX: (this.isWalking && typeof this.moveX === 'number') ? Math.round(this.moveX) : Math.round(this.x),
-      moveY: (this.isWalking && typeof this.moveY === 'number') ? Math.round(this.moveY) : Math.round(this.y),
+      x: rx,
+      y: ry,
+      moveX: rMoveX,
+      moveY: rMoveY,
       speed: curSpd60,
       dir: this.dir || 'down',
       isWalking: Boolean(this.isWalking),
@@ -369,8 +499,8 @@ class AIAgentClient {
         class: this.mercenary.class || 'knight',
         name: this.mercenary.name || '용병',
         level: this.mercenary.level || this.level,
-        x: Math.round(this.mercenary.x || this.x + 40),
-        y: Math.round(this.mercenary.y || this.y + 30),
+        x: Math.round(this.mercenary.x || rx + 40),
+        y: Math.round(this.mercenary.y || ry + 30),
         speed: Number((curSpd60 * 1.02).toFixed(2)),
         dir: this.mercenary.dir || 'down',
         isWalking: Boolean(this.mercenary.isWalking),
@@ -393,6 +523,7 @@ class AIAgentClient {
     }
 
     this.ws.on('open', () => {
+      this._lastFullSyncTs = Date.now();
       this.sendWs({
         type: 'ENTER_CHAR',
         charId: this.charId,
@@ -400,7 +531,7 @@ class AIAgentClient {
         sessionToken: this.sessionToken,
         mapKey: this.mapKey,
         regionKey: this.regionKey,
-        player: this.buildPlayerSyncPayload()
+        player: this.buildPlayerSyncPayload(true)
       });
 
       if (!this.loopTimer) {
@@ -421,6 +552,11 @@ class AIAgentClient {
 
     this.ws.on('close', () => {
       this.partyData = null;
+      // 🛡️ 소켓 종료 시 좀비 setInterval 타이머 및 메모리 누수 원천 차단
+      if (this.loopTimer) {
+        clearInterval(this.loopTimer);
+        this.loopTimer = null;
+      }
     });
 
     this.ws.on('error', () => {});
@@ -535,6 +671,8 @@ class AIAgentClient {
         if (this.targetMobId === mId) {
           this.targetMob = null;
           this.targetMobId = null;
+          // 타겟 사망 시 다음 타겟 탐색이 최대 0.2~0.3초 이내(인간 수준 반응속도)에 이루어지도록 의사결정 타이머 당김
+          this.lastAiDecisionTime = Date.now() - 160;
         }
         if (Array.isArray(msg.newGroundItems)) {
           for (const it of msg.newGroundItems) {
@@ -730,6 +868,7 @@ class AIAgentClient {
   }
 
   onPartyUpdated(partySnap) {
+    const prevFocusTarget = this.partyData?.leaderTargetMobId || null;
     this.partyData = partySnap || null;
     if (!this.partyData) {
       this.followTargetName = null;
@@ -737,6 +876,10 @@ class AIAgentClient {
     }
 
     if (this.partyData.leaderCharId && this.partyData.leaderCharId !== this.charId) {
+      // 파티장이 점사(FOCUS) 타겟을 변경한 경우 딜레이 없이 다음 틱에 즉시 점사 타겟 전환!
+      if (this.partyData.partyMode === 'FOCUS' && this.partyData.leaderTargetMobId && this.partyData.leaderTargetMobId !== prevFocusTarget) {
+        this.lastAiDecisionTime = 0;
+      }
       const leaderMem = (this.partyData.members || []).find(m => m.charId === this.partyData.leaderCharId);
       if (leaderMem) {
         this.followTargetName = leaderMem.name;
@@ -762,10 +905,14 @@ class AIAgentClient {
   // =====================================================================
   startLoop() {
     this.lastTickTime = Date.now();
-    this.lastAiDecisionTime = 0;
-    this.lastSyncSentTime = 0;
+    // 100명의 에이전트가 동일 밀리초에 동시에 몬스터 탐색을 수행하지 않도록 슬롯 기반 위상 분산
+    this.lastAiDecisionTime = Date.now() - ((this.slotIndex * 37) % 350);
+    this.lastSyncSentTime = Date.now() - ((this.slotIndex * 19) % 200);
+    this._lastSentMoveX = Math.round(this.x);
+    this._lastSentMoveY = Math.round(this.y);
+    this._lastSentWalk = false;
 
-    // 100ms 고주파 틱(초당 10회, 서버 WORLD_STATE_TICK 주기와 1:1 동기화)으로 플레이어처럼 부드러운 이동 구현
+    // 100ms 물리 이동 틱 + 350ms 의사결정 주기 + 200ms/목표변경 스로틀링 패킷 전송
     this.loopTimer = setInterval(() => {
       if (this.isLoggingOut) return;
       const now = Date.now();
@@ -795,6 +942,8 @@ class AIAgentClient {
         this.sellJunkItemsInBag();
         this.checkMercenaryNeeds();
         this.checkBuffPotions(now);
+        if (this.invitedHistory.size > 30) this.invitedHistory.clear();
+        if (this.rejectedTargets.size > 30) this.rejectedTargets.clear();
       }
 
       // 4) 주기적 Supabase 저장 (45초마다)
@@ -803,8 +952,8 @@ class AIAgentClient {
         this.saveToSupabase(false);
       }
 
-      // 5) 전투/타겟팅/버프 의사결정은 200ms 주기로 안정적으로 수행하고, 위치 이동은 매 100ms마다 부드럽게 전진
-      if (now - (this.lastAiDecisionTime || 0) >= 200) {
+      // 5) 몬스터 거리 탐색 및 타겟 의사결정 주기: 350ms(초당 약 3회)로 완화하여 CPU 부하 대폭 절감
+      if (now - (this.lastAiDecisionTime || 0) >= 350) {
         this.lastAiDecisionTime = now;
         this.processBuffsAndPartySupport(now);
         this.checkProactivePartyInvite(now);
@@ -821,21 +970,38 @@ class AIAgentClient {
       }
       this.updateMercenaryRoutine(dtMs, now);
 
-      // 7) 서버로 실시간 상태 동기화 (이동/전투 중에는 100ms마다, 정지 시에는 900ms마다 전송)
+      // 7) PLAYER_SYNC 스로틀링: 목표 지점(moveX, moveY) 변경 시 또는 200ms 주기로만 전송, 정지/비전투 시 900ms 주기 전송
+      const curMoveX = (this.isWalking && typeof this.moveX === 'number') ? Math.round(this.moveX) : Math.round(this.x);
+      const curMoveY = (this.isWalking && typeof this.moveY === 'number') ? Math.round(this.moveY) : Math.round(this.y);
+      const moveTargetChanged = (
+        Boolean(this.isWalking) !== Boolean(this._lastSentWalk) ||
+        (this.isWalking && (Math.abs(curMoveX - (this._lastSentMoveX || 0)) >= 8 || Math.abs(curMoveY - (this._lastSentMoveY || 0)) >= 8))
+      );
       const isActiveNow = Boolean(
         this.isWalking ||
         (this.mercenary && this.mercenary.isWalking) ||
         (now - (this.lastAttackTime || 0) < 600) ||
         (this.mercenary && (now - (this.mercenary.lastAttackTime || 0) < 600))
       );
-      if (isActiveNow || (now - (this.lastSyncSentTime || 0) >= 900)) {
+      const elapsedSinceSync = now - (this.lastSyncSentTime || 0);
+      const shouldSendSync =
+        moveTargetChanged ||
+        (isActiveNow && elapsedSinceSync >= 200) ||
+        (!isActiveNow && elapsedSinceSync >= 900);
+
+      if (shouldSendSync) {
         this.lastSyncSentTime = now;
+        this._lastSentMoveX = curMoveX;
+        this._lastSentMoveY = curMoveY;
+        this._lastSentWalk = Boolean(this.isWalking);
+        const needFullMeta = (now - (this._lastFullSyncTs || 0)) >= 12000;
+        if (needFullMeta) this._lastFullSyncTs = now;
         this.sendWs({
           type: 'PLAYER_SYNC',
           charId: this.charId,
           mapKey: this.mapKey,
           regionKey: this.regionKey,
-          player: this.buildPlayerSyncPayload()
+          player: this.buildPlayerSyncPayload(needFullMeta)
         });
       }
     }, 100);
@@ -1196,20 +1362,15 @@ class AIAgentClient {
         type: 'PLAYER_SKILL',
         charId: this.charId,
         mapKey: this.mapKey,
-        skillId: skill.id,
         skillName: skill.name,
         circleLv: skill.circle || 1,
         casterClass: actorClass,
         casterX: Math.round(attackerX),
         casterY: Math.round(attackerY),
-        sx: Math.round(attackerX),
-        sy: Math.round(attackerY),
         startX: Math.round(startXOverride ?? attackerX),
         startY: Math.round(startYOverride ?? attackerY),
         tx: Math.round(mob.x),
         ty: Math.round(mob.y),
-        targetX: Math.round(mob.x),
-        targetY: Math.round(mob.y),
         mobId: String(mob.id),
         isAoe: Boolean(skill.aoe),
         skyDrop: Boolean(skill.skyDrop),
@@ -1625,9 +1786,8 @@ class AIAgentClient {
 
       this.state = 'HUNTING';
       this.isShopping = false;
-      const huntX = Math.round(1300 + Math.random() * 1400);
-      const huntY = Math.round(7200 + Math.random() * 4800);
-      this.teleportToMap(this.regionKey, `${this.regionKey}_sub1`, huntX, huntY);
+      const nextSpot = pickBalancedMapPlacement(this.level, this.slotIndex, this.charId, this.regionKey);
+      this.teleportToMap(nextSpot.regionKey, nextSpot.mapKey, nextSpot.x, nextSpot.y);
     }, 3500);
   }
 
@@ -1917,16 +2077,19 @@ class AIAgentClient {
 
   checkSmartMapNavigation(now) {
     if (this.partyData && this.partyData.leaderCharId !== this.charId) return;
-    if (now - this.lastMapCheckTime < 180000) return;
+    if (now - this.lastMapCheckTime < 35000) return;
     this.lastMapCheckTime = now;
+    if (this.state !== 'HUNTING') return;
 
+    const currentMapPop = getMapAgentCount(this.mapKey, null);
     const bestRegion = this.pickBestRegionForLevel();
-    if (this.regionKey !== bestRegion && this.state === 'HUNTING') {
-      const useDungeon = Math.random() < 0.22;
-      const nextMap = useDungeon ? `${bestRegion}_dungeon` : `${bestRegion}_sub1`;
-      const sx = useDungeon ? (1200 + Math.random() * 800) : (1800 + Math.random() * 600);
-      const sy = useDungeon ? (1200 + Math.random() * 1000) : (8800 + Math.random() * 3000);
-      this.teleportToMap(bestRegion, nextMap, sx, sy);
+
+    // 현재 맵 인원이 캡(8명)을 초과했거나, 레벨업으로 적정 지역이 변경된 경우 여유로운 맵/던전으로 자동 분산 이동
+    if (currentMapPop > MAX_AGENTS_PER_MAP || this.regionKey !== bestRegion) {
+      const targetSpot = pickBalancedMapPlacement(this.level, this.slotIndex, this.charId, bestRegion);
+      if (targetSpot.mapKey !== this.mapKey) {
+        this.teleportToMap(targetSpot.regionKey, targetSpot.mapKey, targetSpot.x, targetSpot.y);
+      }
     }
   }
 
@@ -1945,11 +2108,13 @@ class AIAgentClient {
     }
     this.worldMonsters.clear();
     this.worldItems.clear();
+    this.worldPlayers.clear();
+    this._lastFullSyncTs = Date.now();
     this.sendWs({
       type: 'CHANGE_MAP',
       charId: this.charId,
       mapKey: this.mapKey,
-      player: this.buildPlayerSyncPayload()
+      player: this.buildPlayerSyncPayload(true)
     });
   }
 
@@ -2333,9 +2498,25 @@ let controlWs = null;
 async function manageAgentRotation() {
   if (isRebuildingPool) return;
   try {
-    activeAgents = activeAgents.filter(
-      a => !a.isLoggingOut && a.ws && (a.ws.readyState === WebSocket.OPEN || a.ws.readyState === WebSocket.CONNECTING)
-    );
+    const aliveList = [];
+    for (let i = 0; i < activeAgents.length; i++) {
+      const a = activeAgents[i];
+      if (!a) continue;
+      const isSocketAlive = !a.isLoggingOut && a.ws && (a.ws.readyState === WebSocket.OPEN || a.ws.readyState === WebSocket.CONNECTING);
+      if (isSocketAlive) {
+        aliveList.push(a);
+      } else {
+        // 🛡️ 끊어진 에이전트의 인터벌 타이머 및 맵 객체 즉시 해제로 메모리 누수 차단
+        if (a.loopTimer) {
+          clearInterval(a.loopTimer);
+          a.loopTimer = null;
+        }
+        a.worldMonsters?.clear();
+        a.worldPlayers?.clear();
+        a.worldItems?.clear();
+      }
+    }
+    activeAgents = aliveList;
 
     // 1) 상시 인원이 줄어든 경우 초과 에이전트 즉시 로그아웃 및 DB 저장
     if (activeAgents.length > maxConcurrentAI) {
