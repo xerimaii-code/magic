@@ -788,6 +788,22 @@ window.guideToQuestTarget = function(qId) {
       window.addChat(`🧭 퀘스트 목표 '${q.targetName}' 위치로 이동합니다.`, 'log-sys');
       return;
     }
+
+    const mobDef = (GameDB.Monsters || []).find(m => m && m.name && m.name.includes(q.targetName));
+    if (mobDef && window.ImmersiveSystem?.getMonsterHabitatPoint) {
+      const habitat = window.ImmersiveSystem.getMonsterHabitatPoint(mobDef);
+      if (habitat && typeof window.findPath === 'function') {
+        const path = window.findPath(player.x, player.y, habitat.x, habitat.y);
+        if (Array.isArray(path) && path.length > 0) {
+          player.targetEntity = null;
+          player.path = path;
+          player.isMoving = true;
+          player.manualMoving = false;
+          window.addChat(`🧭 퀘스트 목표 '${q.targetName}' 서식지 [${habitat.name}]로 자동 이동합니다.`, 'log-sys');
+          return;
+        }
+      }
+    }
   }
 
   const qNpc = (npcList || []).find(n => n && n.role === 'QUEST');

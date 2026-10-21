@@ -146,16 +146,79 @@ export const ImmersiveSystem = {
     this.renderModal();
   },
 
+  getMonsterHabitatPoint(mobDef) {
+    if (!mobDef) return null;
+    const rId = String(mobDef.region || 'R01');
+    const zone = String(mobDef.zone || 'field');
+    const isBoss = String(mobDef.name || '').includes('(B)') || zone.includes('boss');
+    const isDungeon = zone === 'dungeon' || zone === 'goblin_cave' || zone === 'ant_hell' || zone === 'shipwreck';
+
+    // R01 (알트리아)
+    if (rId === 'R01') {
+      if (zone === 'south_plains') return { x: 1850, y: 13150, name: '남부 평원 (슬라임 서식지)' };
+      if (zone === 'whispering_plains') return { x: 1650, y: 8100, name: '속삭이는 들판 (고블린 서식지)' };
+      if (zone === 'whispering_ruins') return { x: 1550, y: 3200, name: '속삭임의 폐허' };
+      if (zone === 'chief_camp') return { x: 2950, y: 2600, name: '고블린 족장 주둔지' };
+      if (isBoss) return { x: 2950, y: 2250, name: '고블린 족장의 제단' };
+      if (isDungeon) return { x: 3000, y: 7500, name: '고블린 동굴 입구', isDungeon: true };
+    }
+
+    // R02 (실버바인)
+    if (rId === 'R02') {
+      if (zone === 'fairy_outskirts') return { x: 1850, y: 11100, name: '요정의 외곽 숲' };
+      if (zone === 'silver_vine_forest') return { x: 1380, y: 8500, name: '은빛 덩굴 숲' };
+      if (zone === 'lumber_mill') return { x: 2750, y: 7400, name: '버려진 벌목장' };
+      if (zone === 'world_tree_camp') return { x: 2050, y: 5250, name: '세계수 외곽 주둔지' };
+      if (isBoss) return { x: 2050, y: 4550, name: '부패한 세계수 제단' };
+    }
+
+    // R05 (모라안)
+    if (rId === 'R05') {
+      if (zone === 'oasis_outskirts') return { x: 1850, y: 11100, name: '오아시스 외곽' };
+      if (zone === 'sand_dunes') return { x: 1550, y: 8950, name: '모래 언덕' };
+      if (zone === 'ant_hell') return { x: 1420, y: 4300, name: '개미지옥 서식지', isDungeon: true };
+      if (zone === 'pharaoh_tomb') return { x: 2950, y: 6100, name: '파라오의 무덤' };
+      if (isBoss) return { x: 2950, y: 5300, name: '파라오의 신전' };
+    }
+
+    // R07 (발레노스)
+    if (rId === 'R07') {
+      if (zone === 'black_beach') return { x: 2950, y: 11400, name: '검은 해변' };
+      if (zone === 'shipwreck') return { x: 1950, y: 7450, name: '난파선 지대', isDungeon: true };
+      if (zone === 'pirate_camp') return { x: 2650, y: 5100, name: '해적단 요새' };
+      if (isBoss) return { x: 2720, y: 3500, name: '해적선장 기지' };
+    }
+
+    // 공통 심리스 맵 (R03, R04, R06, R08~R15)
+    const mapData = window.currentMapData || window.mapData;
+    if (mapData) {
+      if (isBoss && mapData.bossPos) return { x: mapData.bossPos.x, y: mapData.bossPos.y, name: '보스 제단' };
+      if (zone === 'boss_camp' && mapData.bossCampPos) return { x: mapData.bossCampPos.x, y: mapData.bossCampPos.y, name: '보스 주둔지' };
+      if (isDungeon && mapData.dungeonEntrance) return { x: mapData.dungeonEntrance.x, y: mapData.dungeonEntrance.y, name: '던전 입구', isDungeon: true };
+      if (mapData.fieldCenterPos) return { x: mapData.fieldCenterPos.x, y: mapData.fieldCenterPos.y, name: '필드 서식지' };
+      if (mapData.fieldPos) return { x: mapData.fieldPos.x, y: mapData.fieldPos.y, name: '필드 서식지' };
+    }
+
+    if (isBoss) return { x: 2050, y: 4500, name: '보스 제단' };
+    if (isDungeon) return { x: 3000, y: 7500, name: '던전 입구', isDungeon: true };
+    return { x: 1850, y: 9000, name: '필드 서식지' };
+  },
+
   moveToMonster(mobId) {
     const mobDef = (GameDB.Monsters || []).find(m => m.id === Number(mobId));
     if (!mobDef || !window.player) return;
     const curReg = window.currentRegionKey || 'R01';
     if (mobDef.region !== curReg) {
-      window.addChat?.(`📍 '${mobDef.name}' 몬스터는 [${mobDef.region}] 지역에 서식합니다. 먼저 월드맵(마을 포탈)에서 해당 지역으로 이동하세요.`, 'log-sys');
+      const regObj = (GameDB.Regions || []).find(r => r.id === mobDef.region);
+      const regName = regObj ? regObj.name : mobDef.region;
+      window.addChat?.(`📍 '${mobDef.name}' 몬스터는 [${regName}] 지역에 서식합니다. 마을 포탈(아리아)을 통해 해당 지역으로 먼저 이동하세요.`, 'log-sys');
       return;
     }
 
-    // 현재 맵 내 살아있는 해당 몬스터 중 가장 가까운 개체 탐색
+    const mModal = document.getElementById('immersive-20-modal');
+    if (mModal) mModal.classList.add('hidden');
+
+    // 1) 현재 클라이언트 시야(AOI 약 1650px) 내에 살아있는 몬스터가 있으면 즉시 해당 몬스터로 타겟팅 이동
     const liveList = Array.isArray(window.monsterList) ? window.monsterList : [];
     let nearest = null;
     let minDist = Infinity;
@@ -171,18 +234,43 @@ export const ImmersiveSystem = {
       }
     });
 
-    const mModal = document.getElementById('immersive-20-modal');
-    if (mModal) mModal.classList.add('hidden');
-
     if (nearest && typeof window.findPath === 'function') {
       window.player.targetEntity = { type: 'MONSTER', ref: nearest };
       window.player.path = window.findPath(window.player.x, window.player.y, nearest.x, nearest.y);
       window.player.isMoving = true;
       window.player.manualMoving = false;
       window.updateTopTargetUI?.(nearest);
-      window.addChat?.(`📍 '${mobDef.name}' 서식 위치로 이동합니다.`, 'log-sys');
+      window.addChat?.(`📍 '${mobDef.name}' 위치로 자동 이동합니다.`, 'log-sys');
+      return;
+    }
+
+    // 2) 현재 시야 밖(원거리)이거나 리스폰 중이라 주변에 개체가 없을 경우: 해당 몬스터의 공식 서식지/스폰 좌표로 즉시 자동 이동!
+    const habitat = this.getMonsterHabitatPoint(mobDef);
+    if (habitat && typeof window.findPath === 'function') {
+      const path = window.findPath(window.player.x, window.player.y, habitat.x, habitat.y);
+      if (Array.isArray(path) && path.length > 0) {
+        window.player.targetEntity = null;
+        window.player.path = path;
+        window.player.isMoving = true;
+        window.player.manualMoving = false;
+        if (habitat.isDungeon && !(window.currentMapKey || '').includes('dungeon')) {
+          window.addChat?.(`📍 '${mobDef.name}'은 던전 서식 몬스터입니다. [${habitat.name}]로 자동 이동합니다.`, 'log-sys');
+        } else {
+          window.addChat?.(`📍 '${mobDef.name}' 서식지 [${habitat.name}] 위치로 자동 이동합니다. (도착 시 몬스터 자동 탐색)`, 'log-sys');
+        }
+        return;
+      }
+    }
+
+    // 3) 최후의 직접 이동 폴백
+    if (habitat) {
+      window.player.targetEntity = null;
+      window.player.path = [{ x: habitat.x, y: habitat.y }];
+      window.player.isMoving = true;
+      window.player.manualMoving = false;
+      window.addChat?.(`📍 '${mobDef.name}' 서식지 [${habitat.name}] 방향으로 이동을 시작합니다.`, 'log-sys');
     } else {
-      window.addChat?.(`📍 현재 필드에서 '${mobDef.name}' 개체를 찾지 못했습니다. (던전 서식 몬스터이거나 리스폰 대기 중)`, 'log-sys');
+      window.addChat?.(`📍 '${mobDef.name}'의 서식지 위치를 찾지 못했습니다.`, 'log-sys');
     }
   },
 
