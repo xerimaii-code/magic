@@ -151,7 +151,7 @@ try { require('dotenv').config(); } catch (_) {}
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PORT = Number(process.env.PORT || 4000);
 const SERVER_WS_URL = process.env.SERVER_WS_URL || `ws://127.0.0.1:${PORT}/ws`;
-let maxConcurrentAI = Math.min(AI_TOTAL_POOL, Math.max(0, Number(process.env.MAX_CONCURRENT_AI || 100)));
+let maxConcurrentAI = Math.min(AI_TOTAL_POOL, Math.max(0, Number(process.env.MAX_CONCURRENT_AI || 150)));
 const MAX_PARTY_MEMBERS = 5;
 const MAX_AGENTS_PER_MAP = 8; // 단일 맵(필드/던전) 최대 상주 인원 캡(7~9명 기준 8명)
 const CPU_LIMIT_PCT = Math.min(85, Math.max(35, Number(process.env.MAX_CPU_PERCENT || 65)));
@@ -2770,14 +2770,14 @@ async function setConcurrentAICount(newMax, requesterCharId = null) {
 /**
  * 운영자 명령어 (/모험가생성 <숫자>) 처리: 기존 AI 전체 삭제 후 신규 생성 및 기본 50명 상시 로테이션 시작
  */
-async function rebuildAIPool(newTotalCount = 600, defaultConcurrent = 100, requesterCharId = null) {
+async function rebuildAIPool(newTotalCount = 600, defaultConcurrent = 150, requesterCharId = null) {
   if (isRebuildingPool) {
     sendControlReport(requesterCharId, `⚠️ 이미 모험가 생성 작업이 진행 중입니다. 완료될 때까지 잠시만 기다려주세요.`, 'log-hit');
     return;
   }
   isRebuildingPool = true;
   const targetTotal = Math.max(1, Math.min(1000, Number(newTotalCount) || 600));
-  const targetConcurrent = Math.min(targetTotal, Math.max(1, Number(defaultConcurrent) || 100));
+  const targetConcurrent = Math.min(targetTotal, Math.max(1, Number(defaultConcurrent) || 150));
 
   try {
     console.log(`⚙️ [GM 모험가생성 시작] 기존 AI 에이전트 접속 종료 및 삭제 후 ${targetTotal}명 재생성을 시작합니다...`);

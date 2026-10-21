@@ -2335,12 +2335,12 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
   if (cmd === '/모험가생성' || cmd === '/에이전트생성' || cmd === '/ai생성' || cmd === '/모험가초기화') {
     const totalCount = args[0] ? parseInt(args[0], 10) : 600;
     if (isNaN(totalCount) || totalCount < 1 || totalCount > 1000) {
-      sendSystemMsgToEntry(entry, `💡 사용법: /모험가생성 [1~1000, 기본600] [상시인원, 기본100] (기존 에이전트 전체 삭제 후 지정 인원만큼 신규 생성 및 기본 100명 상시 순환 로테이션)`, 'log-sys');
+      sendSystemMsgToEntry(entry, `💡 사용법: /모험가생성 [1~1000, 기본600] [상시인원, 기본150] (기존 에이전트 전체 삭제 후 지정 인원만큼 신규 생성 및 기본 150명 상시 순환 로테이션)`, 'log-sys');
       return true;
     }
     const defaultConcurrent = args[1]
-      ? Math.min(totalCount, Math.max(1, parseInt(args[1], 10) || 100))
-      : Math.min(100, totalCount);
+      ? Math.min(totalCount, Math.max(1, parseInt(args[1], 10) || 150))
+      : Math.min(150, totalCount);
 
     // 현재 월드에 접속 중인 기존 AI 에이전트 소켓/파티 즉시 정리
     activeCharSockets.forEach((e, cid) => {
@@ -2388,7 +2388,7 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
   if (cmd === '/모험가상시인원' || cmd === '/모험가상시접속' || cmd === '/상시인원' || cmd === '/에이전트인원' || cmd === '/에이전트상시인원' || cmd === '/ai인원') {
     const concurrentCount = parseInt(args[0], 10);
     if (isNaN(concurrentCount) || concurrentCount < 0 || concurrentCount > 600) {
-      sendSystemMsgToEntry(entry, `💡 사용법: /모험가상시인원 <0~600> (600명 풀 중 상시 접속 로테이션 모험가 인원 실시간 변경, 권장: 100)`, 'log-sys');
+      sendSystemMsgToEntry(entry, `💡 사용법: /모험가상시인원 <0~600> (600명 풀 중 상시 접속 로테이션 모험가 인원 실시간 변경, 권장: 150)`, 'log-sys');
       return true;
     }
 

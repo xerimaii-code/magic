@@ -1,13 +1,13 @@
 /**
  * seed_ai_50.js
  * =====================================================================
- * Supabase (xerimaii@gmail.com) 계정에 slot_index 100 ~ 399 (기본 300명)의
+ * Supabase (xerimaii@gmail.com) 계정에 slot_index 100 ~ 699 (기본 600명)의
  * 자율형 인간화 AI 플레이어(용병 포함) 데이터를 중복 없는 고유 닉네임,
  * 다양한 페르소나, 인간 플레이어와 100% 동일한 전체 마법/기술(GameDB.Skills 83종)로
  * 생성/동기화하는 모듈입니다.
  *
  * [에이전트 추가/시딩 실행 방법]
- * 1) 기본 300명 시딩 (슬롯 100 ~ 399):
+ * 1) 기본 600명 시딩 (슬롯 100 ~ 699):
  *    node seed_ai_50.js
  * 2) 원하는 인원수 지정하여 추가 시딩 (예: 400명으로 확장 시 슬롯 100 ~ 499):
  *    node seed_ai_50.js 400
@@ -49,7 +49,7 @@ const AI_TOTAL_POOL = (!isNaN(cliPoolArg) && cliPoolArg >= 50)
 const FALLBACK_AI_USER_ID = 'e0000000-0000-4000-8000-000000000100';
 
 // =====================================================================
-// 1. 300명의 중복 없는 한국 MMORPG 감성 고유 닉네임 풀
+// 1. 600명의 중복 없는 한국 MMORPG 감성 고유 닉네임 풀
 // =====================================================================
 const RAW_AI_NAMES = [
   // 1 ~ 50
@@ -537,7 +537,7 @@ function generateAICharacterRecord(slotIndex, userId) {
   const classes = ['knight', 'ranger', 'wizard'];
   const charClass = classes[idx % classes.length];
 
-  // 300명의 에이전트를 R01 ~ R15 전 지역(필드 _sub1 & 던전 _dungeon 총 30개 맵) 및 레벨대(Lv.5 ~ Lv.245)에 고르게 분포
+  // 600명의 에이전트를 R01 ~ R15 전 지역(필드 _sub1 & 던전 _dungeon 총 30개 맵) 및 레벨대(Lv.5 ~ Lv.245)에 고르게 분포
   const regionIdx = idx % REGION_CONFIGS.length;
   const regCfg = REGION_CONFIGS[regionIdx];
   const levelSpan = Math.max(1, regCfg.maxLv - regCfg.minLv);
