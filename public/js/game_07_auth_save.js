@@ -1022,7 +1022,7 @@ window.enterGameWithCharacter = async function(slotIdx) {
   currentSessionToken = `msess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
   // 🌟 첫 실행 시 맵 렌더러/지형 DB 준비 완료 대기 (새로고침 없이 100% 즉시 렌더링 보장)
-  if (!window.HardcodedMapDB || !window.HardcodedMapDB[R01_sub1] || !window.DetailFieldRenderer) {
+  if (!window.HardcodedMapDB || !window.HardcodedMapDB['R01_sub1'] || !window.DetailFieldRenderer) {
     let waitCount = 0;
     while ((!window.HardcodedMapDB || !window.HardcodedMapDB[R01_sub1] || !window.DetailFieldRenderer) && waitCount < 50) {
       await new Promise(r => setTimeout(r, 40));
