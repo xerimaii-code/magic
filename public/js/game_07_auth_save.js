@@ -1021,8 +1021,17 @@ window.enterGameWithCharacter = async function(slotIdx) {
   // 캐릭터 진입마다 항상 새로운 고유 세션 토큰을 먼저 발급하여 동일 캐릭터 중복 접속만 정확히 식별!
   currentSessionToken = `msess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
+  // 🌟 첫 실행 시 맵 렌더러/지형 DB 준비 완료 대기 (새로고침 없이 100% 즉시 렌더링 보장)
+  if (!window.HardcodedMapDB || !window.HardcodedMapDB[R01_sub1] || !window.DetailFieldRenderer) {
+    let waitCount = 0;
+    while ((!window.HardcodedMapDB || !window.HardcodedMapDB[R01_sub1] || !window.DetailFieldRenderer) && waitCount < 50) {
+      await new Promise(r => setTimeout(r, 40));
+      waitCount++;
+    }
+  }
+
   // 수파베이스에서 방금 가져온 최신 캐릭터 레코드(c)로 게임 진입 (옵션 포함 복원)
-  window.startGame(c.class || 'knight', c.name, c, false);
+  window.startGame(c.class || knight, c.name, c, false);
   window.forceResizePixiApp?.();
   requestAnimationFrame(() => window.forceResizePixiApp?.());
   setTimeout(() => window.forceResizePixiApp?.(), 80);

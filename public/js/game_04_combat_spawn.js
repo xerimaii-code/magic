@@ -2557,8 +2557,13 @@ function destroyItemGraphics(it) {
 }
 
 function loadMapData(mapKey, customSpawn = null) {
-  const mapData = HardcodedMapDB[mapKey] || HardcodedMapDB["R01_sub1"];
-  if (!mapData) return;
+  const db = window.HardcodedMapDB || {};
+  let mapData = db[mapKey] || db["R01_sub1"];
+  if (!mapData || !window.DetailFieldRenderer) {
+    // 🌟 첫 실행 시 ES 모듈 맵 데이터(HardcodedMapDB / DetailFieldRenderer) 로딩 대기 가드
+    setTimeout(() => loadMapData(mapKey, customSpawn), 40);
+    return;
+  }
 
   currentRegionKey = mapKey.split('_')[0];
   currentMapKey = mapKey;
@@ -2796,6 +2801,18 @@ function loadMapData(mapKey, customSpawn = null) {
 
     const initSpawnRef = customSpawn ? customSpawn : mapData.spawn;
     window.MapChunkManager.updateActiveChunks(initSpawnRef.y, true);
+
+    // 🌟 첫 실행 시 브라우저 WebGL 텍스처 초기화 지연 방지 (2중 안전 보정)
+    requestAnimationFrame(() => {
+      if (window.MapChunkManager && bgContainer.children.length === 0) {
+        window.MapChunkManager.updateActiveChunks(player.y || initSpawnRef.y, true);
+      }
+    });
+    setTimeout(() => {
+      if (window.MapChunkManager && bgContainer.children.length === 0) {
+        window.MapChunkManager.updateActiveChunks(player.y || initSpawnRef.y, true);
+      }
+    }, 120);
 
     bgLoaded = true;
 
