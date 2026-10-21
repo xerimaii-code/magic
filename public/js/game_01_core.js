@@ -1722,21 +1722,29 @@ function ensureAllGameModals() {
 function getRegionMapAssets(regionId) {
   const reg = GameDB.Regions.find(r => r.id === regionId) || GameDB.Regions[0];
   const rawEng = (reg.eng || 'Altria').replace(/\s+/g, '');
-  const exactMapName = {
+  const exactJpgName = {
     R01: 'altria', R02: 'SilverVine', R03: 'Kaladru', R04: 'Elrond', R05: 'Moraan',
     R06: 'Bloodmoon', R07: 'Balenos', R08: 'Frosthold', R09: 'Ignis', R10: 'Darkwood',
     R11: 'Windstorm', R12: 'Arcana', R13: 'Nethergate', R14: 'DragonPeak', R15: 'Eternity'
   }[regionId] || rawEng;
-  const candidates = Array.from(new Set([
-    exactMapName,
+  const exactTmjName = regionId === 'R12' ? 'arcana' : exactJpgName;
+  const jpgCandidates = Array.from(new Set([
+    exactJpgName,
+    rawEng,
+    rawEng.toLowerCase(),
+    rawEng === 'Silvervine' ? 'SilverVine' : rawEng
+  ]));
+  const tmjCandidates = Array.from(new Set([
+    exactTmjName,
+    exactJpgName,
     rawEng,
     rawEng.toLowerCase(),
     rawEng === 'Silvervine' ? 'SilverVine' : rawEng
   ]));
   return {
     reg,
-    jpgUrls: candidates.map(name => `./map/${name}.jpg`),
-    tmjUrls: candidates.map(name => `./map/${name}.tmj`)
+    jpgUrls: jpgCandidates.map(name => `./map/${name}.jpg`),
+    tmjUrls: tmjCandidates.map(name => `./map/${name}.tmj`)
   };
 }
 

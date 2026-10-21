@@ -159,6 +159,9 @@ window.startGame = function(selectedClass, customCharName = null, savedCharRecor
   window.partyState = null;
   window.otherPlayers = [];
 
+  if (!selectedClass || !CLASS_STATS[selectedClass]) {
+    selectedClass = (savedCharRecord?.class && CLASS_STATS[savedCharRecord.class]) ? savedCharRecord.class : 'knight';
+  }
   const sysCfg = GameDB.SystemConfig || {};
   player.class = selectedClass;
   player.name = customCharName || CLASS_STATS[selectedClass].name;
@@ -247,6 +250,16 @@ window.startGame = function(selectedClass, customCharName = null, savedCharRecor
   const targetPos = (savedCharRecord && savedCharRecord.pos_x && savedCharRecord.pos_y)
     ? { x: Number(savedCharRecord.pos_x), y: Number(savedCharRecord.pos_y) }
     : (sysCfg.startSpawn || null);
+
+  currentMapKey = targetMap;
+  currentRegionKey = String(targetMap).split('_')[0] || 'R01';
+  const initSpawn = targetPos || window.HardcodedMapDB?.[targetMap]?.spawn || { x: 2000, y: 14250 };
+  if (initSpawn && initSpawn.x && initSpawn.y) {
+    player.x = Number(initSpawn.x);
+    player.y = Number(initSpawn.y);
+    player.targetX = player.x;
+    player.targetY = player.y;
+  }
 
   loadMapData(targetMap, targetPos);
   renderHotbarSlots();

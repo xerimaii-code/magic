@@ -2663,6 +2663,22 @@ let currentMapKey = "R01_sub1";
 let bossRespawnTimer = 0;
 let enchantScrollType = null;
 
+Object.defineProperties(window, {
+  wallBoxes: { get: () => wallBoxes, set: (v) => { wallBoxes = v; }, configurable: true },
+  portalBoxes: { get: () => portalBoxes, set: (v) => { portalBoxes = v; }, configurable: true },
+  npcList: { get: () => npcList, set: (v) => { npcList = v; }, configurable: true },
+  monsterList: { get: () => monsterList, set: (v) => { monsterList = v; }, configurable: true },
+  itemList: { get: () => itemList, set: (v) => { itemList = v; }, configurable: true },
+  floatingTexts: { get: () => floatingTexts, set: (v) => { floatingTexts = v; }, configurable: true },
+  activeEffects: { get: () => activeEffects, set: (v) => { activeEffects = v; }, configurable: true },
+  projectiles: { get: () => projectiles, set: (v) => { projectiles = v; }, configurable: true },
+  bossTelegraphs: { get: () => bossTelegraphs, set: (v) => { bossTelegraphs = v; }, configurable: true },
+  currentRegionKey: { get: () => currentRegionKey, set: (v) => { currentRegionKey = v; }, configurable: true },
+  currentMapKey: { get: () => currentMapKey, set: (v) => { currentMapKey = v; }, configurable: true },
+  currentMapData: { get: () => (window.HardcodedMapDB && (window.HardcodedMapDB[currentMapKey] || window.HardcodedMapDB['R01_sub1'])) || null, configurable: true },
+  mapData: { get: () => (window.HardcodedMapDB && (window.HardcodedMapDB[currentMapKey] || window.HardcodedMapDB['R01_sub1'])) || null, configurable: true }
+});
+
 let player = {
   name: "모험가",
   x: 2000, y: 14250, speed: 2.85, targetX: 2000, targetY: 14250,

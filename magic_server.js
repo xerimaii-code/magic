@@ -4844,10 +4844,25 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true });
   }
 
-  // 정적 파일 서빙 (.env 외부 노출 차단)
+  // 공개 클라이언트 설정 조회 API (민감 정보 제외, 브라우저 403 콘솔 에러 방지)
+  if (pathname === '/api/public-config' && req.method === 'GET') {
+    return sendJson(res, 200, {
+      ok: true,
+      supabaseUrl: SUPABASE_URL,
+      supabaseKey: SUPABASE_KEY,
+      version: CURRENT_BUILD_VERSION
+    });
+  }
+
+  // .env 직접 요청 시 서버 비밀키(ADMIN_PASSWORD, GROQ_API_KEY 등)는 절대 노출하지 않고 공개 Supabase URL/AnonKey만 안전하게 반환하여 403 콘솔 에러 방지
   if (pathname === '/.env') {
-    res.writeHead(403);
-    return res.end('Forbidden');
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(`SUPABASE_URL=${SUPABASE_URL}\nSUPABASE_KEY=${SUPABASE_KEY}\n`);
+  }
+
+  if (pathname === '/favicon.ico') {
+    res.writeHead(204);
+    return res.end();
   }
 
   let relPath = pathname === '/' ? '/index.html' : pathname;
@@ -4855,6 +4870,17 @@ const server = http.createServer(async (req, res) => {
   if (!safePath.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
     return res.end('Forbidden');
+  }
+  if (!fs.existsSync(safePath)) {
+    // 리눅스 환경 대소문자 파일명 차이 자동 보정 (예: Arcana.tmj -> arcana.tmj)
+    const dir = path.dirname(safePath);
+    const baseLower = path.basename(safePath).toLowerCase();
+    if (dir.startsWith(PUBLIC_DIR) && fs.existsSync(dir)) {
+      try {
+        const matched = fs.readdirSync(dir).find(f => f.toLowerCase() === baseLower);
+        if (matched) safePath = path.join(dir, matched);
+      } catch (e) {}
+    }
   }
   if (!fs.existsSync(safePath) || fs.statSync(safePath).isDirectory()) {
     res.writeHead(404);

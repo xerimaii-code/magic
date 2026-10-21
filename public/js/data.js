@@ -53,8 +53,15 @@ export function calcBalancedKillExp(rawExp, playerLv = 1, mobLv = 1, isBoss = fa
 
 export async function loadEnvConfig() {
   try {
-    const res = await fetch('./.env');
+    const res = await fetch('/api/public-config', { cache: 'no-store' });
     if (res.ok) {
+      const ctype = (res.headers && res.headers.get && res.headers.get('content-type')) || '';
+      if (ctype.includes('application/json')) {
+        const cfg = await res.json();
+        if (cfg?.supabaseUrl) GameDB.SupabaseConfig.url = sanitizeSupabaseValue(cfg.supabaseUrl);
+        if (cfg?.supabaseKey) GameDB.SupabaseConfig.anonKey = sanitizeSupabaseValue(cfg.supabaseKey);
+        return;
+      }
       const text = await res.text();
       text.split('\n').forEach(line => {
         const trimmed = line.trim();

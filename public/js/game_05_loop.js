@@ -599,7 +599,7 @@ function calcMonsterDamageToDefender(rawMobAtk, defenderDef, mobLv = 1, isBoss =
     : Math.max(0, defenderDef || 0);
 
   // 클래스별 적정 방어력 기준 차등 (궁수/마법사는 방패 미착용을 고려해 과도한 방어 부족 페널티 완화)
-  const isKnightDef = !checkPlayerArmor || player.class === 'knight';
+  const isKnightDef = !isPlayerDefender || player?.class === 'knight';
   const reqDefStandard = mobLv >= 30
     ? Math.floor(mobLv * (isKnightDef ? 1.95 : 1.48))
     : Math.floor(mobLv * (isKnightDef ? 1.35 : 1.05));
@@ -1168,7 +1168,7 @@ function gameLoop(rawDelta) {
           if ((mercenary.activeBuffs?.IMMUNE || 0) > 0) dmg = Math.max(2, Math.floor(dmg * 0.55));
           mercenary.hp = Math.max(0, mercenary.hp - dmg);
       mercenary.lastHitTime = now;
-      mercenary.lastHitAngle = (m?.atkAngle ?? msg?.atkAngle ?? 0);
+      mercenary.lastHitAngle = (m?.atkAngle ?? 0);
           if (m.isBoss || isMagicAttack) {
             activeEffects.push({
               type: 'magic_circle',
@@ -1307,7 +1307,7 @@ function gameLoop(rawDelta) {
 
           player.hp = Math.max(0, player.hp - dmg);
       player.lastHitTime = now;
-      player.lastHitAngle = (m?.atkAngle ?? msg?.atkAngle ?? 0);
+      player.lastHitAngle = (m?.atkAngle ?? 0);
       window.triggerCameraShake?.(2.2, 95);
           activeEffects.push({
             type: 'hit_particle',

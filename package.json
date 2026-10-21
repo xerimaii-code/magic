@@ -5,7 +5,7 @@
   "main": "magic_server.js",
   "scripts": {
     "start": "node magic_server.js",
-    "ai": "node aiAgentRunner.js",
+    "ai": "node aiagentrunner.js",
     "seed-ai": "node seed_ai_50.js",
     "pm2:start": "pm2 start ecosystem.config.js && pm2 save",
     "pm2:reload": "pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js"

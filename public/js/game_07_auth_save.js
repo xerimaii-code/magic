@@ -828,6 +828,15 @@ window.confirmCreateCharacter = async function() {
   activeCharacterId = charId;
   currentSessionToken = newSessionTok;
 
+  // 첫 실행 시 맵 렌더러/지형 DB 준비 완료 대기
+  if (!window.HardcodedMapDB || !window.HardcodedMapDB['R01_sub1'] || !window.DetailFieldRenderer) {
+    let waitCount = 0;
+    while ((!window.HardcodedMapDB || !window.HardcodedMapDB['R01_sub1'] || !window.DetailFieldRenderer) && waitCount < 50) {
+      await new Promise(r => setTimeout(r, 40));
+      waitCount++;
+    }
+  }
+
   // 임시로 초기 스탯/인벤토리 구성 후 DB 먼저 검증
   window.startGame(chosenClass, rawName, null, true); // deferDisplay = true
   const initPayload = buildCurrentCharacterRecordPayload();
@@ -1003,42 +1012,51 @@ window.enterGameWithCharacter = async function(slotIdx) {
   window.tryEnterFullscreenMode?.();
   window.showGameLoadingScreen?.('⚡ 에테르 월드 접속 준비 중...', '수파베이스 DB에서 최신 캐릭터 데이터를 불러오고 있습니다...', 24);
 
-  purgeBrowserLocalGameCache();
-  await loadAccountCharacterSlots(true);
-  await loadAccountSharedStorage(true);
-  const c = accountCharacters[slotIdx];
-  if (!c) {
-    window.hideGameLoadingScreen?.(0);
-    renderCharacterSlots();
-    window.showSystemAlertModal('⚠️ 캐릭터 슬롯 갱신됨', '다른 기기에서 캐릭터 상태가 변경되어 슬롯 목록을 최신으로 업데이트했습니다.');
-    return;
-  }
-
-  stopSlotScreenRealtimeSync();
-  const prevCharId = activeCharacterId;
-  activeSlotIndex = slotIdx;
-  activeCharacterId = c.id;
-  // 캐릭터 진입마다 항상 새로운 고유 세션 토큰을 먼저 발급하여 동일 캐릭터 중복 접속만 정확히 식별!
-  currentSessionToken = `msess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-
-  // 🌟 첫 실행 시 맵 렌더러/지형 DB 준비 완료 대기 (새로고침 없이 100% 즉시 렌더링 보장)
-  if (!window.HardcodedMapDB || !window.HardcodedMapDB['R01_sub1'] || !window.DetailFieldRenderer) {
-    let waitCount = 0;
-    while ((!window.HardcodedMapDB || !window.HardcodedMapDB[R01_sub1] || !window.DetailFieldRenderer) && waitCount < 50) {
-      await new Promise(r => setTimeout(r, 40));
-      waitCount++;
+  try {
+    purgeBrowserLocalGameCache();
+    await loadAccountCharacterSlots(true);
+    await loadAccountSharedStorage(true);
+    const c = accountCharacters[slotIdx];
+    if (!c) {
+      window.hideGameLoadingScreen?.(0);
+      renderCharacterSlots();
+      window.showSystemAlertModal('⚠️ 캐릭터 슬롯 갱신됨', '다른 기기에서 캐릭터 상태가 변경되어 슬롯 목록을 최신으로 업데이트했습니다.');
+      return;
     }
-  }
 
-  // 수파베이스에서 방금 가져온 최신 캐릭터 레코드(c)로 게임 진입 (옵션 포함 복원)
-  window.startGame(c.class || knight, c.name, c, false);
-  window.forceResizePixiApp?.();
-  requestAnimationFrame(() => window.forceResizePixiApp?.());
-  setTimeout(() => window.forceResizePixiApp?.(), 80);
-  setTimeout(() => window.forceResizePixiApp?.(), 260);
-  connectCentralMultiplayerSocket();
-  await registerActiveGameSession(c.id, prevCharId);
-  window.addChat(`⚡ [접속 완료] '${c.name}' 캐릭터의 수파베이스 최신 데이터 및 환경설정을 불러왔습니다!`, 'log-kill');
+    stopSlotScreenRealtimeSync();
+    const prevCharId = activeCharacterId;
+    activeSlotIndex = slotIdx;
+    activeCharacterId = c.id;
+    window.activeCharacterId = c.id;
+    // 캐릭터 진입마다 항상 새로운 고유 세션 토큰을 먼저 발급하여 동일 캐릭터 중복 접속만 정확히 식별!
+    currentSessionToken = `msess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    // 🌟 첫 실행 시 맵 렌더러/지형 DB 준비 완료 대기 (새로고침 없이 100% 즉시 렌더링 보장)
+    if (!window.HardcodedMapDB || !window.HardcodedMapDB['R01_sub1'] || !window.DetailFieldRenderer) {
+      let waitCount = 0;
+      while ((!window.HardcodedMapDB || !window.HardcodedMapDB['R01_sub1'] || !window.DetailFieldRenderer) && waitCount < 50) {
+        await new Promise(r => setTimeout(r, 40));
+        waitCount++;
+      }
+    }
+
+    // 수파베이스에서 방금 가져온 최신 캐릭터 레코드(c)로 게임 진입 (옵션 포함 복원)
+    const charClass = (c.class && CLASS_STATS[c.class]) ? c.class : 'knight';
+    isGameSessionActive = true;
+    window.startGame(charClass, c.name, c, false);
+    window.forceResizePixiApp?.();
+    requestAnimationFrame(() => window.forceResizePixiApp?.());
+    setTimeout(() => window.forceResizePixiApp?.(), 80);
+    setTimeout(() => window.forceResizePixiApp?.(), 260);
+    connectCentralMultiplayerSocket();
+    await registerActiveGameSession(c.id, prevCharId);
+    window.addChat(`⚡ [접속 완료] '${c.name}' 캐릭터의 수파베이스 최신 데이터 및 환경설정을 불러왔습니다!`, 'log-kill');
+  } catch (err) {
+    console.error('enterGameWithCharacter Error:', err);
+    window.hideGameLoadingScreen?.(0);
+    window.showSystemAlertModal('⚠️ 캐릭터 접속 오류', `게임 진입 중 오류가 발생했습니다: ${err?.message || err}`);
+  }
 };
 
 async function registerActiveGameSession(charId, prevCharId = null) {
@@ -1273,7 +1291,17 @@ window.applySavedCharacterRecordToState = function(record) {
   const cd = record.char_data || {};
 
   player.name = record.name || player.name;
-  player.class = record.class || player.class;
+  player.class = (record.class && CLASS_STATS[record.class]) ? record.class : (player.class || 'knight');
+  if (record.map_key) {
+    currentMapKey = record.map_key;
+    currentRegionKey = record.region_key || String(record.map_key).split('_')[0] || 'R01';
+  }
+  if (record.pos_x !== undefined && record.pos_y !== undefined && Number(record.pos_x) > 0 && Number(record.pos_y) > 0) {
+    player.x = Number(record.pos_x);
+    player.y = Number(record.pos_y);
+    player.targetX = player.x;
+    player.targetY = player.y;
+  }
   player.level = Number(record.level) || 1;
   player.exp = Number(record.exp) || 0;
   player.maxExp = calcRequiredExpForLevel(player.level);
@@ -1390,7 +1418,11 @@ async function saveCurrentCharacterAndStorageNow(reason = 'auto', useKeepaliveFe
 
   // 창고(magic_storage)는 창고 입출금이나 로그아웃/캐릭터전환 시에만 저장하여 동일 계정 다중 캐릭터 접속 시 충돌 및 통신량 절감!
   if (reason === 'bank_update' || reason === 'logout' || reason === 'switch_character' || reason === 'emergency_exit') {
-    await saveAccountSharedStorage();
+    if (useKeepaliveFetch) {
+      saveAccountSharedStorage().catch(() => {});
+    } else {
+      await saveAccountSharedStorage();
+    }
   }
 
   // 2. 중앙 서버(magic_server.js) 저장 (성공 시 서버가 DB에 저장하므로 클라이언트의 이중 Supabase 직접 전송을 생략해 데이터 50% 절감!)
@@ -1416,7 +1448,6 @@ async function saveCurrentCharacterAndStorageNow(reason = 'auto', useKeepaliveFe
   if (!savedViaCentralServer && isSupabaseRemoteConnected && supabaseClient) {
     if (useKeepaliveFetch) {
       const { url, key } = getEffectiveSupabaseCreds();
-      const sessionToken = (await supabaseClient.auth.getSession())?.data?.session?.access_token || key;
       try {
         fetch(`${url}/rest/v1/${charTable}?on_conflict=id`, {
           method: 'POST',
@@ -1424,7 +1455,7 @@ async function saveCurrentCharacterAndStorageNow(reason = 'auto', useKeepaliveFe
           headers: {
             'Content-Type': 'application/json',
             'apikey': key,
-            'Authorization': `Bearer ${sessionToken}`,
+            'Authorization': `Bearer ${key}`,
             'Prefer': 'resolution=merge-duplicates'
           },
           body: JSON.stringify(charPayload)

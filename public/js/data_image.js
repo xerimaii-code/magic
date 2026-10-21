@@ -453,22 +453,26 @@ export const SoundSystem = {
         const vol = opts && typeof opts.bgmVolume === 'number' ? opts.bgmVolume / 100 : 0.55;
         if (vol <= 0.01) return null;
 
-        if (!this.ctx) {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return null;
-            this.ctx = new AudioCtx();
+        try {
+            if (!this.ctx) {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return null;
+                this.ctx = new AudioCtx();
+            }
+            if (this.ctx.state === 'suspended') {
+                this.ctx.resume().catch(() => {});
+            }
+            if (!this.bgmGain && this.ctx) {
+                this.bgmGain = this.ctx.createGain();
+                this.bgmGain.gain?.setValueAtTime?.(Math.max(0.001, vol * 0.24), this.ctx.currentTime);
+                this.bgmGain.connect(this.ctx.destination);
+            } else if (this.bgmGain && this.ctx) {
+                this.bgmGain.gain?.setTargetAtTime?.(Math.max(0.001, vol * 0.24), this.ctx.currentTime, 0.1);
+            }
+            return this.ctx;
+        } catch (e) {
+            return null;
         }
-        if (this.ctx.state === 'suspended') {
-            this.ctx.resume().catch(() => {});
-        }
-        if (!this.bgmGain && this.ctx) {
-            this.bgmGain = this.ctx.createGain();
-            this.bgmGain.gain.setValueAtTime(Math.max(0.001, vol * 0.24), this.ctx.currentTime);
-            this.bgmGain.connect(this.ctx.destination);
-        } else if (this.bgmGain && this.ctx) {
-            this.bgmGain.gain.setTargetAtTime(Math.max(0.001, vol * 0.24), this.ctx.currentTime, 0.1);
-        }
-        return this.ctx;
     },
 
     _bgmNote(freq, dur, wave = 'sine', gainVal = 0.25, cutoff = 1600, attack = 0.04, delay = 0) {
@@ -530,7 +534,7 @@ export const SoundSystem = {
         }
         if (this.bgmGain && this.ctx) {
             const vol = Math.max(0, Math.min(100, Number(opts.bgmVolume) || 0)) / 100;
-            this.bgmGain.gain.setTargetAtTime(Math.max(0.001, vol * 0.24), this.ctx.currentTime, 0.08);
+            try { this.bgmGain.gain?.setTargetAtTime?.(Math.max(0.001, vol * 0.24), this.ctx.currentTime, 0.08); } catch (e) {}
         }
         if (!this.bgmTimer) {
             this.startBgmLoop();
