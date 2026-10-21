@@ -831,7 +831,8 @@ export async function loadCustomSprites() {
         for (let r = 0; r < rows; r++) {
             let action = rowActions[r];
             PlayerSpriteManager.textures[asset.name][action] = [];
-            for (let c = 0; c < columns; c++) {
+            const maxCols = (r >= 4 && r !== 5) ? Math.min(columns, 5) : columns;
+            for (let c = 0; c < maxCols; c++) {
                 let frame = new PIXI.Rectangle(c * frameW, r * frameH, frameW, frameH);
                 PlayerSpriteManager.textures[asset.name][action].push(new PIXI.Texture(baseTex, frame));
             }
@@ -939,9 +940,9 @@ export function drawPlayer(ctx, x, y, p, tick, now) {
         equipState = 'none';
     }
 
-    let action = (p.isMoving || p.isWalking) ? 'walk' : 'idle';
-    let isAttack = now - p.lastAttackTime < 420;
-    if (isAttack) action = 'attack';
+    const pAtkElapsed = now - (p.lastAttackTime || 0);
+    let isAttack = pAtkElapsed >= 0 && pAtkElapsed < 480;
+    let action = isAttack ? 'attack' : ((p.isMoving || p.isWalking) ? 'walk' : 'idle');
 
     let animName = `${action === 'idle' ? 'walk' : action}_${p.dir}`;
     let textures = PlayerSpriteManager.textures[equipState]?.[animName];
@@ -951,11 +952,16 @@ export function drawPlayer(ctx, x, y, p, tick, now) {
 
     if (textures && textures.length > 0) {
         if (action === 'idle') {
+            PlayerSpriteManager.currentFrame = 0;
             PlayerSpriteManager.sprite.texture = textures[0];
+        } else if (isAttack) {
+            const atkIdx = Math.min(textures.length - 1, Math.floor((Math.max(0, pAtkElapsed) / 460) * textures.length));
+            PlayerSpriteManager.currentFrame = atkIdx;
+            PlayerSpriteManager.sprite.texture = textures[atkIdx];
         } else {
-            let frameSpeed = isAttack ? Math.max(30, Math.floor(380 / textures.length)) : 95;
-            if (now - PlayerSpriteManager.lastFrameTime > frameSpeed) {
-                PlayerSpriteManager.currentFrame++;
+            let frameSpeed = 88;
+            if (now - PlayerSpriteManager.lastFrameTime >= frameSpeed) {
+                PlayerSpriteManager.currentFrame = (PlayerSpriteManager.currentFrame + 1) % textures.length;
                 PlayerSpriteManager.lastFrameTime = now;
             }
             if (PlayerSpriteManager.currentFrame >= textures.length) {
@@ -1244,8 +1250,9 @@ export function drawOtherPlayer(ctx, x, y, op, tick, now, entityContainer = null
             equipState = 'none';
         }
 
-        const isAttack = (now - (op.lastAttackTime || 0)) < 420;
-        const isMovingNow = Boolean(op.isWalking || op.isMoving || (now - (op.lastMoveVisualTime || 0) < 160));
+        const atkElapsedNow = now - (op.lastAttackTime || 0);
+        const isAttack = atkElapsedNow >= 0 && atkElapsedNow < 520;
+        const isMovingNow = !isAttack && Boolean(op.isWalking || op.isMoving || (now - (op.lastMoveVisualTime || 0) < 380));
         const action = isAttack ? 'attack' : (isMovingNow ? 'walk' : 'idle');
         const dir = ['up', 'down', 'left', 'right'].includes(op.dir) ? op.dir : 'down';
         const animName = `${action === 'idle' ? 'walk' : action}_${dir}`;
@@ -1256,18 +1263,22 @@ export function drawOtherPlayer(ctx, x, y, op, tick, now, entityContainer = null
         }
 
         if (textures && textures.length > 0) {
-            if (op.lastAnimKey !== `${equipState}:${action}:${dir}`) {
-                op.lastAnimKey = `${equipState}:${action}:${dir}`;
+            if (op.lastAnimAction !== action) {
+                op.lastAnimAction = action;
                 op.spriteFrame = 0;
                 op.lastSpriteFrameTime = now;
             }
             if (action === 'idle') {
                 op.spriteFrame = 0;
                 op.pixiSprite.texture = textures[0];
+            } else if (isAttack) {
+                const atkIdx = Math.min(textures.length - 1, Math.floor((Math.max(0, atkElapsedNow) / 480) * textures.length));
+                op.spriteFrame = atkIdx;
+                op.pixiSprite.texture = textures[atkIdx];
             } else {
-                const frameSpeed = isAttack ? Math.max(30, Math.floor(380 / textures.length)) : 92;
+                const frameSpeed = 85;
                 if (!op.lastSpriteFrameTime) op.lastSpriteFrameTime = now;
-                if (now - op.lastSpriteFrameTime > frameSpeed) {
+                if (now - op.lastSpriteFrameTime >= frameSpeed) {
                     op.spriteFrame = ((op.spriteFrame || 0) + 1) % textures.length;
                     op.lastSpriteFrameTime = now;
                 }

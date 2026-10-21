@@ -3587,10 +3587,19 @@ function handleClientWsPacket(conn, msg) {
       entry.lastSeen = Date.now();
       if (!msg.isMerc && entry.player) {
         entry.player.lastAttackTime = Date.now();
+        entry.player.isWalking = false;
         if (typeof msg.casterX === 'number') entry.player.x = Math.round(msg.casterX);
         if (typeof msg.casterY === 'number') entry.player.y = Math.round(msg.casterY);
+        if (typeof msg.tx === 'number' && typeof msg.ty === 'number') {
+          const dxSk = msg.tx - (entry.player.x || 0);
+          const dySk = msg.ty - (entry.player.y || 0);
+          if (Math.abs(dxSk) > 1 || Math.abs(dySk) > 1) {
+            entry.player.dir = Math.abs(dxSk) > Math.abs(dySk) ? (dxSk > 0 ? 'right' : 'left') : (dySk > 0 ? 'down' : 'up');
+          }
+        }
       } else if (msg.isMerc && entry.player && entry.player.mercenary) {
         entry.player.mercenary.lastAttackTime = Date.now();
+        entry.player.mercenary.isWalking = false;
         if (typeof msg.casterX === 'number') entry.player.mercenary.x = Math.round(msg.casterX);
         if (typeof msg.casterY === 'number') entry.player.mercenary.y = Math.round(msg.casterY);
       }
@@ -3639,10 +3648,19 @@ function handleClientWsPacket(conn, msg) {
       if (msg.fxKind === 'basic_atk') {
         if (!msg.isMerc && entry.player) {
           entry.player.lastAttackTime = Date.now();
+          entry.player.isWalking = false;
           if (typeof msg.sx === 'number') entry.player.x = Math.round(msg.sx);
           if (typeof msg.sy === 'number') entry.player.y = Math.round(msg.sy);
+          if (typeof msg.tx === 'number' && typeof msg.ty === 'number') {
+            const dxAtk = msg.tx - (entry.player.x || 0);
+            const dyAtk = msg.ty - (entry.player.y || 0);
+            if (Math.abs(dxAtk) > 1 || Math.abs(dyAtk) > 1) {
+              entry.player.dir = Math.abs(dxAtk) > Math.abs(dyAtk) ? (dxAtk > 0 ? 'right' : 'left') : (dyAtk > 0 ? 'down' : 'up');
+            }
+          }
         } else if (msg.isMerc && entry.player && entry.player.mercenary) {
           entry.player.mercenary.lastAttackTime = Date.now();
+          entry.player.mercenary.isWalking = false;
           if (typeof msg.sx === 'number') entry.player.mercenary.x = Math.round(msg.sx);
           if (typeof msg.sy === 'number') entry.player.mercenary.y = Math.round(msg.sy);
         }

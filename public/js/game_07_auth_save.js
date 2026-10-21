@@ -1900,4 +1900,3 @@ window.initAuthAndCharacterSystem = async function() {
 if (document.readyState === 'complete' && !window._magicBootStarted && typeof window.onload === 'function') {
   window.onload();
 }
-

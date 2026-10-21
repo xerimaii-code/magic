@@ -2094,6 +2094,7 @@ function gameLoop(rawDelta) {
         const dOp = Math.hypot(dxOp, dyOp);
         const baseOpSpd = op._interpSpeed || op.speed || CLASS_STATS[op.class]?.baseSpeed || 1.90;
 
+        const isOpAttackingNow = (now - (op.lastAttackTime || 0)) < 520;
         if (dOp > 380) {
           op.x = op.serverX;
           op.y = op.serverY;
@@ -2103,15 +2104,19 @@ function gameLoop(rawDelta) {
           const moveStep = Math.min(dOp, glideSpd * delta);
           op.x += (dxOp / dOp) * moveStep;
           op.y += (dyOp / dOp) * moveStep;
-          op.lastMoveVisualTime = now;
-          op.isWalking = true;
-          if (dOp > 1.5 && now - (op._lastDirUpdateTs || 0) > 130) {
-            op._lastDirUpdateTs = now;
-            if (Math.abs(dxOp) > Math.abs(dyOp) * 1.15) op.dir = dxOp > 0 ? 'right' : 'left';
-            else if (Math.abs(dyOp) > Math.abs(dxOp) * 1.15) op.dir = dyOp > 0 ? 'down' : 'up';
-            else if (op.serverDir) op.dir = op.serverDir;
+          if (!isOpAttackingNow) {
+            op.lastMoveVisualTime = now;
+            op.isWalking = true;
+            if (dOp > 3.5 && now - (op._lastDirUpdateTs || 0) > 130) {
+              op._lastDirUpdateTs = now;
+              if (Math.abs(dxOp) > Math.abs(dyOp) * 1.15) op.dir = dxOp > 0 ? 'right' : 'left';
+              else if (Math.abs(dyOp) > Math.abs(dxOp) * 1.15) op.dir = dyOp > 0 ? 'down' : 'up';
+              else if (op.serverDir) op.dir = op.serverDir;
+            } else if (op.serverDir) {
+              op.dir = op.serverDir;
+            }
           }
-        } else if (op.serverWalking && typeof op.moveX === 'number' && typeof op.moveY === 'number' && (now - (op.lastPacketTime || 0) < 420)) {
+        } else if (!isOpAttackingNow && op.serverWalking && typeof op.moveX === 'number' && typeof op.moveY === 'number' && (now - (op.lastPacketTime || 0) < 420)) {
           // 다음 패킷(200ms~350ms 주기)이 도착하기 전 공백 프레임에서도 목표 방향(moveX, moveY)으로 끊김 없이 예측 보행(Dead Reckoning)
           const exDx = op.moveX - op.x;
           const exDy = op.moveY - op.y;
@@ -2123,14 +2128,14 @@ function gameLoop(rawDelta) {
             op.lastMoveVisualTime = now;
             op.isWalking = true;
           } else {
-            op.isWalking = (now - (op.lastMoveVisualTime || 0)) < 340;
+            op.isWalking = (now - (op.lastMoveVisualTime || 0)) < 380;
           }
         } else {
-          // 패킷 사이 간격 동안 보행 모션이 idle로 툭툭 끊기지 않도록 340ms 홀드 (AOI 이탈 시 자동 정지)
+          // 패킷 사이 간격 동안 보행 모션이 idle로 툭툭 끊기지 않도록 380ms 홀드 (AOI 이탈 시 자동 정지)
           const pktAge = now - (op.lastPacketTime || 0);
           if (pktAge > 650) op.serverWalking = false;
-          op.isWalking = Boolean((op.serverWalking && pktAge <= 650) || (now - (op.lastMoveVisualTime || 0) < 340));
-          if (!op.isWalking && op.serverDir) op.dir = op.serverDir;
+          op.isWalking = !isOpAttackingNow && Boolean((op.serverWalking && pktAge <= 650) || (now - (op.lastMoveVisualTime || 0) < 380));
+          if (!op.isWalking && !isOpAttackingNow && op.serverDir) op.dir = op.serverDir;
         }
       }
       // 타 플레이어의 동행 용병 좌표 보간도 화면 안팎과 무관하게 먼저 수행하여 100% 위치 동기화 보장!

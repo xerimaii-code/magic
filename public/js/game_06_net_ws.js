@@ -904,12 +904,21 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
       existing.isMinimapOnly = isMiniOnly;
       if (!isMiniOnly) {
         existing.serverDir = newP.dir || existing.serverDir || existing.dir;
-        if (!existing.isWalking || !existing.dir) {
+        const isCurrentlyAttacking = (nowTs - (existing.lastAttackTime || 0)) < 520;
+        if ((!existing.isWalking && !isCurrentlyAttacking) || !existing.dir) {
           existing.dir = newP.dir || existing.dir;
         }
         existing.serverWalking = Boolean(newP.isWalking || movedDelta > 0.5);
-        existing.isWalking = Boolean(existing.serverWalking || (nowTs - (existing.lastMoveVisualTime || 0) < 360));
-        existing.lastAttackTime = newP.lastAttackTime || existing.lastAttackTime || 0;
+        existing.isWalking = Boolean(existing.serverWalking || (nowTs - (existing.lastMoveVisualTime || 0) < 380));
+        const incomingSrvAtkTs = Number(newP.lastAttackTime) || 0;
+        if (incomingSrvAtkTs > 0 && incomingSrvAtkTs !== (existing._lastServerAtkTs || 0)) {
+          existing._lastServerAtkTs = incomingSrvAtkTs;
+          if (nowTs - (existing.lastAttackTime || 0) > 180) {
+            existing.lastAttackTime = nowTs;
+            existing.spriteFrame = 0;
+            existing.lastSpriteFrameTime = nowTs;
+          }
+        }
         existing.hp = newP.hp ?? existing.hp;
         existing.maxHp = newP.maxHp ?? existing.maxHp;
         existing.mp = newP.mp ?? existing.mp;
@@ -951,7 +960,8 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
               _interpSpeed: mInterpSpd,
               serverWalking: Boolean(newP.mercenary.isWalking || mRenderDist > 0.5),
               lastMoveVisualTime: (newP.mercenary.isWalking || mRenderDist > 0.5) ? nowTs : (existing.mercenary.lastMoveVisualTime || 0),
-              lastAttackTime: Math.max(existing.mercenary.lastAttackTime || 0, newP.mercenary.lastAttackTime || 0),
+              _lastServerAtkTs: newP.mercenary.lastAttackTime || existing.mercenary._lastServerAtkTs || 0,
+              lastAttackTime: (newP.mercenary.lastAttackTime && newP.mercenary.lastAttackTime !== (existing.mercenary._lastServerAtkTs || 0) && (nowTs - (existing.mercenary.lastAttackTime || 0) > 180)) ? nowTs : (existing.mercenary.lastAttackTime || 0),
               nameTag: existing.mercenary.nameTag || null
             };
           } else {
@@ -989,6 +999,8 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
         serverX: newP.x,
         serverY: newP.y,
         lastMoveVisualTime: newP.isWalking ? nowTs : 0,
+        _lastServerAtkTs: Number(newP.lastAttackTime) || 0,
+        lastAttackTime: 0,
         nameTag: null
       });
     }
@@ -1183,14 +1195,18 @@ function handleCentralServerPacket(msg) {
         op.mercenary.lastAttackTime = Date.now();
         op.mercenary.dir = (tx >= sx) ? 'right' : 'left';
       } else if (op) {
-        op.lastAttackTime = Date.now();
+        const atkNow = Date.now();
+        op.lastAttackTime = atkNow;
         op.spriteFrame = 0;
-        op.lastSpriteFrameTime = Date.now();
+        op.lastSpriteFrameTime = atkNow;
+        op.isWalking = false;
+        op.serverWalking = false;
         const dx = tx - sx;
         const dy = ty - sy;
         if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-          if (Math.abs(dx) > Math.abs(dy)) op.dir = dx > 0 ? 'right' : 'left';
-          else op.dir = dy > 0 ? 'down' : 'up';
+          const atkDir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+          op.dir = atkDir;
+          op.serverDir = atkDir;
         }
       }
 
@@ -1384,6 +1400,32 @@ function handleCentralServerPacket(msg) {
     if (msg.defDownUntil) ent.defDownUntil = msg.defDownUntil;
 
     const isMyAtk = msg.attackerCharId === activeCharacterId;
+    if (!isMyAtk && msg.attackerCharId) {
+      const atkOp = (window.otherPlayers || []).find(o => o && o.charId === msg.attackerCharId);
+      if (atkOp) {
+        const hitNow = Date.now();
+        if (msg.isMercAtk && atkOp.mercenary) {
+          if (hitNow - (atkOp.mercenary.lastAttackTime || 0) > 320) {
+            atkOp.mercenary.lastAttackTime = hitNow;
+          }
+          atkOp.mercenary.dir = (ent.x >= (atkOp.mercenary.x || atkOp.x)) ? 'right' : 'left';
+        } else if (!msg.isMercAtk) {
+          if (hitNow - (atkOp.lastAttackTime || 0) > 320) {
+            atkOp.lastAttackTime = hitNow;
+            atkOp.spriteFrame = 0;
+            atkOp.lastSpriteFrameTime = hitNow;
+            atkOp.isWalking = false;
+          }
+          const dxM = ent.x - (atkOp.x || ent.x);
+          const dyM = ent.y - (atkOp.y || ent.y);
+          if (Math.abs(dxM) > 1 || Math.abs(dyM) > 1) {
+            const mDir = Math.abs(dxM) > Math.abs(dyM) ? (dxM > 0 ? 'right' : 'left') : (dyM > 0 ? 'down' : 'up');
+            atkOp.dir = mDir;
+            atkOp.serverDir = mDir;
+          }
+        }
+      }
+    }
     if (msg.isMiss) {
       floatingTexts.push({ x: ent.x, y: ent.y - 35, text: `MISS!`, color: 0x9ca3af, life: 30 });
       return;
@@ -2077,14 +2119,18 @@ function handleCentralServerPacket(msg) {
       op.mercenary.lastAttackTime = Date.now();
       op.mercenary.dir = (tx >= sx) ? 'right' : 'left';
     } else if (op && !msg.isMerc) {
-      op.lastAttackTime = Date.now();
+      const skNow = Date.now();
+      op.lastAttackTime = skNow;
       op.spriteFrame = 0;
-      op.lastSpriteFrameTime = Date.now();
+      op.lastSpriteFrameTime = skNow;
+      op.isWalking = false;
+      op.serverWalking = false;
       const dx = tx - originX;
       const dy = ty - originY;
       if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-        if (Math.abs(dx) > Math.abs(dy)) op.dir = dx > 0 ? 'right' : 'left';
-        else op.dir = dy > 0 ? 'down' : 'up';
+        const skDir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+        op.dir = skDir;
+        op.serverDir = skDir;
       }
       if (remSkillName.includes('차지')) {
         op.x = sx;
