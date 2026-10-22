@@ -388,7 +388,8 @@ function normalizeClientMapKey(rawKey) {
 }
 
 function buildMultiplayerPlayerSnapshot() {
-  const curTargetMobId = (player.targetEntity?.type === 'MONSTER' && player.targetEntity.ref && !player.targetEntity.ref.isDead)
+  const inSafeNow = typeof isInsideSafeZone === 'function' ? isInsideSafeZone(player.x, player.y) : false;
+  const curTargetMobId = (!inSafeNow && player.targetEntity?.type === 'MONSTER' && player.targetEntity.ref && !player.targetEntity.ref.isDead)
     ? String(player.targetEntity.ref.id)
     : null;
   return {
@@ -633,8 +634,12 @@ function renderEntitySpeechBubble(uiG, uiContainer, entity, anchorX, topY, now) 
 // 🛡️ 클라이언트 개발자도구(DevTools) 콘솔 변조 방지 및 서버 부하 분산 동기화
 let _lastSentSyncSnapshotStr = '';
 let _authorizedAdminFlag = false;
-window.tickMultiplayerSync = function(now) {
+window.tickMultiplayerSync = function(now, forceImmediate = false) {
   if (!isGameSessionActive || !activeCharacterId) return;
+  const realNow = Date.now();
+  const safeNow = (typeof now === 'number' && now <= realNow + 200) ? now : realNow;
+  const forceNow = Boolean(forceImmediate || (typeof now === 'number' && now > realNow + 1000));
+
   // 개발자 도구 콘솔에서 임의로 player.isAdmin = true 또는 비정상 스탯/레벨 변조 시 즉시 차단 및 복구
   if (player.isAdmin && !_authorizedAdminFlag) {
     player.isAdmin = false;
@@ -651,20 +656,20 @@ window.tickMultiplayerSync = function(now) {
     });
   }
 
-  const mercMovingOrAtk = Boolean(mercenary && mercenary.hired && !mercenary.isDead && (mercenary.isWalking || (now - (mercenary.lastAttackTime || 0) < 600)));
-  const isActiveMoveOrAtk = Boolean(player.isWalking || player.isMoving || (now - (player.lastAttackTime || 0) < 600) || mercMovingOrAtk);
+  const mercMovingOrAtk = Boolean(mercenary && mercenary.hired && !mercenary.isDead && (mercenary.isWalking || (safeNow - (mercenary.lastAttackTime || 0) < 600)));
+  const isActiveMoveOrAtk = Boolean(player.isWalking || player.isMoving || (safeNow - (player.lastAttackTime || 0) < 600) || mercMovingOrAtk);
   // 📉 데이터 절약: 이동/전투 중에는 110ms로 부드럽게 동기화하고, 정지 대기 중에는 1400ms~4500ms로 전송 빈도를 낮춰 패킷 절약!
   const minInterval = isActiveMoveOrAtk ? 110 : 1400;
-  if (now - lastWsSyncTime < minInterval) return;
+  if (!forceNow && safeNow - lastWsSyncTime < minInterval) return;
 
   const snap = buildMultiplayerPlayerSnapshot();
   const mSnapStr = snap.mercenary ? `${snap.mercenary.x},${snap.mercenary.y},${snap.mercenary.hp},${snap.mercenary.stance}` : 'none';
   const keyStateStr = `${snap.x},${snap.y},${snap.dir},${snap.isWalking},${snap.hp},${snap.mp},${snap.level},${snap.weaponType},${mSnapStr}`;
-  if (!isActiveMoveOrAtk && keyStateStr === _lastSentSyncSnapshotStr && (now - lastWsSyncTime < 4500)) {
+  if (!forceNow && !isActiveMoveOrAtk && keyStateStr === _lastSentSyncSnapshotStr && (safeNow - lastWsSyncTime < 4500)) {
     return;
   }
   _lastSentSyncSnapshotStr = keyStateStr;
-  lastWsSyncTime = now;
+  lastWsSyncTime = safeNow;
 
   sendCentralWsPacket({
     type: 'PLAYER_SYNC',
@@ -933,6 +938,8 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
       existing.gmInvisible = Boolean(newP.gmInvisible ?? existing.gmInvisible);
       existing.partyId = newP.partyId !== undefined ? newP.partyId : existing.partyId;
       existing.isPartyLeader = Boolean(newP.isPartyLeader ?? existing.isPartyLeader);
+      if (newP.partyMemberCount !== undefined) existing.partyMemberCount = newP.partyMemberCount;
+      if (newP.isAI !== undefined) existing.isAI = Boolean(newP.isAI);
       if (newP.targetMobId !== undefined) existing.targetMobId = newP.targetMobId;
 
       if (!isMiniOnly) {
@@ -1160,6 +1167,39 @@ function handleCentralServerPacket(msg) {
     return;
   }
 
+  if (msg.type === 'REGION_PLAYERS_RESP') {
+    window.regionPlayersCache = Array.isArray(msg.players) ? msg.players : [];
+    const pModal = document.getElementById('party-control-modal');
+    if (pModal && !pModal.classList.contains('hidden')) {
+      window.renderPartyControlModal?.();
+    }
+    return;
+  }
+
+  if (msg.type === 'TRADE_REQUEST_SENT') {
+    return;
+  }
+
+  if (msg.type === 'TRADE_INVITE_RECEIVED') {
+    window.showTradeInvitePopup?.(msg);
+    return;
+  }
+
+  if (msg.type === 'TRADE_STATE_SYNC') {
+    window.onTradeStateSync?.(msg);
+    return;
+  }
+
+  if (msg.type === 'TRADE_COMMIT_EXECUTE') {
+    window.onTradeCommitExecute?.(msg);
+    return;
+  }
+
+  if (msg.type === 'TRADE_CANCELLED') {
+    window.onTradeCancelledByServer?.(msg);
+    return;
+  }
+
   if (msg.type === 'PARTY_STATE_UPDATE') {
     window.partyState = msg.party || null;
     if (window.partyState && window.partyState.partyMode) {
@@ -1172,8 +1212,7 @@ function handleCentralServerPacket(msg) {
     window.updateMercHUD?.();
     const pModal = document.getElementById('party-control-modal');
     if (pModal && !pModal.classList.contains('hidden')) {
-      if (!window.partyState) window.closePartyControlModal?.();
-      else window.renderPartyControlModal?.();
+      window.renderPartyControlModal?.();
     }
     return;
   }

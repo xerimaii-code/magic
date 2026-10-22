@@ -188,21 +188,21 @@ const INVITE_WEIGHT_MAP = [
 
 // 지역별 레벨 및 안전지대 좌표 정보
 const REGION_CONFIGS = [
-  { id: 'R01', minLv: 1,   maxLv: 15,  townX: 2000, townY: 14250 },
-  { id: 'R02', minLv: 16,  maxLv: 30,  townX: 2020, townY: 13400 },
-  { id: 'R03', minLv: 31,  maxLv: 45,  townX: 2000, townY: 13800 },
-  { id: 'R04', minLv: 46,  maxLv: 60,  townX: 2000, townY: 13800 },
-  { id: 'R05', minLv: 61,  maxLv: 75,  townX: 2350, townY: 13650 },
-  { id: 'R06', minLv: 76,  maxLv: 90,  townX: 2000, townY: 13800 },
-  { id: 'R07', minLv: 91,  maxLv: 105, townX: 2050, townY: 14100 },
-  { id: 'R08', minLv: 106, maxLv: 120, townX: 2000, townY: 13800 },
-  { id: 'R09', minLv: 121, maxLv: 135, townX: 2000, townY: 13800 },
-  { id: 'R10', minLv: 136, maxLv: 150, townX: 2000, townY: 13800 },
-  { id: 'R11', minLv: 151, maxLv: 165, townX: 2000, townY: 13800 },
-  { id: 'R12', minLv: 166, maxLv: 185, townX: 2000, townY: 13800 },
-  { id: 'R13', minLv: 186, maxLv: 205, townX: 2000, townY: 13800 },
-  { id: 'R14', minLv: 206, maxLv: 225, townX: 2000, townY: 13800 },
-  { id: 'R15', minLv: 226, maxLv: 250, townX: 2000, townY: 13800 }
+  { id: 'R01', minLv: 1,   maxLv: 15,  townX: 2000, townY: 14250, fieldX: 1820, fieldY: 8620,  dungeonX: 1100, dungeonY: 2280,  bossX: 2950, bossY: 2820 },
+  { id: 'R02', minLv: 16,  maxLv: 30,  townX: 2020, townY: 13400, fieldX: 1420, fieldY: 9520,  dungeonX: 3000, dungeonY: 9120,  bossX: 2050, bossY: 5150 },
+  { id: 'R03', minLv: 31,  maxLv: 45,  townX: 2215, townY: 13580, fieldX: 1180, fieldY: 9895,  dungeonX: 3290, dungeonY: 8960,  bossX: 2515, bossY: 3600 },
+  { id: 'R04', minLv: 46,  maxLv: 60,  townX: 3080, townY: 5345,  fieldX: 995,  fieldY: 13460, dungeonX: 3005, dungeonY: 10925, bossX: 980,  bossY: 5460 },
+  { id: 'R05', minLv: 61,  maxLv: 75,  townX: 2350, townY: 13650, fieldX: 1680, fieldY: 9550,  dungeonX: 1050, dungeonY: 4050,  bossX: 2950, bossY: 5880 },
+  { id: 'R06', minLv: 76,  maxLv: 90,  townX: 2335, townY: 13730, fieldX: 1220, fieldY: 10060, dungeonX: 3100, dungeonY: 6095,  bossX: 1165, bossY: 4405 },
+  { id: 'R07', minLv: 91,  maxLv: 105, townX: 1080, townY: 12150, fieldX: 2680, fieldY: 12150, dungeonX: 1900, dungeonY: 7620,  bossX: 2720, bossY: 4080 },
+  { id: 'R08', minLv: 106, maxLv: 120, townX: 2710, townY: 13020, fieldX: 1070, fieldY: 9265,  dungeonX: 1215, dungeonY: 4550,  bossX: 3155, bossY: 4510 },
+  { id: 'R09', minLv: 121, maxLv: 135, townX: 1360, townY: 13590, fieldX: 2235, fieldY: 10900, dungeonX: 2070, dungeonY: 6595,  bossX: 2605, bossY: 3435 },
+  { id: 'R10', minLv: 136, maxLv: 150, townX: 1310, townY: 13320, fieldX: 1215, fieldY: 9425,  dungeonX: 3155, dungeonY: 6365,  bossX: 1220, bossY: 4760 },
+  { id: 'R11', minLv: 151, maxLv: 165, townX: 2720, townY: 13685, fieldX: 950,  fieldY: 9335,  dungeonX: 2965, dungeonY: 6585,  bossX: 1680, bossY: 4265 },
+  { id: 'R12', minLv: 166, maxLv: 185, townX: 1225, townY: 5135,  fieldX: 2965, fieldY: 8445,  dungeonX: 1220, dungeonY: 10255, bossX: 2800, bossY: 13200 },
+  { id: 'R13', minLv: 186, maxLv: 205, townX: 3100, townY: 12165, fieldX: 990,  fieldY: 10225, dungeonX: 3010, dungeonY: 6805,  bossX: 1085, bossY: 4360 },
+  { id: 'R14', minLv: 206, maxLv: 225, townX: 2080, townY: 13345, fieldX: 1020, fieldY: 9110,  dungeonX: 3100, dungeonY: 8130,  bossX: 2445, bossY: 3975 },
+  { id: 'R15', minLv: 226, maxLv: 250, townX: 2100, townY: 13285, fieldX: 1085, fieldY: 8890,  dungeonX: 3105, dungeonY: 8540,  bossX: 2120, bossY: 3880 }
 ];
 
 // =====================================================================

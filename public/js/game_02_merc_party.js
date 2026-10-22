@@ -1404,6 +1404,32 @@ window.selectFriendlyOtherPlayer = function(opOrCharId) {
 
 let _partyHudPressTimer = null;
 let _partyHudLongPressed = false;
+let _mercHudCardPressTimer = null;
+let _mercHudCardLongPressed = false;
+
+window.onMercHudCardPointerDown = function(ev) {
+  if (ev) ev.stopPropagation();
+  if (ev && ev.button && ev.button !== 0) return;
+  _mercHudCardLongPressed = false;
+  clearTimeout(_mercHudCardPressTimer);
+  _mercHudCardPressTimer = setTimeout(() => {
+    _mercHudCardLongPressed = true;
+    window.toggleMercUI?.();
+  }, 420);
+};
+
+window.onMercHudCardPointerUp = function(ev) {
+  if (ev) ev.stopPropagation();
+  if (ev && ev.button && ev.button !== 0) return;
+  clearTimeout(_mercHudCardPressTimer);
+  if (!_mercHudCardLongPressed) {
+    window.toggleFriendlyMercTarget?.();
+  }
+};
+
+window.onMercHudCardCancel = function() {
+  clearTimeout(_mercHudCardPressTimer);
+};
 
 window.onPartyHudPointerDown = function(ev, charId, isLeaderCard) {
   if (ev) ev.stopPropagation();
@@ -1412,7 +1438,6 @@ window.onPartyHudPointerDown = function(ev, charId, isLeaderCard) {
   clearTimeout(_partyHudPressTimer);
   _partyHudPressTimer = setTimeout(() => {
     _partyHudLongPressed = true;
-    // 파티장 HUD를 길게 누르면 파티 설정/제어 윈도우창 오픈!
     window.openPartyControlModal();
   }, 420);
 };
@@ -1430,24 +1455,62 @@ window.onPartyHudCancel = function() {
   clearTimeout(_partyHudPressTimer);
 };
 
+window.regionPlayersCache = [];
+window._selectedPartyWindowCharId = null;
+
+window.requestRegionPlayersRefresh = function() {
+  if (typeof sendCentralWsPacket === 'function') {
+    sendCentralWsPacket({
+      type: 'REGION_PLAYERS_REQ',
+      charId: activeCharacterId,
+      regionKey: currentRegionKey,
+      mapKey: currentMapKey
+    });
+  }
+};
+
+window.togglePartyControlModal = function() {
+  const modal = document.getElementById('party-control-modal');
+  if (modal && !modal.classList.contains('hidden')) {
+    window.closePartyControlModal();
+  } else {
+    window.openPartyControlModal();
+  }
+};
+
 window.openPartyControlModal = function() {
+  ensureAllGameModals();
   let modal = document.getElementById('party-control-modal');
   if (!modal) {
     modal = document.createElement('div');
     modal.id = 'party-control-modal';
     modal.className = 'modal-panel hidden';
-    modal.style.cssText = 'width:min(92vw, 325px); z-index:9200; background:rgba(15, 18, 26, 0.97); border:2px solid #38bdf8;';
+    modal.style.cssText = 'width:min(94vw, 350px); max-height:78dvh; z-index:9200; background:rgba(15, 18, 26, 0.97); border:2px solid #38bdf8; display:flex; flex-direction:column;';
     document.getElementById('game-wrapper')?.appendChild(modal);
     makeDraggable('party-control-modal');
   }
+  const wasHidden = modal.classList.contains('hidden');
+  window.requestRegionPlayersRefresh();
   window.renderPartyControlModal();
   modal.classList.remove('hidden');
   window.bringModalToFront?.(modal);
-  window.centerModalOnScreen?.(modal);
+  if (wasHidden && !modal._hasCustomDragPos) {
+    window.centerModalOnScreen?.(modal);
+  }
 };
 
 window.closePartyControlModal = function() {
   document.getElementById('party-control-modal')?.classList.add('hidden');
+};
+
+window.togglePartyWindowCharSelect = function(charId, ev) {
+  if (ev) ev.stopPropagation();
+  if (window._selectedPartyWindowCharId === charId) {
+    window._selectedPartyWindowCharId = null;
+  } else {
+    window._selectedPartyWindowCharId = charId;
+  }
+  window.renderPartyControlModal();
 };
 
 window.requestQuickPartyWith = function(targetName) {
@@ -1460,6 +1523,26 @@ window.requestQuickPartyWith = function(targetName) {
     sender: player.name,
     text: `/파티초대 ${targetName}`
   });
+};
+
+window.requestJoinExistingParty = function(targetCharId, targetPartyId = null) {
+  if (!targetCharId && !targetPartyId) return;
+  sendCentralWsPacket({
+    type: 'PARTY_JOIN_EXISTING_REQ',
+    charId: activeCharacterId,
+    targetCharId: targetCharId || null,
+    targetPartyId: targetPartyId || null
+  });
+};
+
+window.startQuickWhisperTo = function(targetName) {
+  if (!targetName) return;
+  window.toggleChatWindow?.(true);
+  const inp = document.getElementById('chat-msg-input');
+  if (inp) {
+    inp.value = `/귓속말 ${targetName} `;
+    inp.focus();
+  }
 };
 
 window.requestClaimPartyLeader = function() {
@@ -1490,8 +1573,8 @@ window.setPartyAutoHuntMode = function(mode) {
   }
   window.addChat(
     mode === 'FOCUS'
-      ? `🎯 [파티 점사모드] 파티장이 타겟한 몬스터를 집중 공격합니다!`
-      : `🏃 [파티 자유사냥] 파티장 근처에서 자유 사냥하며, 몬스터가 없으면 파티장 근처로 이동합니다!`,
+      ? `🎯 [파티 점사모드] 파티장이 타겟한 몬스터를 집중 공격합니다! (리더가 물약 구매로 마을 진입 시 사냥터에서 임시 자유사냥 후 복귀 시 점사 재개)`
+      : `🏃 [파티 자유사냥] 파티장 근처에서 자유 사냥하며, 리더가 마을에 가도 현재 사냥터를 유지합니다!`,
     'log-sys'
   );
   window.renderPartyControlModal();
@@ -1505,7 +1588,7 @@ window.requestPartyLeave = function() {
     player.partyId = null;
     player.isPartyLeader = false;
   }
-  window.closePartyControlModal();
+  window.renderPartyControlModal();
   window.updateMercHUD();
 };
 
@@ -1519,114 +1602,183 @@ window.requestPartyDelegate = function(targetCharId) {
     charId: activeCharacterId,
     targetCharId
   });
-  window.closePartyControlModal();
+};
+
+window.getMergedRegionCandidates = function() {
+  const map = new Map();
+  (window.regionPlayersCache || []).forEach(p => {
+    if (p && p.charId && p.charId !== activeCharacterId) {
+      map.set(p.charId, { ...p });
+    }
+  });
+  (window.otherPlayers || []).forEach(op => {
+    if (op && op.charId && op.charId !== activeCharacterId && !op.gmInvisible) {
+      const prev = map.get(op.charId) || {};
+      map.set(op.charId, {
+        ...prev,
+        charId: op.charId,
+        name: op.name || prev.name || '모험가',
+        level: op.level || prev.level || 1,
+        class: op.class || prev.class || 'knight',
+        isAI: Boolean(op.isAI ?? prev.isAI ?? String(op.charId).startsWith('ai_char_')),
+        partyId: op.partyId !== undefined ? op.partyId : prev.partyId,
+        isPartyLeader: Boolean(op.isPartyLeader ?? prev.isPartyLeader),
+        partyMemberCount: op.partyMemberCount || prev.partyMemberCount || (op.partyId ? 2 : 0),
+        partyMax: 5,
+        inSafeZone: typeof isInsideSafeZone === 'function' ? isInsideSafeZone(op.x, op.y) : Boolean(prev.inSafeZone),
+        x: op.x,
+        y: op.y
+      });
+    }
+  });
+  const myPartyIds = new Set((window.partyState?.members || []).map(m => m.charId));
+  return Array.from(map.values())
+    .filter(c => c && c.name && !myPartyIds.has(c.charId))
+    .sort((a, b) => {
+      const aHasPty = a.partyId ? 1 : 0;
+      const bHasPty = b.partyId ? 1 : 0;
+      if (aHasPty !== bHasPty) return bHasPty - aHasPty;
+      return (b.level || 1) - (a.level || 1);
+    });
 };
 
 window.renderPartyControlModal = function() {
   const modal = document.getElementById('party-control-modal');
   if (!modal) return;
 
-  const nearbyPlayers = (window.otherPlayers || [])
-    .filter(op => op && op.name && op.charId !== activeCharacterId && (!window.partyState || !(window.partyState.members || []).some(m => m.charId === op.charId)))
-    .slice(0, 6);
+  const regObj = (GameDB.Regions || []).find(r => r.id === currentRegionKey) || GameDB.Regions[0];
+  const candidates = window.getMergedRegionCandidates();
+  const classKor = { knight: '전사', ranger: '궁수', wizard: '마법사' };
+  const escName = (s) => String(s || '').replace(/'/g, "\'");
 
-  const nearbyHtml = nearbyPlayers.length > 0
-    ? nearbyPlayers.map(op => {
+  const candidatesHtml = candidates.length > 0
+    ? candidates.map(op => {
         const hasPty = Boolean(op.partyId);
+        const ptyCount = op.partyMemberCount || (hasPty ? 2 : 0);
+        const isFull = hasPty && ptyCount >= 5;
+        const isSelected = window._selectedPartyWindowCharId === op.charId;
+        const clsLabel = classKor[op.class] || '모험가';
+        const aiTag = op.isAI ? `<span style="color:#38bdf8; font-size:8.5px; background:rgba(2,132,199,0.2); border:1px solid rgba(56,189,248,0.4); padding:0 3px; border-radius:3px;">AI</span>` : `<span style="color:#4ade80; font-size:8.5px; background:rgba(22,163,74,0.2); border:1px solid rgba(74,222,128,0.4); padding:0 3px; border-radius:3px;">유저</span>`;
+        const safeTag = op.inSafeZone ? `<span style="color:#86efac; font-size:8.5px;">[🏡마을]</span>` : `<span style="color:#fca5a5; font-size:8.5px;">[⚔️필드]</span>`;
+        const ptyBadge = hasPty
+          ? `<span style="color:#fde047; font-size:8.5px; font-weight:bold;">[${op.isPartyLeader ? '👑파티장' : '🎗️파티중'} ${ptyCount}/5]</span>`
+          : `<span style="color:#9ca3af; font-size:8.5px;">[솔로]</span>`;
+
         return `
-          <div class="shop-row" style="padding:4px 6px; border-color:#374151;">
-            <div style="font-size:10px; color:#e5e7eb;">
-              <b>${op.name}</b> <span style="color:#93c5fd;">Lv.${op.level || 1}</span>
-              <span style="color:${hasPty ? '#fde047' : '#9ca3af'}; font-size:8.5px;">${hasPty ? '[🎗️파티중]' : '[솔로]'}</span>
+          <div style="background:${isSelected ? '#172554' : '#18181b'}; border:1px solid ${isSelected ? '#38bdf8' : '#374151'}; border-radius:6px; padding:5px 7px; display:flex; flex-direction:column; gap:4px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:4px; cursor:pointer;" onclick="togglePartyWindowCharSelect('${op.charId}', event)">
+              <div style="font-size:10.5px; color:#f3f4f6; display:flex; align-items:center; gap:4px; flex-wrap:wrap; min-width:0;">
+                ${aiTag}
+                <b style="color:#fef08a; text-decoration:underline; text-underline-offset:2px;">${op.name}</b>
+                <span style="color:#93c5fd; font-size:9.5px;">Lv.${op.level || 1} ${clsLabel}</span>
+                ${ptyBadge}
+                ${safeTag}
+              </div>
+              <span style="font-size:9px; color:#38bdf8; font-weight:bold; white-space:nowrap;">${isSelected ? '▲ 닫기' : '▼ 메뉴'}</span>
             </div>
-            <button class="shop-buy-btn" style="padding:2px 6px; font-size:9.5px; background:#0284c7; border-color:#38bdf8;" onclick="requestQuickPartyWith('${op.name}')">
-              📩 ${hasPty ? '파티합류/요청' : '파티초대'}
-            </button>
+            ${isSelected ? `
+              <div style="display:flex; flex-wrap:wrap; gap:4px; padding-top:4px; border-top:1px dashed #334155;">
+                ${hasPty && !isFull ? `
+                  <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#065f46; border-color:#34d399;" onclick="requestJoinExistingParty('${op.charId}', '${op.partyId}')">🎗️ 이 파티에 합류</button>
+                ` : ''}
+                <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#0284c7; border-color:#38bdf8;" onclick="requestQuickPartyWith('${escName(op.name)}')">📩 ${hasPty ? '파티요청/합류' : '파티요청(초대)'}</button>
+                <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#b45309; border-color:#facc15;" onclick="requestTradeWithPlayer('${op.charId}', '${escName(op.name)}')">🤝 아이템/골드 거래</button>
+                <button type="button" class="shop-buy-btn" style="padding:4px 6px; font-size:9.5px; background:#4c1d95; border-color:#c084fc;" onclick="startQuickWhisperTo('${escName(op.name)}')">💌 귓속말</button>
+              </div>
+            ` : ''}
           </div>
         `;
       }).join('')
-    : `<div style="color:#9ca3af; font-size:9.5px; text-align:center; padding:6px;">주변 시야에 다른 모험가가 없습니다.</div>`;
-
-  if (!window.partyState) {
-    modal.innerHTML = `
-      <div class="modal-header drag-handle" style="background:linear-gradient(90deg, #0c4a6e, #1e293b, #0c4a6e); border-bottom-color:#38bdf8;">
-        🎗️ 파티 결성 · 주변 파티 합류 <button class="help-q-btn" onclick="showHelpModal('party', event)">?</button>
-      </div>
-      <button class="close-x-btn" onclick="closePartyControlModal()">✖</button>
-      <div style="display:flex; flex-direction:column; gap:6px; padding:4px; font-size:10.5px;">
-        <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px;">
-          <div style="color:#fde047; font-weight:bold; margin-bottom:4px;">👥 주변 모험가 및 파티 합류 요청</div>
-          <div style="color:#9ca3af; font-size:9px; margin-bottom:4px;">※ 이미 파티 중인 에이전트에게 요청해도 즉시 해당 파티에 합류할 수 있습니다!</div>
-          <div style="display:flex; flex-direction:column; gap:3px; max-height:170px; overflow-y:auto;">
-            ${nearbyHtml}
-          </div>
-        </div>
-      </div>
-    `;
-    return;
-  }
+    : `<div style="color:#9ca3af; font-size:10px; text-align:center; padding:10px;">현재 지역(${regObj.name})에 파티 가능한 다른 모험가가 없습니다.</div>`;
 
   const p = window.partyState;
-  const isMeLeader = p.leaderCharId === activeCharacterId;
-  const curMode = window.partyAutoHuntMode || p.partyMode || 'FREE';
+  const isMeLeader = Boolean(p && p.leaderCharId === activeCharacterId);
+  const curMode = window.partyAutoHuntMode || p?.partyMode || 'FREE';
+  const leaderInTown = Boolean(p && p.leaderInSafeZone);
 
-  const membersHtml = (p.members || []).map((m, idx) => {
-    const isLdr = m.charId === p.leaderCharId;
-    const isMe = m.charId === activeCharacterId;
-    return `
-      <div class="shop-row" style="padding:4px 6px; border-color:${isLdr ? '#facc15' : '#374151'};">
-        <div style="font-size:10.5px; color:#e5e7eb;">
-          <b>${isLdr ? '👑' : `${idx + 1}.`} ${m.name}</b> <span style="color:#93c5fd;">Lv.${m.level || 1}</span>
-          ${isMe ? '<span style="color:#4ade80; font-size:9px;">(나)</span>' : ''}
+  let myPartySectionHtml = '';
+  if (p && Array.isArray(p.members) && p.members.length > 0) {
+    const membersHtml = p.members.map((m, idx) => {
+      const isLdr = m.charId === p.leaderCharId;
+      const isMe = m.charId === activeCharacterId;
+      const isSelected = window._selectedPartyWindowCharId === m.charId;
+      const mSafeBadge = m.inSafeZone
+        ? `<span style="color:#86efac; font-size:8.5px;">[🏡마을정비중]</span>`
+        : `<span style="color:#fca5a5; font-size:8.5px;">[⚔️사냥터]</span>`;
+      return `
+        <div style="background:${isSelected ? '#172554' : '#18181b'}; border:1px solid ${isLdr ? '#facc15' : (isSelected ? '#38bdf8' : '#374151')}; border-radius:6px; padding:4px 6px; display:flex; flex-direction:column; gap:3px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; cursor:${isMe ? 'default' : 'pointer'};" ${isMe ? '' : `onclick="togglePartyWindowCharSelect('${m.charId}', event)"`}>
+            <div style="font-size:10.5px; color:#e5e7eb; display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
+              <b>${isLdr ? '👑' : `${idx + 1}.`} <span style="color:${isLdr ? '#fde047' : '#fff'}; ${!isMe ? 'text-decoration:underline;' : ''}">${m.name}</span></b>
+              <span style="color:#93c5fd; font-size:9.5px;">Lv.${m.level || 1}</span>
+              ${isMe ? '<span style="color:#4ade80; font-size:9px;">(나)</span>' : mSafeBadge}
+            </div>
+            <div>
+              ${isLdr ? `<span style="font-size:9px; color:#fde047; font-weight:bold;">파티장</span>` : `<span style="font-size:9px; color:#9ca3af;">파티원</span>`}
+              ${!isMe ? `<span style="font-size:8.5px; color:#38bdf8; margin-left:4px;">${isSelected ? '▲' : '▼'}</span>` : ''}
+            </div>
+          </div>
+          ${(!isMe && isSelected) ? `
+            <div style="display:flex; flex-wrap:wrap; gap:4px; padding-top:3px; border-top:1px dashed #334155;">
+              <button type="button" class="shop-buy-btn" style="flex:1; padding:3px 5px; font-size:9px; background:#065f46; border-color:#34d399;" onclick="selectFriendlyOtherPlayer('${m.charId}')">💚 힐/버프 대상</button>
+              <button type="button" class="shop-buy-btn" style="flex:1; padding:3px 5px; font-size:9px; background:#1e3a8a; border-color:#60a5fa;" onclick="requestTradeWithPlayer('${m.charId}', '${escName(m.name)}')">🤝 거래신청</button>
+              ${isMeLeader ? `<button type="button" class="shop-buy-btn" style="flex:1; padding:3px 5px; font-size:9px; background:#b45309; border-color:#facc15;" onclick="requestPartyDelegate('${m.charId}')">👑 파티장위임</button>` : ''}
+            </div>
+          ` : ''}
         </div>
-        <div>
-          ${(isMeLeader && !isMe)
-            ? `<button class="shop-buy-btn" style="padding:2px 6px; font-size:9.5px; background:#b45309; border-color:#facc15;" onclick="requestPartyDelegate('${m.charId}')">👑 파티장위임</button>`
-            : (isLdr ? `<span style="font-size:9.5px; color:#fde047; font-weight:bold;">파티장</span>` : `<span style="font-size:9px; color:#9ca3af;">파티원</span>`)}
-        </div>
-      </div>
-    `;
-  }).join('');
+      `;
+    }).join('');
 
-  modal.innerHTML = `
-    <div class="modal-header drag-handle" style="background:linear-gradient(90deg, #0c4a6e, #1e293b, #0c4a6e); border-bottom-color:#38bdf8;">
-      🎗️ 파티 설정 · 전술 제어 <button class="help-q-btn" onclick="showHelpModal('party', event)">?</button>
-    </div>
-    <button class="close-x-btn" onclick="closePartyControlModal()">✖</button>
-    <div style="display:flex; flex-direction:column; gap:6px; padding:4px; font-size:10.5px;">
+    myPartySectionHtml = `
       <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px;">
-        <div style="color:#38bdf8; font-weight:bold; margin-bottom:4px;">⚔️ 자동사냥 시 파티모드 선택</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <span style="color:#38bdf8; font-weight:bold;">⚔️ 파티 사냥 전술 모드</span>
+          ${(curMode === 'FOCUS' && leaderInTown)
+            ? `<span style="font-size:9px; color:#fde047; background:#78350f; border:1px solid #facc15; padding:1px 5px; border-radius:4px;">🏡 리더 마을정비 · 임시 자유사냥중</span>`
+            : ''}
+        </div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
           <button class="shop-buy-btn" style="padding:5px 4px; font-size:10px; ${curMode === 'FREE' ? 'background:#065f46; border-color:#34d399; color:#ecfdf5;' : 'background:#1f2937; border-color:#4b5563; color:#9ca3af;'}" onclick="setPartyAutoHuntMode('FREE')">
-            🏃 자유사냥 (근처유지)
+            🏃 자유사냥 (사냥터유지)
           </button>
           <button class="shop-buy-btn" style="padding:5px 4px; font-size:10px; ${curMode === 'FOCUS' ? 'background:#991b1b; border-color:#f87171; color:#fef2f2;' : 'background:#1f2937; border-color:#4b5563; color:#9ca3af;'}" onclick="setPartyAutoHuntMode('FOCUS')">
-            🎯 점사모드 (타겟집중)
+            🎯 점사모드 (리더타겟집중)
           </button>
         </div>
+        <div style="font-size:8.5px; color:#9ca3af; margin-top:3px;">※ 파티장이 물약 구매하러 마을(안전지대)에 가면 파티원은 현재 사냥터에서 자유사냥을 유지하며, 복귀 즉시 점사모드로 자동 전환됩니다.</div>
       </div>
 
       <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <span style="color:#fde047; font-weight:bold;">👥 파티원 목록 (${(p.members || []).length}/5)</span>
-          ${!isMeLeader ? `<button class="shop-buy-btn" style="padding:2px 7px; font-size:9.5px; background:#b45309; border-color:#facc15; color:#fff; font-weight:bold;" onclick="requestClaimPartyLeader()">👑 파티장 요구</button>` : ''}
+          <span style="color:#fde047; font-weight:bold;">👥 내 파티원 (${p.members.length}/5) <span style="font-size:8.5px; color:#93c5fd; font-weight:normal;">(이름 터치 시 메뉴)</span></span>
+          <div style="display:flex; gap:3px;">
+            ${!isMeLeader ? `<button class="shop-buy-btn" style="padding:2px 6px; font-size:9px; background:#b45309; border-color:#facc15;" onclick="requestClaimPartyLeader()">👑 파티장 요구</button>` : ''}
+            <button class="shop-buy-btn" style="padding:2px 6px; font-size:9px; background:#7f1d1d; border-color:#f87171;" onclick="requestPartyLeave()">🚪 탈퇴</button>
+          </div>
         </div>
         <div style="display:flex; flex-direction:column; gap:3px;">
           ${membersHtml}
         </div>
       </div>
+    `;
+  }
 
-      ${(p.members || []).length < 5 ? `
+  modal.innerHTML = `
+    <div class="modal-header drag-handle" style="background:linear-gradient(90deg, #0c4a6e, #1e293b, #0c4a6e); border-bottom-color:#38bdf8;">
+      🎗️ ${regObj.name} 파티 · 모험가 관리 <button class="help-q-btn" onclick="showHelpModal('party', event)">?</button>
+    </div>
+    <button class="close-x-btn" onclick="closePartyControlModal()">✖</button>
+    <div style="display:flex; flex-direction:column; gap:6px; padding:4px; font-size:10.5px; overflow-y:auto; max-height:68dvh;">
+      ${myPartySectionHtml}
       <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px;">
-        <div style="color:#93c5fd; font-weight:bold; margin-bottom:4px;">📩 주변 모험가 추가 초대</div>
-        <div style="display:flex; flex-direction:column; gap:3px; max-height:95px; overflow-y:auto;">
-          ${nearbyHtml}
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+          <span style="color:#fde047; font-weight:bold;">📍 ${regObj.name} 파티 가능 모험가 (${candidates.length}명)</span>
+          <button type="button" class="shop-buy-btn" style="padding:2px 6px; font-size:9px; background:#1e293b; border-color:#64748b;" onclick="requestRegionPlayersRefresh()">🔄 새로고침</button>
         </div>
-      </div>` : ''}
-
-      <div style="display:flex; gap:5px;">
-        ${!isMeLeader ? `<button class="auth-primary-btn" style="flex:1; padding:6px; font-size:10.5px; background:#b45309; border-color:#facc15;" onclick="requestClaimPartyLeader()">👑 파티장 요구</button>` : ''}
-        <button class="auth-danger-btn" style="flex:1; padding:6px; font-size:10.5px;" onclick="requestPartyLeave()">🚪 파티 탈퇴</button>
+        <div style="color:#93c5fd; font-size:9px; margin-bottom:4px;">💡 <b>이름을 터치</b>하면 <b>[파티요청]</b>, <b>[기존 파티 합류]</b>, <b>[아이템/골드 거래]</b>를 바로 진행할 수 있습니다!</div>
+        <div style="display:flex; flex-direction:column; gap:4px; max-height:210px; overflow-y:auto; padding-right:2px;">
+          ${candidatesHtml}
+        </div>
       </div>
     </div>
   `;
@@ -1722,146 +1874,138 @@ window.respondPartyInvite = function(inviterCharId, accept) {
 
 let _lastRegHudTxt = '';
 let _lastPartyHudHtml = '';
-let _lastMercHudSig = '';
-let _lastMercTitleKey = '';
 
 window.updateMercHUD = function() {
   const regEl = document.getElementById('current-region-hud');
   if (regEl) {
     const reg = GameDB.Regions.find(r => r.id === currentRegionKey) || GameDB.Regions[0];
     const isDung = currentMapKey.endsWith('_dungeon');
-    const nextRegTxt = `📍 ${reg.name} ${isDung ? '[던전]' : `(${reg.lvRange})`}`;
+    const ptyCnt = (window.partyState && Array.isArray(window.partyState.members)) ? window.partyState.members.length : 0;
+    const ptyTag = ptyCnt > 0 ? ` 🎗️${ptyCnt}` : '';
+    const nextRegTxt = `📍 ${reg.name} ${isDung ? '[던전]' : `(${reg.lvRange})`}${ptyTag}`;
     if (_lastRegHudTxt !== nextRegTxt) {
       _lastRegHudTxt = nextRegTxt;
       regEl.innerText = nextRegTxt;
     }
   }
 
-  // 🎗️ 용병 HUD 바로 밑에 오직 '내 파티원 HUD(체력/마나)'만 표시 (변경 시에만 DOM 갱신하여 렉 원천 차단!)
+  // 기존 분리형 #merc-hud는 항상 숨김 처리하고, #party-hud의 첫 번째 슬롯(0번)에 파티원 HUD와 동일한 인터페이스로 통합 표기!
+  const legacyMercHud = document.getElementById('merc-hud');
+  if (legacyMercHud && legacyMercHud.style.display !== 'none') {
+    legacyMercHud.style.display = 'none';
+  }
+
   const pHud = document.getElementById('party-hud');
-  if (pHud) {
-    if (window.partyState && Array.isArray(window.partyState.members) && window.partyState.members.length > 0) {
-      if (pHud.style.display !== 'flex') pHud.style.display = 'flex';
-      const curMode = window.partyAutoHuntMode || window.partyState.partyMode || 'FREE';
-      const modeBadge = curMode === 'FOCUS' ? '🎯점사' : '🏃자유';
-      const nextPartyHtml = window.partyState.members.map((pm) => {
-        const liveOp = pm.charId === activeCharacterId
-          ? player
-          : ((window.otherPlayers || []).find(o => o && o.charId === pm.charId) || pm);
-        const isLeader = pm.charId === window.partyState.leaderCharId;
-        const isSel = player.friendlyTarget?.type === 'PLAYER' && (player.friendlyTarget.charId === pm.charId || player.friendlyTarget.ref === liveOp);
-        const hpVal = Math.ceil(liveOp.hp ?? pm.hp ?? 100);
-        const maxHpVal = Math.max(1, liveOp.maxHp || pm.maxHp || 100);
-        const mpVal = Math.ceil(liveOp.mp ?? pm.mp ?? 50);
-        const maxMpVal = Math.max(1, liveOp.maxMp || pm.maxMp || 50);
-        const hpPct = Math.round(Math.max(0, Math.min(100, (hpVal / maxHpVal) * 100)));
-        const mpPct = Math.round(Math.max(0, Math.min(100, (mpVal / maxMpVal) * 100)));
-        const borderCol = isSel ? '#4ade80' : (isLeader ? '#facc15' : '#38bdf8');
-        return `
-          <div onpointerdown="onPartyHudPointerDown(event, '${pm.charId}', ${isLeader})"
-               onpointerup="onPartyHudPointerUp(event, '${pm.charId}', ${isLeader})"
-               onpointerleave="onPartyHudCancel()"
-               onpointercancel="onPartyHudCancel()"
-               oncontextmenu="event.preventDefault(); openPartyControlModal();"
-               title="터치: 힐/버프 대상 선택 | 길게 누르기: 파티 설정창 열기"
-               style="background:rgba(15,20,28,0.93); border:1.5px solid ${borderCol}; box-shadow:${isSel ? '0 0 8px rgba(74,222,128,0.85)' : '0 2px 6px rgba(0,0,0,0.8)'}; border-radius:5px; padding:3px 4px; cursor:pointer; font-size:8.5px; color:#e5e7eb; user-select:none;">
-            <div style="display:flex; justify-content:space-between; align-items:center; font-weight:bold;">
-              <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:58px; color:${isLeader ? '#fde047' : '#e5e7eb'};">${isLeader ? '👑' : '🎗️'}${pm.name}</span>
-              <span style="font-size:7.5px; color:${isSel ? '#4ade80' : '#93c5fd'};">${isSel ? '🎯지원' : (isLeader ? modeBadge : `Lv.${liveOp.level || pm.level || 1}`)}</span>
-            </div>
-            <div class="merc-bar-bg" style="height:5px; margin-top:2px;">
-              <div class="merc-bar-fill-hp" style="width:${hpPct}%;"></div>
-            </div>
-            <div class="merc-bar-bg" style="height:4px; margin-top:1px;">
-              <div class="merc-bar-fill-mp" style="width:${mpPct}%;"></div>
-            </div>
-          </div>
-        `;
-      }).join('');
-      if (_lastPartyHudHtml !== nextPartyHtml) {
-        _lastPartyHudHtml = nextPartyHtml;
-        pHud.innerHTML = nextPartyHtml;
-      }
-    } else if (_lastPartyHudHtml !== '') {
+  if (!pHud) return;
+
+  const hasMerc = Boolean(mercenary && mercenary.hired);
+  const hasParty = Boolean(window.partyState && Array.isArray(window.partyState.members) && window.partyState.members.length > 0);
+
+  if (!hasMerc && !hasParty) {
+    if (_lastPartyHudHtml !== '') {
       _lastPartyHudHtml = '';
       pHud.style.display = 'none';
       pHud.innerHTML = '';
     }
-  }
-
-  const mHud = document.getElementById('merc-hud');
-  if (!mHud) return;
-  if (!mercenary.hired) {
-    if (_lastMercHudSig !== 'unhired') {
-      _lastMercHudSig = 'unhired';
-      mHud.style.display = 'none';
-    }
     return;
   }
 
-  const isMercSelectedForBuff = Boolean(player.friendlyTarget && player.friendlyTarget.type === 'MERC');
-  const hpCeil = Math.ceil(mercenary.hp);
-  const mpCeil = Math.ceil(mercenary.mp);
-  const nextMercSig = `${mercenary.class}|${mercenary.name}|${mercenary.isDead?1:0}|${mercenary.manaRechargeWait?1:0}|${mercenary.stance}|${hpCeil}/${mercenary.maxHp}|${mpCeil}/${mercenary.maxMp}|${isMercSelectedForBuff?1:0}`;
-  if (_lastMercHudSig === nextMercSig) return;
-  _lastMercHudSig = nextMercSig;
+  if (pHud.style.display !== 'flex') pHud.style.display = 'flex';
+  const cardsHtml = [];
 
-  if (mHud.style.display !== 'flex') mHud.style.display = 'flex';
-  mHud.style.borderColor = isMercSelectedForBuff ? '#4ade80' : '#60a5fa';
-  mHud.style.boxShadow = isMercSelectedForBuff
-    ? '0 0 12px rgba(74, 222, 128, 0.85), inset 0 0 6px rgba(74, 222, 128, 0.35)'
-    : '0 2px 8px rgba(0,0,0,0.85)';
-
-  const hintEl = document.getElementById('merc-hud-ally-hint');
-  if (hintEl) {
-    hintEl.innerHTML = isMercSelectedForBuff
-      ? `<span style="color:#4ade80; font-weight:bold;">🎯 힐/버프 지원대상 (홀드:창)</span>`
-      : `터치:힐/버프 | 홀드:상태창`;
-  }
-
-  const meta = MERC_CLASS_META[mercenary.class] || MERC_CLASS_META.knight;
-  const titleEl = document.getElementById('merc-hud-title');
-  const stanceEl = document.getElementById('merc-hud-stance');
-  const hpBar = document.getElementById('merc-hud-hp-bar');
-  const hpTxt = document.getElementById('merc-hud-hp-txt');
-  const mpBar = document.getElementById('merc-hud-mp-bar');
-  const mpTxt = document.getElementById('merc-hud-mp-txt');
-
-  const titleKey = `${mercenary.class}|${mercenary.name}`;
-  if (titleEl && _lastMercTitleKey !== titleKey) {
-    _lastMercTitleKey = titleKey;
-    titleEl.innerHTML = `${window.getClassIconHTML ? window.getClassIconHTML(mercenary.class, 13) : meta.icon} <span>${normalizeMercenaryDisplayName(mercenary.name, mercenary.class).split(' ').pop()}</span>`;
-  }
-  if (stanceEl) {
-    if (mercenary.isDead) {
-      stanceEl.innerText = '💀사망';
-      stanceEl.style.background = '#7f1d1d';
-      stanceEl.style.color = '#fca5a5';
+  // 1) 항상 첫 번째 슬롯: 고용된 용병 HUD (파티원 HUD와 100% 동일한 카드 레이아웃)
+  if (hasMerc) {
+    const isMercSel = Boolean(player.friendlyTarget && player.friendlyTarget.type === 'MERC');
+    const meta = MERC_CLASS_META[mercenary.class] || MERC_CLASS_META.knight;
+    const shortMercName = normalizeMercenaryDisplayName(mercenary.name, mercenary.class).split(' ').pop();
+    const mHpPct = mercenary.isDead ? 0 : Math.round(Math.max(0, Math.min(100, (mercenary.hp / Math.max(1, mercenary.maxHp)) * 100)));
+    const mMpPct = mercenary.isDead ? 0 : Math.round(Math.max(0, Math.min(100, (mercenary.mp / Math.max(1, mercenary.maxMp)) * 100)));
+    const mBorderCol = isMercSel ? '#4ade80' : (mercenary.isDead ? '#ef4444' : '#60a5fa');
+    let mRightBadge = '';
+    if (isMercSel) {
+      mRightBadge = '🎯지원';
+    } else if (mercenary.isDead) {
+      mRightBadge = '💀사망';
     } else if (mercenary.manaRechargeWait) {
-      stanceEl.innerText = '💧MP충전';
-      stanceEl.style.background = '#1e3a8a';
-      stanceEl.style.color = '#93c5fd';
+      mRightBadge = '💧MP';
     } else if (mercenary.stance === 'ATTACK') {
-      stanceEl.innerText = '공격';
-      stanceEl.style.background = '#991b1b';
-      stanceEl.style.color = '#fecaca';
+      mRightBadge = '⚔️공격';
     } else if (mercenary.stance === 'STANDBY') {
-      stanceEl.innerText = '대기';
-      stanceEl.style.background = '#1e3a8a';
-      stanceEl.style.color = '#bfdbfe';
+      mRightBadge = '🛡️대기';
     } else {
-      stanceEl.innerText = '보조';
-      stanceEl.style.background = '#065f46';
-      stanceEl.style.color = '#6ee7b7';
+      mRightBadge = '💚보조';
     }
+    const mRightCol = isMercSel ? '#4ade80' : (mercenary.isDead ? '#fca5a5' : '#6ee7b7');
+
+    cardsHtml.push(`
+      <div onpointerdown="onMercHudCardPointerDown(event)"
+           onpointerup="onMercHudCardPointerUp(event)"
+           onpointerleave="onMercHudCardCancel()"
+           onpointercancel="onMercHudCardCancel()"
+           oncontextmenu="event.preventDefault(); toggleMercUI();"
+           title="터치: 용병 힐/버프 대상 선택 | 길게 누르기: 용병 상태·가방 창 열기"
+           style="background:rgba(15,20,28,0.93); border:1.5px solid ${mBorderCol}; box-shadow:${isMercSel ? '0 0 8px rgba(74,222,128,0.85)' : '0 2px 6px rgba(0,0,0,0.8)'}; border-radius:5px; padding:3px 4px; cursor:pointer; font-size:8.5px; color:#e5e7eb; user-select:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; font-weight:bold;">
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:58px; color:#bae6fd;">${meta.icon}${shortMercName}</span>
+          <span style="font-size:7.5px; color:${mRightCol};">${mRightBadge}</span>
+        </div>
+        <div class="merc-bar-bg" style="height:5px; margin-top:2px;">
+          <div class="merc-bar-fill-hp" style="width:${mHpPct}%;"></div>
+        </div>
+        <div class="merc-bar-bg" style="height:4px; margin-top:1px;">
+          <div class="merc-bar-fill-mp" style="width:${mMpPct}%;"></div>
+        </div>
+      </div>
+    `);
   }
 
-  const hpPct = mercenary.isDead ? 0 : Math.max(0, Math.min(100, (mercenary.hp / mercenary.maxHp) * 100));
-  const mpPct = mercenary.isDead ? 0 : Math.max(0, Math.min(100, (mercenary.mp / mercenary.maxMp) * 100));
-  if (hpBar) hpBar.style.width = `${hpPct}%`;
-  if (hpTxt) hpTxt.innerText = mercenary.isDead ? '사망 (부활필요)' : `${hpCeil}/${mercenary.maxHp}`;
-  if (mpBar) mpBar.style.width = `${mpPct}%`;
-  if (mpTxt) mpTxt.innerText = `${mpCeil}/${mercenary.maxMp}`;
+  // 2) 그 아래로 파티원 HUD 카드들 표시
+  if (hasParty) {
+    const curMode = window.partyAutoHuntMode || window.partyState.partyMode || 'FREE';
+    const ldrInSafe = Boolean(window.partyState.leaderInSafeZone);
+    const modeBadge = curMode === 'FOCUS' ? (ldrInSafe ? '🏡임시자유' : '🎯점사') : '🏃자유';
+
+    window.partyState.members.forEach((pm) => {
+      const liveOp = pm.charId === activeCharacterId
+        ? player
+        : ((window.otherPlayers || []).find(o => o && o.charId === pm.charId) || pm);
+      const isLeader = pm.charId === window.partyState.leaderCharId;
+      const isSel = player.friendlyTarget?.type === 'PLAYER' && (player.friendlyTarget.charId === pm.charId || player.friendlyTarget.ref === liveOp);
+      const hpVal = Math.ceil(liveOp.hp ?? pm.hp ?? 100);
+      const maxHpVal = Math.max(1, liveOp.maxHp || pm.maxHp || 100);
+      const mpVal = Math.ceil(liveOp.mp ?? pm.mp ?? 50);
+      const maxMpVal = Math.max(1, liveOp.maxMp || pm.maxMp || 50);
+      const hpPct = Math.round(Math.max(0, Math.min(100, (hpVal / maxHpVal) * 100)));
+      const mpPct = Math.round(Math.max(0, Math.min(100, (mpVal / maxMpVal) * 100)));
+      const borderCol = isSel ? '#4ade80' : (isLeader ? '#facc15' : '#38bdf8');
+      cardsHtml.push(`
+        <div onpointerdown="onPartyHudPointerDown(event, '${pm.charId}', ${isLeader})"
+             onpointerup="onPartyHudPointerUp(event, '${pm.charId}', ${isLeader})"
+             onpointerleave="onPartyHudCancel()"
+             onpointercancel="onPartyHudCancel()"
+             oncontextmenu="event.preventDefault(); openPartyControlModal();"
+             title="터치: 힐/버프 대상 선택 | 길게 누르기: 파티 설정창 열기"
+             style="background:rgba(15,20,28,0.93); border:1.5px solid ${borderCol}; box-shadow:${isSel ? '0 0 8px rgba(74,222,128,0.85)' : '0 2px 6px rgba(0,0,0,0.8)'}; border-radius:5px; padding:3px 4px; cursor:pointer; font-size:8.5px; color:#e5e7eb; user-select:none;">
+          <div style="display:flex; justify-content:space-between; align-items:center; font-weight:bold;">
+            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:58px; color:${isLeader ? '#fde047' : '#e5e7eb'};">${isLeader ? '👑' : '🎗️'}${pm.name}</span>
+            <span style="font-size:7.5px; color:${isSel ? '#4ade80' : '#93c5fd'};">${isSel ? '🎯지원' : (isLeader ? modeBadge : `Lv.${liveOp.level || pm.level || 1}`)}</span>
+          </div>
+          <div class="merc-bar-bg" style="height:5px; margin-top:2px;">
+            <div class="merc-bar-fill-hp" style="width:${hpPct}%;"></div>
+          </div>
+          <div class="merc-bar-bg" style="height:4px; margin-top:1px;">
+            <div class="merc-bar-fill-mp" style="width:${mpPct}%;"></div>
+          </div>
+        </div>
+      `);
+    });
+  }
+
+  const nextPartyHtml = cardsHtml.join('');
+  if (_lastPartyHudHtml !== nextPartyHtml) {
+    _lastPartyHudHtml = nextPartyHtml;
+    pHud.innerHTML = nextPartyHtml;
+  }
 };
 
 let selectedMercInvIdx = null;
@@ -1906,6 +2050,7 @@ window.toggleMercUI = function() {
 };
 
 window.giveSelectedToMerc = function() {
+  if (window.isTradeLockedOrActive?.()) return;
   if (!mercenary.hired) {
     window.addChat(`⚠️ 먼저 용병단장에게 용병을 고용해주세요!`, 'log-hit');
     return;
@@ -1957,6 +2102,7 @@ window.giveSelectedToMerc = function() {
 
 // 용병 착용 슬롯/인벤토리 장착·해제·회수 (해제 후 재착용 안 되던 버그 완벽 수정!)
 window.mercItemAction = function(rawMercIdx, mode = 'equipOrUse') {
+  if (window.isTradeLockedOrActive?.()) return;
   const mercIdx = Number(rawMercIdx);
   if (Number.isNaN(mercIdx)) return;
   const inst = mercenary.inventory[mercIdx];
@@ -2086,6 +2232,7 @@ window.enchantMercItem = function(rawTargetIdx, scrollType) {
 };
 
 window.quickSupplyMercPotions = function() {
+  if (window.isTradeLockedOrActive?.()) return;
   if (!mercenary.hired) return;
   let supplied = 0;
   ['C_P01', 'C_P02', 'C_P03', 'C_P04', 'C_P05'].forEach(pId => {
@@ -2114,6 +2261,7 @@ window.quickSupplyMercPotions = function() {
 
 // 🎁 플레이어 가방에 있는 미장착 장비 중 현재 용병 착용 장비보다 더 좋은 장비를 모두 가져와 즉시 장착!
 window.quickSupplyMercBestEquipFromPlayer = function() {
+  if (window.isTradeLockedOrActive?.()) return;
   if (!mercenary.hired) return;
   window.migrateAndNormalizeEquip(mercenary.equip, mercenary.inventory);
   const playerEquipped = new Set(Object.values(player.equip || {}).filter(v => v !== null && v !== undefined).map(Number));
@@ -2416,6 +2564,7 @@ window.selectMercInvSlot = function(rawMercIdx) {
 
 // 즉시 판매 함수 추가
 window.mercItemQuickSell = function(mercIdx) {
+  if (window.isTradeLockedOrActive?.()) return;
   const inst = mercenary.inventory[mercIdx];
   if (!inst) return;
   const def = window.itemDict[inst.type];

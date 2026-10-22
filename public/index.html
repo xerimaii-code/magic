@@ -315,6 +315,7 @@
             <span class="chat-tab" data-tab="party" onclick="setChatTab('party')">🎗️파티</span>
             <span class="chat-tab" data-tab="whisper" onclick="setChatTab('whisper')">귓속말</span>
             <span class="chat-tab" data-tab="sys" onclick="setChatTab('sys')">시스템</span>
+            <span class="chat-tab" id="chat-tab-gametip" onclick="openGameTipWindowFromChat(event)" style="color:#fde047; font-weight:bold; border-color:#b45309; background:rgba(120,53,15,0.45);" title="대화창을 최소화하고 초보자 도움말(게임팁) 창을 엽니다">💡게임팁</span>
             <span class="chat-tab gm-tab hidden" id="chat-tab-gm" data-tab="gm" onclick="setChatTab('gm')">👑운영자</span>
             <label class="chat-filter-label">
                 <input type="checkbox" id="exclude-sys-chk" onchange="applyChatFilter()"> 시스템제외

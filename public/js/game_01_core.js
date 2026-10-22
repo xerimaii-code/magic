@@ -1524,18 +1524,21 @@ function ensureAllGameModals() {
     if (!document.getElementById('current-region-hud')) {
       const regHud = document.createElement('div');
       regHud.id = 'current-region-hud';
-      regHud.title = '클릭하여 지역 상세 지도 열기';
+      regHud.title = '터치하여 파티 설정 · 지역 모험가/파티 합류 창 열기 (드래그 이동 가능)';
       regHud.innerText = '📍 알트리아';
-      const openMapFromHud = (e) => {
+      let _lastRegPartyTapTs = 0;
+      const openPartyFromRegionHud = (e) => {
         if (e) {
           if (e.cancelable) e.preventDefault();
           e.stopPropagation();
         }
-        window._mapModalOpenedAt = Date.now();
-        window.openRegionDetailMap();
+        const now = Date.now();
+        if (now - _lastRegPartyTapTs < 240) return;
+        _lastRegPartyTapTs = now;
+        window.togglePartyControlModal?.();
       };
-      regHud.addEventListener('pointerup', openMapFromHud);
-      regHud.addEventListener('click', openMapFromHud);
+      regHud.addEventListener('pointerup', openPartyFromRegionHud);
+      regHud.addEventListener('click', openPartyFromRegionHud);
       const safeBadge = document.getElementById('safe-zone-badge');
       if (safeBadge) rightHud.insertBefore(regHud, safeBadge);
       else rightHud.appendChild(regHud);
@@ -1707,6 +1710,38 @@ function ensureAllGameModals() {
       <div id="quest-ui-body" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; padding-right:2px;"></div>
     `;
     document.getElementById('game-wrapper')?.appendChild(qm);
+  }
+
+  // 💡 초보자 도움말(게임팁) 비암전·드래그 이동 모달 (#game-tip-modal)
+  if (!document.getElementById('game-tip-modal')) {
+    const gt = document.createElement('div');
+    gt.id = 'game-tip-modal';
+    gt.className = 'modal-panel hidden';
+    gt.style.cssText = 'width:min(94vw, 360px); max-height:76dvh; z-index:9300; background:rgba(15, 18, 26, 0.97); border:2px solid #facc15; display:flex; flex-direction:column;';
+    gt.innerHTML = `
+      <div class="modal-header drag-handle" style="background:linear-gradient(90deg, #78350f, #1e293b, #78350f); border-bottom-color:#facc15;">
+        💡 초보자 가이드 · 게임팁 <button class="help-q-btn" onclick="showHelpModal('guide', event)" title="가이드 도움말">?</button>
+      </div>
+      <button class="close-x-btn" onclick="closeGameTipModal()">✖</button>
+      <div id="game-tip-modal-body" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; padding:4px;"></div>
+    `;
+    document.getElementById('game-wrapper')?.appendChild(gt);
+  }
+
+  // 🤝 플레이어 간 1:1 안전 거래창 (#trade-modal-ui, 비암전·드래그 가능)
+  if (!document.getElementById('trade-modal-ui')) {
+    const tm = document.createElement('div');
+    tm.id = 'trade-modal-ui';
+    tm.className = 'modal-panel hidden';
+    tm.style.cssText = 'width:min(95vw, 370px); max-height:80dvh; z-index:9450; background:rgba(13, 17, 25, 0.98); border:2px solid #facc15; display:flex; flex-direction:column;';
+    tm.innerHTML = `
+      <div class="modal-header drag-handle" id="trade-modal-header" style="background:linear-gradient(90deg, #713f12, #1e293b, #065f46); border-bottom-color:#facc15;">
+        🤝 모험가 안전 거래창
+      </div>
+      <button class="close-x-btn" onclick="cancelActiveTrade('거래창을 닫아 거래를 취소했습니다.')">✖</button>
+      <div id="trade-modal-body" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; padding:5px;"></div>
+    `;
+    document.getElementById('game-wrapper')?.appendChild(tm);
   }
 
   if (!document.getElementById('touch-drag-ghost')) {
@@ -2439,7 +2474,7 @@ function movePlayerViaDetailMap(tx, ty, zoneType = 'field', label = '') {
   } else {
     window.addChat(`⚡ [사냥터 워프] ${label || '사냥터 입구'} 안전 구역으로 이동했습니다.`, 'log-sys');
   }
-  window.tickMultiplayerSync?.(Date.now() + 5000);
+  window.tickMultiplayerSync?.(Date.now(), true);
 }
 
 function buildSmartFieldPath(sx, sy, tx, ty) {

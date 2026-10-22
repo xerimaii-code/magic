@@ -831,9 +831,45 @@ function gameLoop(rawDelta) {
     : null;
   const pMode = window.partyAutoHuntMode || window.partyState?.partyMode || 'FREE';
 
-  // 파티 점사모드(FOCUS)에서 파티장의 현재 타겟 몬스터 실시간 해석 (서버 파티 스냅샷 + 리더 실시간 타겟 + 리더 교전 중인 근접 몬스터 폴백)
+  // 파티장이 사냥터(비안전지대)에 있을 때 마지막 사냥터 위치 기록 (리더가 물약 사러 마을에 갈 때 사냥터 유지 기준점!)
+  const leaderMemberSnap = isPartyMemberNotLeader
+    ? (window.partyState?.members || []).find(m => m && m.charId === window.partyState.leaderCharId)
+    : null;
+  const isLeaderInSafeZoneNow = Boolean(
+    window.partyState?.leaderInSafeZone ||
+    leaderMemberSnap?.inSafeZone ||
+    (partyLeaderOp && isInsideSafeZone(partyLeaderOp.x, partyLeaderOp.y)) ||
+    (!partyLeaderOp && leaderMemberSnap && leaderMemberSnap.mapKey !== currentMapKey)
+  );
+  if (isPartyMemberNotLeader && partyLeaderOp && !isInsideSafeZone(partyLeaderOp.x, partyLeaderOp.y)) {
+    window._lastKnownLeaderFieldPos = { x: partyLeaderOp.x, y: partyLeaderOp.y, mapKey: currentMapKey };
+  }
+
+  // 파티장이 마을(안전지대)로 갔을 때 상태 전환 알림 및 점사 -> 임시 자유사냥 자동 전환
+  if (isPartyMemberNotLeader && window.isAutoAttack) {
+    if (isLeaderInSafeZoneNow && !window._wasPartyLeaderInSafe) {
+      window._wasPartyLeaderInSafe = true;
+      if (pMode === 'FOCUS') {
+        window.addChat(`🎯➡️🏃 [파티장 마을 정비] 파티장이 마을(안전지대)로 이동하여 복귀할 때까지 현재 사냥터에서 임시 자유사냥을 진행합니다!`, 'log-sys');
+      }
+      window.updateMercHUD?.();
+    } else if (!isLeaderInSafeZoneNow && window._wasPartyLeaderInSafe) {
+      window._wasPartyLeaderInSafe = false;
+      if (pMode === 'FOCUS') {
+        window.addChat(`🏃➡️🎯 [파티장 사냥터 복귀] 파티장이 복귀하여 즉시 점사모드를 재개합니다!`, 'log-sys');
+      }
+      window.updateMercHUD?.();
+    }
+  } else {
+    window._wasPartyLeaderInSafe = false;
+  }
+
+  // 유효 파티 사냥 모드: 점사모드(FOCUS)여도 파티장이 마을에 있으면 임시 자유사냥(FREE)으로 동작!
+  const effectivePartyMode = (isPartyMemberNotLeader && pMode === 'FOCUS' && isLeaderInSafeZoneNow) ? 'FREE' : pMode;
+
+  // 파티 점사모드(FOCUS)에서 파티장의 현재 타겟 몬스터 실시간 해석 (리더가 사냥터에 있을 때만!)
   let activePartyFocusMob = null;
-  if (isPartyMemberNotLeader && pMode === 'FOCUS') {
+  if (isPartyMemberNotLeader && effectivePartyMode === 'FOCUS' && !isLeaderInSafeZoneNow) {
     const rawLdrMobId = window.partyState?.leaderTargetMobId || partyLeaderOp?.targetMobId || null;
     if (rawLdrMobId) {
       activePartyFocusMob = monsterList.find(m => !m.isDead && String(m.id) === String(rawLdrMobId) && !isInsideSafeZone(m.x, m.y)) || null;
@@ -879,10 +915,10 @@ function gameLoop(rawDelta) {
     }
   }
 
-  // 5-B) 자동 사냥 몬스터 탐색 (파티 모드[자유사냥/점사모드] 연동 + 기억해둔 보스/반격 우선)
+  // 5-B) 자동 사냥 몬스터 탐색 (파티 모드[자유사냥/점사모드] 연동 + 파티장 마을 이동 시 사냥터 유지·임시 자유사냥)
   if (window.isAutoAttack && !inSafe && !player.manualMoving) {
-    // [파티 점사모드]: 파티장이 타겟한 몬스터가 있으면 즉시 해당 몬스터로 타겟 고정 및 집중 공격!
-    if (isPartyMemberNotLeader && pMode === 'FOCUS') {
+    // [파티 점사모드 (리더가 사냥터에 있을 때)]: 파티장이 타겟한 몬스터가 있으면 즉시 해당 몬스터로 타겟 고정 및 집중 공격!
+    if (isPartyMemberNotLeader && effectivePartyMode === 'FOCUS' && !isLeaderInSafeZoneNow) {
       if (activePartyFocusMob) {
         if (!player.targetEntity || player.targetEntity.type !== 'MONSTER' || player.targetEntity.ref !== activePartyFocusMob) {
           player.targetEntity = { type: 'MONSTER', ref: activePartyFocusMob };
@@ -896,8 +932,8 @@ function gameLoop(rawDelta) {
             player.isMoving = true;
           }
         }
-      } else if (partyLeaderOp) {
-        // 파티장이 타겟한 몬스터가 없으면 파티장 근처로 이동
+      } else if (partyLeaderOp && !isInsideSafeZone(partyLeaderOp.x, partyLeaderOp.y)) {
+        // 파티장이 타겟한 몬스터가 없으면(사냥터 이동 중) 사냥터 내 파티장 근처로 이동 (안전지대 내부로는 절대 따라가지 않음!)
         if (player.targetEntity && player.targetEntity.type === 'MONSTER' && player.targetEntity.ref.isDead) {
           player.targetEntity = null;
           window.clearTarget();
@@ -905,10 +941,12 @@ function gameLoop(rawDelta) {
         const dLdr = Math.hypot(partyLeaderOp.x - player.x, partyLeaderOp.y - player.y);
         if (dLdr > 125 && (!player.targetEntity || player.targetEntity.type !== 'MONSTER')) {
           const followPt = findSafeSpot(partyLeaderOp.x + 42, partyLeaderOp.y + 28);
-          player.targetX = followPt.x;
-          player.targetY = followPt.y;
-          player.path = window.findPath(player.x, player.y, followPt.x, followPt.y);
-          player.isMoving = true;
+          if (!isInsideSafeZone(followPt.x, followPt.y)) {
+            player.targetX = followPt.x;
+            player.targetY = followPt.y;
+            player.path = window.findPath(player.x, player.y, followPt.x, followPt.y);
+            player.isMoving = true;
+          }
         }
       }
     } else if (!player.targetEntity || (player.targetEntity.type === 'MONSTER' && (player.targetEntity.ref.isDead || isInsideSafeZone(player.targetEntity.ref.x, player.targetEntity.ref.y)))) {
@@ -918,26 +956,46 @@ function gameLoop(rawDelta) {
       } else if (player.savedBossTarget && !player.savedBossTarget.isDead && !isInsideSafeZone(player.savedBossTarget.x, player.savedBossTarget.y)) {
         foundTarget = player.savedBossTarget;
         player.savedBossTarget = null;
-      } else if (isPartyMemberNotLeader && partyLeaderOp && pMode === 'FREE') {
-        // [파티 자유사냥 모드]: 파티장 근처(560px 이내)의 몬스터를 우선 사냥하고, 몬스터가 없으면 파티장 근처로 복귀!
+      } else if (isPartyMemberNotLeader && effectivePartyMode === 'FREE') {
+        // [파티 자유사냥 모드 또는 리더 마을 정비 중 임시 자유사냥]:
+        // 리더가 사냥터에 있으면 리더 기준(580px), 리더가 마을에 갔으면 마지막 사냥터 위치(또는 내 현재 위치) 기준(900px)으로 사냥 지속!
+        const anchorPt = (!isLeaderInSafeZoneNow && partyLeaderOp)
+          ? { x: partyLeaderOp.x, y: partyLeaderOp.y }
+          : ((window._lastKnownLeaderFieldPos && window._lastKnownLeaderFieldPos.mapKey === currentMapKey)
+              ? window._lastKnownLeaderFieldPos
+              : { x: player.x, y: player.y });
+        const maxAnchorRadius = isLeaderInSafeZoneNow ? 950 : 580;
         let minDist = Infinity;
         monsterList.forEach(m => {
           if (m.isDead || isInsideSafeZone(m.x, m.y)) return;
-          const dFromLeader = Math.hypot(m.x - partyLeaderOp.x, m.y - partyLeaderOp.y);
+          const dFromAnchor = Math.hypot(m.x - anchorPt.x, m.y - anchorPt.y);
           const dFromMe = Math.hypot(m.x - player.x, m.y - player.y);
-          if (dFromLeader <= 580 && dFromMe < minDist) {
+          if (dFromAnchor <= maxAnchorRadius && dFromMe < minDist) {
             minDist = dFromMe;
             foundTarget = m;
           }
         });
-        if (!foundTarget) {
+        if (!foundTarget && isLeaderInSafeZoneNow) {
+          // 주변 950px 내에 몹이 일시적으로 다 잡혔으면 내 주변 1400px 내 가장 가까운 필드 몹 탐색
+          monsterList.forEach(m => {
+            if (m.isDead || isInsideSafeZone(m.x, m.y)) return;
+            const dFromMe = Math.hypot(m.x - player.x, m.y - player.y);
+            if (dFromMe <= 1400 && dFromMe < minDist) {
+              minDist = dFromMe;
+              foundTarget = m;
+            }
+          });
+        }
+        if (!foundTarget && !isLeaderInSafeZoneNow && partyLeaderOp && !isInsideSafeZone(partyLeaderOp.x, partyLeaderOp.y)) {
           const dLdr = Math.hypot(partyLeaderOp.x - player.x, partyLeaderOp.y - player.y);
           if (dLdr > 140) {
             const followPt = findSafeSpot(partyLeaderOp.x - 42, partyLeaderOp.y + 30);
-            player.targetX = followPt.x;
-            player.targetY = followPt.y;
-            player.path = window.findPath(player.x, player.y, followPt.x, followPt.y);
-            player.isMoving = true;
+            if (!isInsideSafeZone(followPt.x, followPt.y)) {
+              player.targetX = followPt.x;
+              player.targetY = followPt.y;
+              player.path = window.findPath(player.x, player.y, followPt.x, followPt.y);
+              player.isMoving = true;
+            }
           }
         }
       } else {

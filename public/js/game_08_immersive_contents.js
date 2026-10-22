@@ -136,8 +136,10 @@ export const ImmersiveSystem = {
       e.stopPropagation();
       this.toggleModal();
     };
+    const regHud = document.getElementById('current-region-hud');
     const safeBadge = document.getElementById('safe-zone-badge');
-    if (safeBadge) rightHud.insertBefore(btn, safeBadge);
+    if (regHud) rightHud.insertBefore(btn, regHud);
+    else if (safeBadge) rightHud.insertBefore(btn, safeBadge);
     else rightHud.appendChild(btn);
   },
 

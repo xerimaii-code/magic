@@ -222,24 +222,43 @@ function pickBalancedMapPlacement(level, slotIndex, excludeCharId = null, prefer
       const mapKey = `${regCfg.id}_${mType}`;
       const pop = getMapAgentCount(mapKey, excludeCharId);
       if (pop < MAX_AGENTS_PER_MAP) {
+        const calcSafeHuntPos = (isDung, cfg) => {
+          if (isDung) {
+            return {
+              x: Math.round(750 + ((slotIndex * 197) % 1500)),
+              y: Math.round(750 + ((slotIndex * 263) % 1500))
+            };
+          }
+          let px = Math.round((cfg.fieldX || 1800) + (((slotIndex * 173) % 1200) - 600));
+          let py = Math.round((cfg.fieldY || 9200) + (((slotIndex * 389) % 1600) - 800));
+          px = Math.max(350, Math.min(3650, px));
+          py = Math.max(1200, Math.min(13400, py));
+          if (fastHypot(px - cfg.townX, py - cfg.townY) <= 840) {
+            px = Math.max(350, Math.min(3650, (cfg.fieldX || 1800) + ((slotIndex % 7) - 3) * 110));
+            py = Math.max(1200, Math.min(13400, (cfg.fieldY || 9200) + ((slotIndex % 7) - 3) * 140));
+          }
+          return { x: px, y: py };
+        };
         // 정원 미만인 첫 적정 레벨 맵 중 인원이 적은 곳 선택
         if (r <= 2 && pop <= 5) {
           const isDung = (mType === 'dungeon');
+          const pos = calcSafeHuntPos(isDung, regCfg);
           return {
             regionKey: regCfg.id,
             mapKey,
-            x: isDung ? Math.round(900 + ((slotIndex * 197) % 1200)) : Math.round(1250 + ((slotIndex * 173) % 1500)),
-            y: isDung ? Math.round(900 + ((slotIndex * 263) % 1200)) : Math.round(7800 + ((slotIndex * 389) % 4500))
+            x: pos.x,
+            y: pos.y
           };
         }
         if (pop < minPop) {
           minPop = pop;
           const isDung = (mType === 'dungeon');
+          const pos = calcSafeHuntPos(isDung, regCfg);
           bestCandidate = {
             regionKey: regCfg.id,
             mapKey,
-            x: isDung ? Math.round(900 + ((slotIndex * 197) % 1200)) : Math.round(1250 + ((slotIndex * 173) % 1500)),
-            y: isDung ? Math.round(900 + ((slotIndex * 263) % 1200)) : Math.round(7800 + ((slotIndex * 389) % 4500))
+            x: pos.x,
+            y: pos.y
           };
         }
       }
@@ -341,11 +360,22 @@ function getRegionCfg(regionKey) {
   return REGION_CONFIGS.find(r => r.id === regionKey) || REGION_CONFIGS[0];
 }
 
+function getMapBounds(mapKey) {
+  const mStr = String(mapKey || "");
+  const isDungeon = mStr.includes("dungeon") || mStr.endsWith("_sub3");
+  if (isDungeon) {
+    return { isDungeon: true, minX: 220, maxX: 2780, minY: 220, maxY: 2780, centerX: 1500, centerY: 1500 };
+  }
+  return { isDungeon: false, minX: 260, maxX: 3740, minY: 800, maxY: 13600, centerX: 2000, centerY: 9200 };
+}
+
 function isInTownSafeZone(mapKey, x, y) {
-  if (!mapKey || String(mapKey).includes('dungeon')) return false;
+  if (!mapKey || String(mapKey).includes('dungeon') || String(mapKey).endsWith('_sub3')) return false;
   const regKey = String(mapKey).split('_')[0] || 'R01';
   const cfg = getRegionCfg(regKey);
-  return fastHypot(x - cfg.townX, y - cfg.townY) <= 520;
+  // 서버(magic_server.js) 및 클라이언트(HardcodedMapDB)의 심리스 마을 안전지대 반경(780px)과 100% 일치
+  if (fastHypot(x - cfg.townX, y - cfg.townY) <= 780) return true;
+  return false;
 }
 
 function angleToDirString(rad) {
@@ -385,10 +415,15 @@ class AIAgentClient {
     } else {
       this.regionKey = initReg;
       this.mapKey = initMap;
-      this.x = Number(dbRow.pos_x) || (1500 + (this.slotIndex % 10) * 110);
-      this.y = Number(dbRow.pos_y) || (8500 + (this.slotIndex % 12) * 320);
+      const bounds = getMapBounds(this.mapKey);
+      const regCfg = getRegionCfg(this.regionKey);
+      this.x = Number(dbRow.pos_x) || (bounds.isDungeon ? (900 + (this.slotIndex % 10) * 110) : (1500 + (this.slotIndex % 10) * 110));
+      this.y = Number(dbRow.pos_y) || (bounds.isDungeon ? (900 + (this.slotIndex % 10) * 110) : (8500 + (this.slotIndex % 12) * 320));
+      this.x = Math.max(bounds.minX, Math.min(bounds.maxX, this.x));
+      this.y = Math.max(bounds.minY, Math.min(bounds.maxY, this.y));
       if (isInTownSafeZone(this.mapKey, this.x, this.y)) {
-        this.y = 9500 + (this.slotIndex % 8) * 280;
+        this.x = (regCfg.fieldX || 1800) + ((this.slotIndex % 7) - 3) * 90;
+        this.y = (regCfg.fieldY || 9200) + ((this.slotIndex % 8) - 4) * 120;
       }
     }
 
@@ -489,6 +524,12 @@ class AIAgentClient {
     this.lastPartyInviteTime = 0;
     this.invitedHistory = new Map();
     this.rejectedTargets = new Set();
+    this.lastLeaderFieldPos = null;   // 파티장이 사냥터에 있었을 때의 마지막 필드/던전 좌표 (마을 귀환 시 대기/자유사냥 앵커)
+    this.preShopReturnSpot = null;    // 물약 사러 마을 가기 직전 사냥터 좌표 (파티장/파티원 복귀용)
+    this.isRegroupingToLeader = false;// 추종 거리 초과 후 리더에게 복귀 중인지 여부 (경계 진동 방지 히스테리시스)
+    this.wasLeaderInTown = false;     // 직전 틱에 파티장이 마을 안전지대에 있었는지 여부
+    this.lastShopChatTs = 0;          // 마을 정비 안내 파티채팅 쿨타임
+    this.activeTradeId = null;        // 플레이어와의 거래 세션 ID
 
     // LLM 채팅 히스토리
     this.chatHistory = [];
@@ -806,6 +847,24 @@ class AIAgentClient {
         break;
       }
 
+      case 'GM_MASS_KILL': {
+        for (const mob of this.worldMonsters.values()) {
+          if (mob && !mob.isDead) {
+            mob.isDead = true;
+            mob.hp = 0;
+          }
+        }
+        this.targetMob = null;
+        this.targetMobId = null;
+        this.lastAiDecisionTime = Date.now() - 160;
+        if (Array.isArray(msg.newGroundItems)) {
+          for (const it of msg.newGroundItems) {
+            if (it && it.uid) this.worldItems.set(String(it.uid), it);
+          }
+        }
+        break;
+      }
+
       case 'MONSTER_KILLED': {
         const mId = String(msg.mobId);
         const mob = this.worldMonsters.get(mId);
@@ -926,6 +985,26 @@ class AIAgentClient {
         break;
       }
 
+      case 'TRADE_INVITE_RECEIVED': {
+        this.onTradeInviteReceived(msg);
+        break;
+      }
+
+      case 'TRADE_STATE_SYNC': {
+        this.onTradeStateSync(msg);
+        break;
+      }
+
+      case 'TRADE_COMMIT_EXECUTE': {
+        this.onTradeCommitExecute(msg);
+        break;
+      }
+
+      case 'TRADE_CANCELLED': {
+        this.activeTradeId = null;
+        break;
+      }
+
       case 'REMOTE_ALLY_SUPPORT': {
         if (msg.targetCharId === this.charId) {
           if (msg.healAmt) {
@@ -965,10 +1044,11 @@ class AIAgentClient {
 
   evadeBossTelegraph(bx, by, rad) {
     const now = Date.now();
+    const bounds = getMapBounds(this.mapKey);
     const escAngle = Math.atan2(this.y - by, this.x - bx) || (Math.random() * Math.PI * 2);
     const escDist = rad + 95;
-    const nx = Math.max(250, Math.min(3750, bx + Math.cos(escAngle) * escDist));
-    const ny = Math.max(800, Math.min(13200, by + Math.sin(escAngle) * escDist));
+    const nx = Math.max(bounds.minX, Math.min(bounds.maxX, bx + Math.cos(escAngle) * escDist));
+    const ny = Math.max(bounds.minY, Math.min(bounds.maxY, by + Math.sin(escAngle) * escDist));
 
     // 궁수 닷지 스텝 또는 마법사 텔레포트 보유 시 즉시 회피 도약
     if (this.charClass === 'ranger' && this.learnedSkills.includes('AS3') && this.mp >= 10 && now - (this.skillCooldowns.AS3 || 0) >= 3000) {
@@ -1014,34 +1094,86 @@ class AIAgentClient {
 
   onPartyUpdated(partySnap) {
     const prevFocusTarget = this.partyData?.leaderTargetMobId || null;
+    const prevMode = this.partyData?.partyMode || 'FREE';
     this.partyData = partySnap || null;
     if (!this.partyData) {
       this.followTargetName = null;
+      this.lastLeaderFieldPos = null;
+      this.isRegroupingToLeader = false;
+      this.wasLeaderInTown = false;
       return;
     }
 
     if (this.partyData.leaderCharId && this.partyData.leaderCharId !== this.charId) {
-      // 파티장이 점사(FOCUS) 타겟을 변경한 경우 딜레이 없이 다음 틱에 즉시 점사 타겟 전환!
-      if (this.partyData.partyMode === 'FOCUS' && this.partyData.leaderTargetMobId && this.partyData.leaderTargetMobId !== prevFocusTarget) {
+      const leaderMem = (this.partyData.members || []).find(m => m.charId === this.partyData.leaderCharId);
+      const leaderInTown = Boolean(
+        this.partyData.leaderInSafeZone ||
+        (leaderMem && isInTownSafeZone(leaderMem.mapKey || this.mapKey, Number(leaderMem.x) || 2000, Number(leaderMem.y) || 14250))
+      );
+
+      // 파티장이 점사(FOCUS) 타겟을 변경했거나 모드가 변경된 경우 딜레이 없이 다음 틱에 즉시 반영
+      if (
+        (this.partyData.partyMode === 'FOCUS' && this.partyData.leaderTargetMobId && this.partyData.leaderTargetMobId !== prevFocusTarget) ||
+        this.partyData.partyMode !== prevMode
+      ) {
         this.lastAiDecisionTime = 0;
       }
-      const leaderMem = (this.partyData.members || []).find(m => m.charId === this.partyData.leaderCharId);
+
       if (leaderMem) {
         this.followTargetName = leaderMem.name;
-        if (leaderMem.mapKey && leaderMem.mapKey !== this.mapKey) {
-          const leaderInTown = isInTownSafeZone(leaderMem.mapKey, leaderMem.x || 2000, leaderMem.y || 14000);
-          if (!leaderInTown) {
+        const targetBounds = getMapBounds(leaderMem.mapKey || this.mapKey);
+        const lx = Number(leaderMem.x) || targetBounds.centerX;
+        const ly = Number(leaderMem.y) || targetBounds.centerY;
+
+        if (!leaderInTown) {
+          this.lastLeaderFieldPos = {
+            regionKey: leaderMem.regionKey || String(leaderMem.mapKey || this.mapKey).split('_')[0],
+            mapKey: leaderMem.mapKey || this.mapKey,
+            x: lx,
+            y: ly
+          };
+          // 파티장이 마을에서 물약을 사고 사냥터로 돌아온 순간: 임시 자유사냥 타겟을 정리하고 점사모드(FOCUS) 등 원래 모드로 즉시 복귀!
+          if (this.wasLeaderInTown) {
+            this.wasLeaderInTown = false;
+            this.lastAiDecisionTime = 0;
+            if (this.partyData.partyMode === 'FOCUS') {
+              const focusId = this.partyData.leaderTargetMobId;
+              if (!focusId || String(this.targetMobId) !== String(focusId)) {
+                this.targetMob = null;
+                this.targetMobId = null;
+              }
+            }
+          }
+          if (leaderMem.mapKey && leaderMem.mapKey !== this.mapKey && this.state !== 'SHOPPING') {
+            const tx = Math.max(targetBounds.minX, Math.min(targetBounds.maxX, lx + (Math.random() * 60 - 30)));
+            const ty = Math.max(targetBounds.minY, Math.min(targetBounds.maxY, ly + (Math.random() * 60 - 30)));
             this.teleportToMap(
               leaderMem.regionKey || String(leaderMem.mapKey).split('_')[0],
               leaderMem.mapKey,
-              (leaderMem.x || 2000) + (Math.random() * 60 - 30),
-              (leaderMem.y || 9000) + (Math.random() * 60 - 30)
+              tx,
+              ty
             );
+          }
+        } else {
+          // 파티장이 물약 구매/정비를 위해 마을 안전지대에 진입한 경우:
+          // 현재 지역 및 사냥터 위치를 그대로 유지하고 올 때까지 자유사냥으로 전환!
+          this.wasLeaderInTown = true;
+          this.isRegroupingToLeader = false;
+          if (!this.lastLeaderFieldPos && !isInTownSafeZone(this.mapKey, this.x, this.y)) {
+            this.lastLeaderFieldPos = {
+              regionKey: this.regionKey,
+              mapKey: this.mapKey,
+              x: this.x,
+              y: this.y
+            };
           }
         }
       }
     } else {
+      // 본인이 파티장이 되었거나 솔로인 경우
       this.followTargetName = null;
+      this.isRegroupingToLeader = false;
+      this.wasLeaderInTown = false;
     }
   }
 
@@ -1132,9 +1264,10 @@ class AIAgentClient {
     );
     const isActiveNow = Boolean(
       this.isWalking ||
+      Boolean(this.targetMob && !this.targetMob.isDead) ||
       (this.mercenary && this.mercenary.isWalking) ||
-      (now - (this.lastAttackTime || 0) < 600) ||
-      (this.mercenary && (now - (this.mercenary.lastAttackTime || 0) < 600))
+      (now - (this.lastAttackTime || 0) < 1000) ||
+      (this.mercenary && (now - (this.mercenary.lastAttackTime || 0) < 1000))
     );
     const activeSyncGap = cpuLoadPct >= (CPU_LIMIT_PCT - 8) ? 280 : 200;
     const idleSyncGap = cpuLoadPct >= (CPU_LIMIT_PCT - 8) ? 1200 : 900;
@@ -1175,13 +1308,31 @@ class AIAgentClient {
   }
 
   checkAndResolveStuck(now) {
-    if (this.isWalking) {
+    const bounds = getMapBounds(this.mapKey);
+    const goalDist = (typeof this.moveX === 'number' && typeof this.moveY === 'number')
+      ? fastHypot(this.moveX - this.x, this.moveY - this.y)
+      : 0;
+    if (this.isWalking && goalDist > 30) {
       if (now - this.stuckCheckTime >= 2500) {
         const moved = fastHypot(this.x - this.lastStuckX, this.y - this.lastStuckY);
         if (moved < 12) {
+          const isFollower = Boolean(this.partyData && this.partyData.leaderCharId && this.partyData.leaderCharId !== this.charId);
           const angle = Math.random() * Math.PI * 2;
-          this.x = Math.max(250, Math.min(3750, this.x + Math.cos(angle) * 220));
-          this.y = Math.max(800, Math.min(13100, this.y + Math.sin(angle) * 220));
+          const jumpDist = isFollower ? 95 : 220;
+          let nx = Math.max(bounds.minX, Math.min(bounds.maxX, this.x + Math.cos(angle) * jumpDist));
+          let ny = Math.max(bounds.minY, Math.min(bounds.maxY, this.y + Math.sin(angle) * jumpDist));
+          if (isInTownSafeZone(this.mapKey, nx, ny)) {
+            if (isFollower && this.lastLeaderFieldPos && this.lastLeaderFieldPos.mapKey === this.mapKey) {
+              nx = this.lastLeaderFieldPos.x + (Math.random() * 120 - 60);
+              ny = this.lastLeaderFieldPos.y + (Math.random() * 120 - 60);
+            } else {
+              const regCfg = getRegionCfg(this.regionKey);
+              nx = (regCfg.fieldX || bounds.centerX) + (Math.random() * 160 - 80);
+              ny = (regCfg.fieldY || bounds.centerY) + (Math.random() * 160 - 80);
+            }
+          }
+          this.x = Math.max(bounds.minX, Math.min(bounds.maxX, nx));
+          this.y = Math.max(bounds.minY, Math.min(bounds.maxY, ny));
           this.targetMob = null;
           this.targetMobId = null;
           this.isWalking = false;
@@ -1191,6 +1342,9 @@ class AIAgentClient {
         this.stuckCheckTime = now;
       }
     } else {
+      if (this.isWalking && goalDist <= 30) {
+        this.isWalking = false;
+      }
       this.lastStuckX = this.x;
       this.lastStuckY = this.y;
       this.stuckCheckTime = now;
@@ -1198,63 +1352,188 @@ class AIAgentClient {
   }
 
   executeCombatAndLootRoutine(now) {
+    const bounds = getMapBounds(this.mapKey);
     const isPartyLeader = Boolean(this.partyData && this.partyData.leaderCharId === this.charId);
     const isPartyFollower = Boolean(this.partyData && this.partyData.leaderCharId && this.partyData.leaderCharId !== this.charId);
     const isPartyFocusMode = Boolean(this.partyData && this.partyData.partyMode === 'FOCUS');
     const prevTargetId = this.targetMobId;
 
-    // 0. 먼저 현재 타겟 몬스터 생존/유효성을 선검증하여 죽은 타겟 ID가 남지 않도록 즉시 정리!
+    // 1. 파티 팔로워의 경우 현재 파티장의 위치 및 마을 귀환(물약 구매/정비) 상태를 먼저 파악
+    let leaderLive = null;
+    let leaderOnSameMap = false;
+    let leaderInTown = false;
+    let leaderInCombatZone = false;
+
+    if (isPartyFollower) {
+      const leaderMem = (this.partyData.members || []).find(m => m.charId === this.partyData.leaderCharId);
+      const leaderWorld = this.worldPlayers.get(this.partyData.leaderCharId);
+      const leaderMapKey = leaderMem?.mapKey || this.mapKey;
+
+      if (leaderWorld && typeof leaderWorld.x === 'number' && (!leaderMem?.mapKey || leaderMem.mapKey === this.mapKey)) {
+        leaderLive = leaderWorld;
+        leaderOnSameMap = true;
+      } else if (leaderMem && (!leaderMem.mapKey || leaderMem.mapKey === this.mapKey)) {
+        leaderLive = leaderMem;
+        leaderOnSameMap = true;
+      }
+
+      const checkX = Number(leaderLive?.x ?? leaderMem?.x ?? 2000);
+      const checkY = Number(leaderLive?.y ?? leaderMem?.y ?? 14250);
+      leaderInTown = Boolean(
+        this.partyData.leaderInSafeZone ||
+        isInTownSafeZone(leaderMapKey, checkX, checkY)
+      );
+
+      // 파티장이 다른 맵의 사냥터(마을 안전지대가 아닌 곳)에 있다면 즉시 해당 사냥터로 합류!
+      // 반대로 파티장이 물약을 사러 마을에 간 경우(leaderInTown === true)에는 현재 사냥터/던전을 그대로 유지!
+      if (!leaderOnSameMap && leaderMem && leaderMem.mapKey && leaderMem.mapKey !== this.mapKey) {
+        if (!leaderInTown) {
+          const targetBounds = getMapBounds(leaderMem.mapKey);
+          const tx = Math.max(targetBounds.minX, Math.min(targetBounds.maxX, (leaderMem.x || targetBounds.centerX) + (Math.random() * 80 - 40)));
+          const ty = Math.max(targetBounds.minY, Math.min(targetBounds.maxY, (leaderMem.y || targetBounds.centerY) + (Math.random() * 80 - 40)));
+          this.teleportToMap(leaderMem.regionKey || String(leaderMem.mapKey).split('_')[0], leaderMem.mapKey, tx, ty);
+          return;
+        }
+      }
+
+      leaderInCombatZone = Boolean(leaderOnSameMap && leaderLive && typeof leaderLive.x === 'number' && !leaderInTown);
+
+      if (leaderInCombatZone) {
+        this.lastLeaderFieldPos = {
+          regionKey: this.regionKey,
+          mapKey: this.mapKey,
+          x: leaderLive.x,
+          y: leaderLive.y
+        };
+        // 파티장이 마을에서 돌아왔거나 미니맵 워프로 같은 맵의 먼 사냥터(1150px 초과)로 이동한 경우 즉시 곁으로 합류
+        const distFromLdrNow = fastHypot(leaderLive.x - this.x, leaderLive.y - this.y);
+        if (distFromLdrNow > 1150) {
+          const formAngle = ((this.slotIndex % 8) / 8) * Math.PI * 2;
+          const formDist = 68 + (this.slotIndex % 3) * 24;
+          const wx = Math.max(bounds.minX, Math.min(bounds.maxX, leaderLive.x + Math.cos(formAngle) * formDist));
+          const wy = Math.max(bounds.minY, Math.min(bounds.maxY, leaderLive.y + Math.sin(formAngle) * formDist));
+          if (!isInTownSafeZone(this.mapKey, wx, wy)) {
+            this.x = Math.round(wx);
+            this.y = Math.round(wy);
+            this.moveX = this.x;
+            this.moveY = this.y;
+            this.isWalking = false;
+            this.targetMob = null;
+            this.targetMobId = null;
+            if (this.mercenary && this.mercenary.hired) {
+              this.mercenary.x = this.x + 38;
+              this.mercenary.y = this.y + 26;
+              this.mercenary.isWalking = false;
+            }
+            this.sendWs({
+              type: 'PLAYER_ACTION_FX',
+              charId: this.charId,
+              mapKey: this.mapKey,
+              fxKind: 'teleport',
+              x: this.x,
+              y: this.y,
+              skillName: '파티 집결'
+            });
+          }
+        }
+        // 파티장이 마을 정비 후 사냥터로 복귀한 순간: 점사모드(FOCUS)였다면 임시 자유사냥 타겟을 정리하고 즉시 점사모드로 복귀!
+        if (this.wasLeaderInTown) {
+          this.wasLeaderInTown = false;
+          if (isPartyFocusMode) {
+            const fId = this.partyData.leaderTargetMobId || leaderLive?.targetMobId || null;
+            if (!fId || String(this.targetMobId) !== String(fId)) {
+              this.targetMob = null;
+              this.targetMobId = null;
+            }
+          }
+        }
+      } else {
+        // 파티장이 마을에 가 있거나 사냥터에 없는 동안: 현재 사냥 위치 앵커를 고정하고 올 때까지 자유사냥 수행
+        this.wasLeaderInTown = true;
+        this.isRegroupingToLeader = false;
+        if (!this.lastLeaderFieldPos || this.lastLeaderFieldPos.mapKey !== this.mapKey) {
+          if (!isInTownSafeZone(this.mapKey, this.x, this.y)) {
+            this.lastLeaderFieldPos = { regionKey: this.regionKey, mapKey: this.mapKey, x: this.x, y: this.y };
+          } else {
+            const regCfg = getRegionCfg(this.regionKey);
+            this.lastLeaderFieldPos = {
+              regionKey: this.regionKey,
+              mapKey: this.mapKey,
+              x: bounds.isDungeon ? bounds.centerX : (regCfg.fieldX || bounds.centerX),
+              y: bounds.isDungeon ? bounds.centerY : (regCfg.fieldY || bounds.centerY)
+            };
+          }
+        }
+      }
+    }
+
+    // 🌟 핵심 규칙: 점사모드(FOCUS)일 때 파티장이 사냥터에 있으면 점사모드 유지, 파티장이 물약 사러 마을에 가면 돌아올 때까지 자동으로 자유사냥(effectiveFocusMode = false)!
+    const isEffectiveFocusMode = Boolean(isPartyFollower && isPartyFocusMode && leaderInCombatZone);
+
+    // 0. 현재 타겟 몬스터 생존/유효성 선검증
     if (this.targetMobId) {
       const liveMob = this.worldMonsters.get(String(this.targetMobId));
       if (!liveMob || liveMob.isDead || liveMob.hp <= 0 || isInTownSafeZone(this.mapKey, liveMob.x, liveMob.y)) {
         this.targetMob = null;
         this.targetMobId = null;
+      } else if (isPartyFollower && leaderInCombatZone) {
+        const dMobToLeader = fastHypot(liveMob.x - leaderLive.x, liveMob.y - leaderLive.y);
+        if (dMobToLeader > 560) {
+          this.targetMob = null;
+          this.targetMobId = null;
+        } else {
+          this.targetMob = liveMob;
+        }
+      } else if (isPartyFollower && !leaderInCombatZone && this.lastLeaderFieldPos) {
+        // 파티장이 마을에 간 동안에도 현재 사냥터 구역(앵커 반경 720px) 밖으로 너무 멀리 벗어나지 않도록 관리
+        const dMobToAnchor = fastHypot(liveMob.x - this.lastLeaderFieldPos.x, liveMob.y - this.lastLeaderFieldPos.y);
+        if (dMobToAnchor > 720) {
+          this.targetMob = null;
+          this.targetMobId = null;
+        } else {
+          this.targetMob = liveMob;
+        }
       } else {
         this.targetMob = liveMob;
       }
     }
 
-    // B. 파티 팔로워(Follower) 모드 및 점사 타겟 최우선 동기화 (루팅보다 점사 타겟 동기화를 먼저 수행!)
-    let leaderLive = null;
-    if (isPartyFollower) {
-      const leaderMem = (this.partyData.members || []).find(m => m.charId === this.partyData.leaderCharId);
-      leaderLive = this.worldPlayers.get(this.partyData.leaderCharId) || leaderMem;
-
-      if (isPartyFocusMode) {
-        const focusId = this.partyData.leaderTargetMobId || leaderLive?.targetMobId || null;
-        let focusMob = focusId ? this.worldMonsters.get(String(focusId)) : null;
-        if (focusMob && (focusMob.isDead || focusMob.hp <= 0 || isInTownSafeZone(this.mapKey, focusMob.x, focusMob.y))) {
-          focusMob = null;
-        }
-        // 파티장의 타겟 ID가 순간 비어있더라도 파티장 바로 옆(240px 이내)에서 교전 중인 몬스터가 있으면 즉시 함께 점사!
-        if (!focusMob && leaderLive && typeof leaderLive.x === 'number' && !isInTownSafeZone(this.mapKey, leaderLive.x, leaderLive.y)) {
-          let bestLdrDist = 240;
-          for (const m of this.worldMonsters.values()) {
-            if (!m || m.isDead || m.hp <= 0 || isInTownSafeZone(this.mapKey, m.x, m.y)) continue;
-            const dLdr = fastHypot(m.x - leaderLive.x, m.y - leaderLive.y);
-            if (dLdr < bestLdrDist) {
-              bestLdrDist = dLdr;
-              focusMob = m;
-            }
+    // B. 파티 팔로워(Follower) 모드 및 리더 타겟 최우선 동기화 (파티장이 사냥터에 있을 때 작동)
+    if (isPartyFollower && leaderInCombatZone) {
+      const focusId = this.partyData.leaderTargetMobId || leaderLive?.targetMobId || null;
+      let focusMob = focusId ? this.worldMonsters.get(String(focusId)) : null;
+      if (focusMob && (focusMob.isDead || focusMob.hp <= 0 || isInTownSafeZone(this.mapKey, focusMob.x, focusMob.y))) {
+        focusMob = null;
+      }
+      if (!focusMob) {
+        let bestLdrDist = isEffectiveFocusMode ? 280 : 360;
+        for (const m of this.worldMonsters.values()) {
+          if (!m || m.isDead || m.hp <= 0 || isInTownSafeZone(this.mapKey, m.x, m.y)) continue;
+          const dLdr = fastHypot(m.x - leaderLive.x, m.y - leaderLive.y);
+          if (dLdr < bestLdrDist) {
+            bestLdrDist = dLdr;
+            focusMob = m;
           }
         }
-        if (focusMob) {
-          this.targetMob = focusMob;
-          this.targetMobId = String(focusMob.id);
-        } else {
-          // 점사 모드에서 파티장이 타겟팅한 몬스터가 없으면 임의로 딴 몬스터를 치러 이탈하지 않고 파티장을 따라 이동!
-          this.targetMob = null;
-          this.targetMobId = null;
-        }
+      }
+      if (focusMob) {
+        this.targetMob = focusMob;
+        this.targetMobId = String(focusMob.id);
+      } else if (isEffectiveFocusMode) {
+        // 점사 모드에서 사냥터의 파티장이 아직 타겟팅한 몬스터가 없으면 임의로 이탈하지 않고 파티장 대형 유지
+        this.targetMob = null;
+        this.targetMobId = null;
       }
     }
 
-    // A. 주변 바닥 아이템 실시간 루팅 (파티장 또는 점사 교전 중일 때는 발밑 85px 이내만 즉시 줍고 점사 흐름 유지!)
-    const hasActiveFocusTarget = Boolean(isPartyFollower && isPartyFocusMode && this.targetMob);
+    // A. 주변 바닥 아이템 실시간 루팅 (파티장 또는 교전 중일 때는 발밑 85px 이내만 즉시 줍고 전투 흐름 유지!)
+    const hasActivePartyTarget = Boolean(isPartyFollower && this.targetMob && !this.targetMob.isDead && this.targetMob.hp > 0);
     let nearestItem = null;
-    let minItemDist = (isPartyLeader || hasActiveFocusTarget) ? 85 : 220;
+    let minItemDist = (isPartyLeader || hasActivePartyTarget) ? 85 : 180;
     for (const item of this.worldItems.values()) {
       if (!item || isInTownSafeZone(this.mapKey, item.x, item.y)) continue;
+      if (isPartyFollower && leaderInCombatZone && fastHypot(item.x - leaderLive.x, item.y - leaderLive.y) > 360) continue;
+      if (isPartyFollower && !leaderInCombatZone && this.lastLeaderFieldPos && fastHypot(item.x - this.lastLeaderFieldPos.x, item.y - this.lastLeaderFieldPos.y) > 480) continue;
       const d = fastHypot(item.x - this.x, item.y - this.y);
       if (d < minItemDist) {
         minItemDist = d;
@@ -1270,7 +1549,7 @@ class AIAgentClient {
           itemUid: nearestItem.uid
         });
         this.worldItems.delete(String(nearestItem.uid));
-      } else if (!isPartyLeader && !hasActiveFocusTarget) {
+      } else if (!isPartyLeader && !hasActivePartyTarget) {
         this.moveX = nearestItem.x;
         this.moveY = nearestItem.y;
         this.isWalking = true;
@@ -1278,20 +1557,31 @@ class AIAgentClient {
       }
     }
 
-    if (isPartyFollower) {
-      if (leaderLive && typeof leaderLive.x === 'number' && (!leaderLive.mapKey || leaderLive.mapKey === this.mapKey)) {
-        const distToLeader = fastHypot(leaderLive.x - this.x, leaderLive.y - this.y);
-        // 점사 타겟이 없을 때이거나 파티장과 너무 멀어졌을 때(점사 중에는 520px, 비점사 시 260px) 파티장 곁으로 집결
-        const maxFollowLeash = hasActiveFocusTarget ? 520 : (isPartyFocusMode ? 120 : 280);
-        if (distToLeader > maxFollowLeash) {
-          const ang = Math.atan2(leaderLive.y - this.y, leaderLive.x - this.x);
-          this.moveX = leaderLive.x - Math.cos(ang) * this.followDist;
-          this.moveY = leaderLive.y - Math.sin(ang) * this.followDist;
-          this.isWalking = true;
-          return;
+    // 파티 팔로워 추종 거리(Leash) 및 히스테리시스 관리 (경계 진동 원천 차단)
+    if (isPartyFollower && leaderInCombatZone) {
+      const distToLeader = fastHypot(leaderLive.x - this.x, leaderLive.y - this.y);
+      const maxFollowLeash = hasActivePartyTarget ? 560 : (isEffectiveFocusMode ? 185 : 265);
+      const regroupFinishDist = isEffectiveFocusMode ? 115 : 145;
+      if (distToLeader > maxFollowLeash || (this.isRegroupingToLeader && distToLeader > regroupFinishDist)) {
+        this.isRegroupingToLeader = true;
+        this.targetMob = null;
+        this.targetMobId = null;
+        const formAngle = ((this.slotIndex % 8) / 8) * Math.PI * 2;
+        const formDist = Math.min(this.followDist || 90, 105);
+        let tx = Math.max(bounds.minX, Math.min(bounds.maxX, leaderLive.x + Math.cos(formAngle) * formDist));
+        let ty = Math.max(bounds.minY, Math.min(bounds.maxY, leaderLive.y + Math.sin(formAngle) * formDist));
+        if (isInTownSafeZone(this.mapKey, tx, ty)) {
+          tx = leaderLive.x;
+          ty = leaderLive.y;
         }
+        this.moveX = tx;
+        this.moveY = ty;
+        this.isWalking = true;
+        return;
+      } else {
+        this.isRegroupingToLeader = false;
       }
-    } else if (this.followTargetName) {
+    } else if (!isPartyFollower && this.followTargetName) {
       let targetUser = null;
       for (const p of this.worldPlayers.values()) {
         if (p.name === this.followTargetName) {
@@ -1299,31 +1589,51 @@ class AIAgentClient {
           break;
         }
       }
-      if (targetUser) {
+      if (targetUser && !isInTownSafeZone(this.mapKey, targetUser.x, targetUser.y)) {
         const distToUser = fastHypot(targetUser.x - this.x, targetUser.y - this.y);
         if (distToUser > this.followDist + 40) {
+          this.targetMob = null;
+          this.targetMobId = null;
           const ang = Math.atan2(targetUser.y - this.y, targetUser.x - this.x);
-          this.moveX = targetUser.x - Math.cos(ang) * this.followDist;
-          this.moveY = targetUser.y - Math.sin(ang) * this.followDist;
+          this.moveX = Math.max(bounds.minX, Math.min(bounds.maxX, targetUser.x - Math.cos(ang) * this.followDist));
+          this.moveY = Math.max(bounds.minY, Math.min(bounds.maxY, targetUser.y - Math.sin(ang) * this.followDist));
           this.isWalking = true;
           return;
         }
       }
     }
 
-    // C. 신규 몬스터 타겟팅 (점사 모드의 팔로워는 이미 위에서 리더 타겟으로 동기화되었으므로 임의 타겟팅 생략)
-    if (!this.targetMob && !(isPartyFollower && isPartyFocusMode)) {
-      const candidates = [];
-      for (const m of this.worldMonsters.values()) {
-        if (!m || m.isDead || m.hp <= 0) continue;
-        if (isInTownSafeZone(this.mapKey, m.x, m.y)) continue;
-        if (isPartyFollower && leaderLive && typeof leaderLive.x === 'number') {
-          const dLeader = fastHypot(m.x - leaderLive.x, m.y - leaderLive.y);
-          if (dLeader > 560) continue;
+    // C. 신규 몬스터 타겟팅
+    // - 사냥터에 있는 점사모드(isEffectiveFocusMode === true)가 아닐 때(즉 자유사냥이거나, 점사모드 중 파티장이 마을에 물약 사러 간 동안) 주변 몬스터를 자유 사냥!
+    if (!this.targetMob && !isEffectiveFocusMode) {
+      const holdAnchor = (!leaderInCombatZone && isPartyFollower && this.lastLeaderFieldPos && this.lastLeaderFieldPos.mapKey === this.mapKey)
+        ? this.lastLeaderFieldPos
+        : null;
+
+      const collectCandidates = (maxSearchDist) => {
+        const list = [];
+        for (const m of this.worldMonsters.values()) {
+          if (!m || m.isDead || m.hp <= 0) continue;
+          if (isInTownSafeZone(this.mapKey, m.x, m.y)) continue;
+          if (isPartyFollower && leaderInCombatZone) {
+            const dLeader = fastHypot(m.x - leaderLive.x, m.y - leaderLive.y);
+            if (dLeader > 480) continue;
+          } else if (holdAnchor) {
+            // 파티장이 마을에 간 동안에는 현재 사냥터 구역(holdAnchor 반경 650px) 내의 몬스터를 사냥하며 구역 유지!
+            const dAnchor = fastHypot(m.x - holdAnchor.x, m.y - holdAnchor.y);
+            if (dAnchor > 650) continue;
+          }
+          const d = fastHypot(m.x - this.x, m.y - this.y);
+          if (d <= maxSearchDist) list.push({ mob: m, dist: d });
         }
-        const d = fastHypot(m.x - this.x, m.y - this.y);
-        if (d <= 1450) candidates.push({ mob: m, dist: d });
+        return list;
+      };
+
+      let candidates = collectCandidates(1450);
+      if (candidates.length === 0 && !isPartyFollower) {
+        candidates = collectCandidates(16000);
       }
+
       if (candidates.length > 0) {
         candidates.sort((a, b) => {
           const aNearBoss = Boolean(a.mob.isBoss && a.dist <= 320);
@@ -1363,8 +1673,8 @@ class AIAgentClient {
           const prevX = this.x;
           const prevY = this.y;
           const ang = Math.atan2(mob.y - this.y, mob.x - this.x);
-          this.x = mob.x - Math.cos(ang) * 38;
-          this.y = mob.y - Math.sin(ang) * 38;
+          this.x = Math.max(bounds.minX, Math.min(bounds.maxX, mob.x - Math.cos(ang) * 38));
+          this.y = Math.max(bounds.minY, Math.min(bounds.maxY, mob.y - Math.sin(ang) * 38));
           this.angle = ang;
           this.dir = angleToDirString(ang);
           this.isWalking = false;
@@ -1373,31 +1683,48 @@ class AIAgentClient {
         }
       }
 
-      // 2) 원거리 직업(ranger/wizard): 적이 115px 이내로 붙으면 플레이어처럼 일정한 궤적으로 부드럽게 카이팅
+      // 2) 원거리 직업(ranger/wizard): 적이 115px 이내로 붙으면 플레이어처럼 일정한 궤적으로 부드럽게 카이팅 (파티 추종 반경 내에서만!)
       if (isRanged && (dist < 115 || (this.kiteUntil && now < this.kiteUntil && dist < 165))) {
         if (!this.kiteUntil || now >= this.kiteUntil || this.moveX === null || this.moveY === null) {
           this.kiteUntil = now + 700;
           this.orbitDir = this.orbitDir || (Math.random() < 0.5 ? 1 : -1);
           const awayAngle = Math.atan2(this.y - mob.y, this.x - mob.x) + this.orbitDir * 0.45;
-          this.moveX = Math.max(220, Math.min(3780, this.x + Math.cos(awayAngle) * 155));
-          this.moveY = Math.max(650, Math.min(13150, this.y + Math.sin(awayAngle) * 155));
+          let kx = Math.max(bounds.minX, Math.min(bounds.maxX, this.x + Math.cos(awayAngle) * 145));
+          let ky = Math.max(bounds.minY, Math.min(bounds.maxY, this.y + Math.sin(awayAngle) * 145));
+          if (isPartyFollower && leaderInCombatZone && fastHypot(kx - leaderLive.x, ky - leaderLive.y) > 520) {
+            const toLdr = Math.atan2(leaderLive.y - this.y, leaderLive.x - this.x);
+            kx = Math.max(bounds.minX, Math.min(bounds.maxX, this.x + Math.cos(toLdr) * 120));
+            ky = Math.max(bounds.minY, Math.min(bounds.maxY, this.y + Math.sin(toLdr) * 120));
+          } else if (isPartyFollower && !leaderInCombatZone && this.lastLeaderFieldPos && fastHypot(kx - this.lastLeaderFieldPos.x, ky - this.lastLeaderFieldPos.y) > 580) {
+            const toAnc = Math.atan2(this.lastLeaderFieldPos.y - this.y, this.lastLeaderFieldPos.x - this.x);
+            kx = Math.max(bounds.minX, Math.min(bounds.maxX, this.x + Math.cos(toAnc) * 120));
+            ky = Math.max(bounds.minY, Math.min(bounds.maxY, this.y + Math.sin(toAnc) * 120));
+          }
+          if (isInTownSafeZone(this.mapKey, kx, ky)) {
+            kx = this.x;
+            ky = this.y;
+          }
+          this.moveX = kx;
+          this.moveY = ky;
         }
         this.isWalking = true;
         return;
       }
 
-      // 3) 사거리 밖이면 적의 사거리 가장자리까지 부드럽게 접근
+      // 3) 사거리 밖이면 적의 사거리 안쪽(원거리 230px, 근거리 50px)까지 확실히 접근하여 사거리 경계 멈춤 방지
       if (dist > maxAtkRange) {
         const approachAng = Math.atan2(mob.y - this.y, mob.x - this.x);
-        const stopDist = Math.max(44, maxAtkRange - 14);
-        this.moveX = mob.x - Math.cos(approachAng) * stopDist;
-        this.moveY = mob.y - Math.sin(approachAng) * stopDist;
+        const stopDist = isRanged ? Math.max(140, maxAtkRange - 55) : Math.max(42, maxAtkRange - 18);
+        this.moveX = Math.max(bounds.minX, Math.min(bounds.maxX, mob.x - Math.cos(approachAng) * stopDist));
+        this.moveY = Math.max(bounds.minY, Math.min(bounds.maxY, mob.y - Math.sin(approachAng) * stopDist));
         this.isWalking = true;
         return;
       }
 
       // 4) 사거리 안이면 정지 후 인간 플레이어와 동일한 스킬/평타 공격
       this.isWalking = false;
+      this.moveX = Math.round(this.x);
+      this.moveY = Math.round(this.y);
       this.angle = Math.atan2(mob.y - this.y, mob.x - this.x);
       this.dir = angleToDirString(this.angle);
 
@@ -1410,15 +1737,68 @@ class AIAgentClient {
         const chosenSkill = this.pickSmartCombatSkill(mob, now, this.learnedSkills, this.mp, this.skillCooldowns);
         this.performAttackOnMob(mob, chosenSkill, now, false);
       }
-    } else if (!this.isWalking) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = 300 + Math.random() * 260;
-      const nextX = Math.max(300, Math.min(3700, this.x + Math.cos(angle) * dist));
-      const nextY = Math.max(1200, Math.min(12800, this.y + Math.sin(angle) * dist));
-      if (!isInTownSafeZone(this.mapKey, nextX, nextY)) {
-        this.moveX = nextX;
-        this.moveY = nextY;
-        this.isWalking = true;
+    } else {
+      // 비전투 시(타겟이 없을 때) 이동:
+      if (isPartyFollower) {
+        if (leaderInCombatZone) {
+          // 1) 파티장이 사냥터에 있을 때: 이미 보행 중이더라도 리더가 이동했으면 목표 지점을 실시간 갱신하여 지그재그/뒤처짐 없이 대형(68~116px) 유지!
+          const formAngle = ((this.slotIndex % 8) / 8) * Math.PI * 2;
+          const formDist = 68 + (this.slotIndex % 3) * 24;
+          let tx = Math.max(bounds.minX, Math.min(bounds.maxX, leaderLive.x + Math.cos(formAngle) * formDist));
+          let ty = Math.max(bounds.minY, Math.min(bounds.maxY, leaderLive.y + Math.sin(formAngle) * formDist));
+          if (isInTownSafeZone(this.mapKey, tx, ty)) {
+            tx = leaderLive.x;
+            ty = leaderLive.y;
+          }
+          const distToForm = fastHypot(tx - this.x, ty - this.y);
+          if (distToForm > 42 && !isInTownSafeZone(this.mapKey, tx, ty)) {
+            if (!this.isWalking || this.moveX === null || fastHypot(tx - this.moveX, ty - this.moveY) > 45) {
+              this.moveX = tx;
+              this.moveY = ty;
+              this.isWalking = true;
+            }
+          } else {
+            this.isWalking = false;
+          }
+        } else if (!this.isWalking) {
+          // 2) 파티장이 물약 사러 마을에 간 동안: 맵 중앙(regCfg.fieldY)으로 멀리 끌려가지 않고, 현재 사냥 구역(lastLeaderFieldPos) 반경 220px 내에서만 순찰 대기!
+          const holdAnchor = (this.lastLeaderFieldPos && this.lastLeaderFieldPos.mapKey === this.mapKey)
+            ? this.lastLeaderFieldPos
+            : { x: this.x, y: this.y };
+          const distToHold = fastHypot(holdAnchor.x - this.x, holdAnchor.y - this.y);
+          const ang = distToHold > 260
+            ? (Math.atan2(holdAnchor.y - this.y, holdAnchor.x - this.x) + (Math.random() * 0.6 - 0.3))
+            : (Math.random() * Math.PI * 2);
+          const stepD = 120 + Math.random() * 120;
+          const nx = Math.max(bounds.minX, Math.min(bounds.maxX, (distToHold > 260 ? this.x : holdAnchor.x) + Math.cos(ang) * stepD));
+          const ny = Math.max(bounds.minY, Math.min(bounds.maxY, (distToHold > 260 ? this.y : holdAnchor.y) + Math.sin(ang) * stepD));
+          if (!isInTownSafeZone(this.mapKey, nx, ny)) {
+            this.moveX = nx;
+            this.moveY = ny;
+            this.isWalking = true;
+          }
+        }
+      } else if (!this.isWalking) {
+        // 파티장 또는 솔로 AI: 현재 맵 경계(필드 vs 던전) 및 사냥터 중심점을 향해 자연스럽게 순찰 이동
+        const regCfg = getRegionCfg(this.regionKey);
+        const anchorX = bounds.isDungeon ? bounds.centerX : (regCfg.fieldX || bounds.centerX);
+        const anchorY = bounds.isDungeon ? bounds.centerY : (regCfg.fieldY || bounds.centerY);
+        const distToAnchor = fastHypot(anchorX - this.x, anchorY - this.y);
+        const angle = distToAnchor > 1800
+          ? (Math.atan2(anchorY - this.y, anchorX - this.x) + (Math.random() * 0.8 - 0.4))
+          : (Math.random() * Math.PI * 2);
+        const dist = 320 + Math.random() * 280;
+        const nextX = Math.max(bounds.minX, Math.min(bounds.maxX, this.x + Math.cos(angle) * dist));
+        const nextY = Math.max(bounds.minY, Math.min(bounds.maxY, this.y + Math.sin(angle) * dist));
+        if (!isInTownSafeZone(this.mapKey, nextX, nextY)) {
+          this.moveX = nextX;
+          this.moveY = nextY;
+          this.isWalking = true;
+        } else {
+          this.moveX = Math.max(bounds.minX, Math.min(bounds.maxX, anchorX + (Math.random() * 300 - 150)));
+          this.moveY = Math.max(bounds.minY, Math.min(bounds.maxY, anchorY + (Math.random() * 300 - 150)));
+          this.isWalking = true;
+        }
       }
     }
   }
@@ -1587,16 +1967,17 @@ class AIAgentClient {
     const speedPxPerSec = this.getBaseMoveSpeedFrame60() * 60;
     const speedPx = speedPxPerSec * (dtMs / 1000);
 
+    const bounds = getMapBounds(this.mapKey);
     if (dist <= speedPx) {
-      this.x = this.moveX;
-      this.y = this.moveY;
+      this.x = Math.max(bounds.minX, Math.min(bounds.maxX, this.moveX));
+      this.y = Math.max(bounds.minY, Math.min(bounds.maxY, this.moveY));
       this.isWalking = false;
     } else {
       const ang = Math.atan2(dy, dx);
       this.angle = ang;
       this.dir = angleToDirString(ang);
-      this.x += Math.cos(ang) * speedPx;
-      this.y += Math.sin(ang) * speedPx;
+      this.x = Math.max(bounds.minX, Math.min(bounds.maxX, this.x + Math.cos(ang) * speedPx));
+      this.y = Math.max(bounds.minY, Math.min(bounds.maxY, this.y + Math.sin(ang) * speedPx));
     }
   }
 
@@ -1829,12 +2210,30 @@ class AIAgentClient {
     this.inventory = kept;
   }
 
+  quickFieldResupplyPotions() {
+    const hpPotType = this.level >= 120 ? 'C_HP04' : (this.level >= 60 ? 'C_HP03' : (this.level >= 25 ? 'C_HP02' : 'C_HP01'));
+    const mpPotType = this.level >= 100 ? 'C_MP03' : (this.level >= 40 ? 'C_MP02' : 'C_MP01');
+    const ensureInv = (arr, type, count) => {
+      const found = arr.find(i => i && i.type === type);
+      if (found) found.count = Math.max(found.count, count);
+      else arr.push({ id: `field_${type}_${Date.now()}`, type, count });
+    };
+    ensureInv(this.inventory, hpPotType, 250);
+    ensureInv(this.inventory, mpPotType, 200);
+    if (this.mercenary && this.mercenary.hired) {
+      this.mercenary.inventory = this.mercenary.inventory || [];
+      ensureInv(this.mercenary.inventory, hpPotType, 150);
+      ensureInv(this.mercenary.inventory, mpPotType, 100);
+      this.mercenary.requirePotion = false;
+    }
+  }
+
   checkDrinkPotion() {
     if (this.hp < this.maxHp * 0.62) {
-      const hpPotIdx = this.inventory.findIndex(it => it && (String(it.type).startsWith('C_HP') || String(it.type).startsWith('C_P')) && (it.count || 1) > 0);
+      const hpPotIdx = this.inventory.findIndex(it => it && (String(it.type).startsWith('C_HP') || it.type === 'C_P01' || it.type === 'C_P02') && (it.count || 1) > 0);
       if (hpPotIdx > -1) {
         const pot = this.inventory[hpPotIdx];
-        const healAmt = POTION_HEAL_MAP[pot.type]?.hp || 160;
+        const healAmt = POTION_HEAL_MAP[pot.type]?.hp || 185;
         this.hp = Math.min(this.maxHp, this.hp + healAmt);
         pot.count = (pot.count || 1) - 1;
         if (pot.count <= 0) this.inventory.splice(hpPotIdx, 1);
@@ -1848,16 +2247,18 @@ class AIAgentClient {
           x: Math.round(this.x),
           y: Math.round(this.y)
         });
-      } else if (!this.isShopping && !this.partyData) {
+      } else if (this.targetMob && this.targetMob.isBoss) {
+        this.quickFieldResupplyPotions();
+      } else if (!this.isShopping) {
         this.routineTownShopping();
       }
     }
 
     if (this.mp < this.maxMp * 0.38) {
-      const mpPotIdx = this.inventory.findIndex(it => it && String(it.type).startsWith('C_MP') && (it.count || 1) > 0);
+      const mpPotIdx = this.inventory.findIndex(it => it && (String(it.type).startsWith('C_MP') || it.type === 'C_P03' || it.type === 'C_P04') && (it.count || 1) > 0);
       if (mpPotIdx > -1) {
         const pot = this.inventory[mpPotIdx];
-        const mpAmt = POTION_HEAL_MAP[pot.type]?.mp || 110;
+        const mpAmt = POTION_HEAL_MAP[pot.type]?.mp || 120;
         this.mp = Math.min(this.maxMp, this.mp + mpAmt);
         pot.count = (pot.count || 1) - 1;
         if (pot.count <= 0) this.inventory.splice(mpPotIdx, 1);
@@ -1871,7 +2272,9 @@ class AIAgentClient {
           x: Math.round(this.x),
           y: Math.round(this.y)
         });
-      } else if (!this.isShopping && !this.partyData && this.charClass === 'wizard') {
+      } else if (this.targetMob && this.targetMob.isBoss) {
+        this.quickFieldResupplyPotions();
+      } else if (!this.isShopping) {
         this.routineTownShopping();
       }
     }
@@ -1880,7 +2283,7 @@ class AIAgentClient {
   checkMercenaryNeeds() {
     if (!this.mercenary || !this.mercenary.hired) return;
     if (this.mercenary.requirePotion) {
-      const myHpPot = this.inventory.find(it => it && String(it.type).startsWith('C_HP') && it.count > 60);
+      const myHpPot = this.inventory.find(it => it && (String(it.type).startsWith('C_HP') || it.type === 'C_P01' || it.type === 'C_P02') && it.count > 60);
       if (myHpPot) {
         myHpPot.count -= 50;
         this.mercenary.inventory = this.mercenary.inventory || [];
@@ -1889,7 +2292,9 @@ class AIAgentClient {
         else this.mercenary.inventory.push({ id: `merc_pot_${Date.now()}`, type: myHpPot.type, count: 50 });
         this.mercenary.requirePotion = false;
         this.combatMemory = `동반 용병(${this.mercenary.name})에게 체력 물약을 나눠주었습니다.`;
-      } else if (!this.isShopping && !this.partyData) {
+      } else if (this.targetMob && this.targetMob.isBoss) {
+        this.quickFieldResupplyPotions();
+      } else if (!this.isShopping) {
         this.routineTownShopping();
       }
     }
@@ -1899,6 +2304,39 @@ class AIAgentClient {
     if (this.isShopping || this.isLoggingOut) return;
     this.isShopping = true;
     this.state = 'SHOPPING';
+
+    // 마을 귀환 직전 사냥터 위치를 저장하여 파티장/파티원이 정비를 마치고 원래 사냥터로 정확히 복귀하도록 보장!
+    if (!isInTownSafeZone(this.mapKey, this.x, this.y)) {
+      this.preShopReturnSpot = {
+        regionKey: this.regionKey,
+        mapKey: this.mapKey,
+        x: Math.round(this.x),
+        y: Math.round(this.y)
+      };
+    } else if (this.lastLeaderFieldPos) {
+      this.preShopReturnSpot = { ...this.lastLeaderFieldPos };
+    }
+
+    this.targetMob = null;
+    this.targetMobId = null;
+    this.isWalking = false;
+
+    const now = Date.now();
+    if (this.partyData && (this.partyData.members || []).length > 1 && now - (this.lastShopChatTs || 0) >= 45000) {
+      this.lastShopChatTs = now;
+      const isLeader = this.partyData.leaderCharId === this.charId;
+      const msgTxt = isLeader
+        ? `/파티 물약 사러 마을 잠깐 다녀올게요! 다녀올 동안 현 위치에서 자유사냥하고 계세요~`
+        : `/파티 물약 보충하러 마을 상점 잠깐 다녀올게요~`;
+      this.sendWs({
+        type: 'CHAT_MSG',
+        charId: this.charId,
+        mapKey: this.mapKey,
+        regionKey: this.regionKey,
+        sender: this.name,
+        text: msgTxt
+      });
+    }
 
     const regCfg = getRegionCfg(this.regionKey);
     const townMapKey = `${this.regionKey}_sub1`;
@@ -1941,7 +2379,38 @@ class AIAgentClient {
 
       this.state = 'HUNTING';
       this.isShopping = false;
-      const nextSpot = pickBalancedMapPlacement(this.level, this.slotIndex, this.charId, this.regionKey);
+
+      // 파티 중일 때는 무작위 맵이 아니라 파티원들이 대기/사냥 중인 원래 사냥터(또는 파티장 위치)로 정확히 복귀!
+      if (this.partyData) {
+        const isLeader = this.partyData.leaderCharId === this.charId;
+        if (!isLeader) {
+          const leaderMem = (this.partyData.members || []).find(m => m.charId === this.partyData.leaderCharId);
+          if (leaderMem && leaderMem.mapKey && !isInTownSafeZone(leaderMem.mapKey, leaderMem.x || 2000, leaderMem.y || 14250)) {
+            const tb = getMapBounds(leaderMem.mapKey);
+            const rx = Math.max(tb.minX, Math.min(tb.maxX, (leaderMem.x || tb.centerX) + (Math.random() * 60 - 30)));
+            const ry = Math.max(tb.minY, Math.min(tb.maxY, (leaderMem.y || tb.centerY) + (Math.random() * 60 - 30)));
+            this.teleportToMap(leaderMem.regionKey || String(leaderMem.mapKey).split('_')[0], leaderMem.mapKey, rx, ry);
+            return;
+          }
+        }
+        if (this.preShopReturnSpot && this.preShopReturnSpot.mapKey) {
+          const ret = this.preShopReturnSpot;
+          this.teleportToMap(ret.regionKey || this.regionKey, ret.mapKey, ret.x, ret.y);
+          if (isLeader && (this.partyData.members || []).length > 1) {
+            this.sendWs({
+              type: 'CHAT_MSG',
+              charId: this.charId,
+              mapKey: this.mapKey,
+              regionKey: this.regionKey,
+              sender: this.name,
+              text: `/파티 물약 보충해서 복귀했습니다! 다시 같이 사냥해요 ㄱㄱ`
+            });
+          }
+          return;
+        }
+      }
+
+      const nextSpot = this.preShopReturnSpot || pickBalancedMapPlacement(this.level, this.slotIndex, this.charId, this.regionKey);
       this.teleportToMap(nextSpot.regionKey, nextSpot.mapKey, nextSpot.x, nextSpot.y);
     }, 3500);
   }
@@ -2232,7 +2701,14 @@ class AIAgentClient {
   }
 
   checkSmartMapNavigation(now) {
-    if (this.partyData && this.partyData.leaderCharId !== this.charId) return;
+    if (this.partyData) {
+      if (this.partyData.leaderCharId !== this.charId) return;
+      // 파티원 중 실제 플레이어(Human)가 있거나 마을 정비 중인 파티원이 있으면 임의로 타 지역으로 워프하지 않고 현재 사냥터 유지!
+      const hasHumanOrTownMember = (this.partyData.members || []).some(m =>
+        m && (!String(m.charId || '').startsWith('a1000000-') || m.inSafeZone)
+      );
+      if (hasHumanOrTownMember) return;
+    }
     if (now - this.lastMapCheckTime < 35000) return;
     this.lastMapCheckTime = now;
     if (this.state !== 'HUNTING') return;
@@ -2247,6 +2723,85 @@ class AIAgentClient {
         this.teleportToMap(targetSpot.regionKey, targetSpot.mapKey, targetSpot.x, targetSpot.y);
       }
     }
+  }
+
+  // 🤝 플레이어가 AI 에이전트에게 거래를 신청했을 때 자연스럽게 수락 및 대응
+  onTradeInviteReceived(msg) {
+    if (!msg || !msg.tradeId) return;
+    if (this.activeTradeId || this.isLoggingOut) {
+      this.sendWs({
+        type: 'TRADE_INVITE_RESP',
+        charId: this.charId,
+        tradeId: msg.tradeId,
+        accept: false
+      });
+      return;
+    }
+    this.activeTradeId = msg.tradeId;
+    setTimeout(() => {
+      this.sendWs({
+        type: 'TRADE_INVITE_RESP',
+        charId: this.charId,
+        tradeId: msg.tradeId,
+        accept: true
+      });
+    }, 350);
+  }
+
+  onTradeStateSync(msg) {
+    const t = msg?.trade;
+    if (!t || t.tradeId !== this.activeTradeId) return;
+    const isA = t.playerA?.charId === this.charId;
+    const mySide = isA ? t.playerA : t.playerB;
+    const otherSide = isA ? t.playerB : t.playerA;
+    if (!mySide || !otherSide) return;
+
+    // 상대방(플레이어)이 등록완료(잠금)를 누르면 AI도 잠금 -> 거래확정 진행
+    if (otherSide.locked && !mySide.locked) {
+      setTimeout(() => {
+        if (this.activeTradeId !== t.tradeId) return;
+        this.sendWs({
+          type: 'TRADE_LOCK_REQ',
+          charId: this.charId,
+          tradeId: t.tradeId,
+          locked: true,
+          items: mySide.items || [],
+          gold: mySide.gold || 0,
+          freeSlots: Math.max(10, 100 - (this.inventory?.length || 0)),
+          currentGold: this.gold || 0
+        });
+      }, 450);
+    } else if (otherSide.locked && mySide.locked && !mySide.confirmed) {
+      setTimeout(() => {
+        if (this.activeTradeId !== t.tradeId) return;
+        this.sendWs({
+          type: 'TRADE_CONFIRM_REQ',
+          charId: this.charId,
+          tradeId: t.tradeId,
+          offerVersion: t.offerVersion
+        });
+      }, 500);
+    }
+  }
+
+  onTradeCommitExecute(msg) {
+    if (!msg || !msg.tradeTxId) return;
+    this.activeTradeId = null;
+    const givenGold = Math.max(0, Number(msg.giveGold) || 0);
+    const recvGold = Math.max(0, Number(msg.receiveGold) || 0);
+    this.gold = Math.max(0, (this.gold || 0) - givenGold + recvGold);
+    if (Array.isArray(msg.receiveItems)) {
+      msg.receiveItems.forEach(it => {
+        if (it && it.type) {
+          this.inventory.push({
+            ...it,
+            count: it.qty || it.count || 1
+          });
+        }
+      });
+      this.manageEquipmentAndEnchant();
+    }
+    this._isDirty = true;
   }
 
   teleportToMap(regionKey, mapKey, x = 2000, y = 9000) {

@@ -103,7 +103,7 @@ cameraContainer.addChild(window.bottomMagicCircleG);
 
   window.addEventListener('resize', () => {
     window.forceResizePixiApp?.();
-    ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui'].forEach(id => {
+    ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui', 'party-control-modal', 'game-tip-modal', 'trade-modal-ui'].forEach(id => {
       const el = document.getElementById(id);
       if (el && !el.classList.contains('hidden')) window.centerModalOnScreen?.(el);
     });
@@ -149,7 +149,7 @@ cameraContainer.addChild(window.bottomMagicCircleG);
   app.ticker.add(gameLoop);
   app.ticker.add(() => window.updateHotbarCooldowns());
 
-  ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui', 'stat-alloc-modal', 'immersive-20-modal'].forEach(id => makeDraggable(id));
+  ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui', 'stat-alloc-modal', 'immersive-20-modal', 'party-control-modal', 'game-tip-modal', 'trade-modal-ui'].forEach(id => makeDraggable(id));
   setupChatWindowDragAndResize();
   await authInitPromise;
 };
@@ -681,6 +681,7 @@ function renderInventory() {
 
 window.consumeInventoryItem = consumeInventoryItem;
 function consumeInventoryItem(index, isAutoTrigger = false) {
+  if (!isAutoTrigger && window.isTradeLockedOrActive?.()) return false;
   let item = player.inventory[index];
   if (!item) return false;
 
@@ -889,6 +890,7 @@ function useReturnScroll() {
 
 // 장비 개별 인챈트 실행 (무기 +6 안전 / 방어구·악세사리 +4 안전 / 초과 시 확률 성공 또는 -1 차감)
 function executeEnchant(targetIdx) {
+  if (window.isTradeLockedOrActive?.()) return;
   const scrollInfo = enchantScrollType;
   enchantScrollType = null;
   document.getElementById('enchant-indicator')?.classList.add('hidden');
@@ -942,6 +944,7 @@ function executeEnchant(targetIdx) {
 
 // 💰 단일 선택 판매 시 화면 암전(배경 어두워짐) 없이 수량을 물어보고 판매하는 플로팅 수량 선택창
 window.openSellQuantityPopup = function(invIdx) {
+  if (window.isTradeLockedOrActive?.()) return;
   const idx = Number(invIdx);
   const inst = player.inventory[idx];
   if (!inst) return;
@@ -1039,6 +1042,7 @@ window.adjustSellQtyInput = function(delta) {
 };
 
 window.confirmSellSingleItemWithQty = function() {
+  if (window.isTradeLockedOrActive?.()) { window.closeSellQuantityPopup?.(); return; }
   const pop = document.getElementById('sell-qty-floating-popup');
   if (!pop) return;
   const idx = Number(pop.dataset.invIdx);
@@ -1085,6 +1089,7 @@ window.confirmSellSingleItemWithQty = function() {
 };
 
 window.invAction = function(actionType) {
+  if (window.isTradeLockedOrActive?.()) return;
   if (selectedInvIndices.size === 0) return;
   const eqSet = new Set(Object.values(player.equip).filter(v => v !== null && v !== undefined).map(Number));
   const isMultiChecked = Boolean(document.getElementById('multi-select-toggle')?.checked);
@@ -1144,6 +1149,7 @@ window.invAction = function(actionType) {
 };
 
 window.quickSellSingleItem = function(idx) {
+  if (window.isTradeLockedOrActive?.()) return;
   if (window.isUiTouchDebounced?.('quickSellSingleItem', 240)) return;
   const inst = player.inventory[idx];
   if (!inst) return;
@@ -1308,6 +1314,7 @@ function sortInventoryArrayWithEquip(invArray, equipObj) {
 }
 
 window.sortPlayerInventory = function(silent = false) {
+  if (!silent && window.isTradeLockedOrActive?.()) return;
   enchantScrollType = null;
   document.getElementById('enchant-indicator')?.classList.add('hidden');
   selectedInvIndices.clear();
@@ -2852,8 +2859,10 @@ function loadMapData(mapKey, customSpawn = null) {
       const qNpcName = reg.questNpc || "촌장 발렌";
 
       if (reg.hubType === "CAMP") {
+        if (currentRegionKey === "R01") {
+          npcList.push({ x: townX, y: townY - 88, name: "📖 왕립 안내관 루시", role: "GUIDE", color: 0xf472b6 });
+        }
         npcList.push(
-          { x: townX,       y: townY - 88,  name: "📖 왕립 안내관 루시", role: "GUIDE",     color: 0xf472b6 },
           { x: townX - 180, y: townY - 60,  name: "잡화상인 마르코",     role: "MERCHANT",  color: 0xfde047 },
           { x: townX,       y: townY - 190, name: qNpcName,             role: "QUEST",     color: 0x4ade80 },
           { x: townX + 180, y: townY - 60,  name: "차원술사 아리아",     role: "WORLDMAP",  color: 0x38bdf8 },
@@ -2862,8 +2871,10 @@ function loadMapData(mapKey, customSpawn = null) {
           { x: townX + 160, y: townY + 125, name: "용병단장 카셀",       role: "MERCENARY", color: 0xf87171 }
         );
       } else {
+        if (currentRegionKey === "R01") {
+          npcList.push({ x: townX, y: townY - 95, name: "📖 왕립 안내관 루시", role: "GUIDE", color: 0xf472b6 });
+        }
         npcList.push(
-          { x: townX,       y: townY - 95,  name: "📖 왕립 안내관 루시", role: "GUIDE",     color: 0xf472b6 },
           { x: townX,       y: townY - 230, name: qNpcName,             role: "QUEST",     color: 0x4ade80 },
           { x: townX - 210, y: townY - 130, name: "잡화상인 마르코",     role: "MERCHANT",  color: 0xfde047 },
           { x: townX + 210, y: townY - 130, name: "마법상인 엘린",       role: "SKILL",     color: 0x60a5fa },
@@ -3054,11 +3065,12 @@ function processCanvasTap(e) {
     player.y = rescued.y;
   }
 
-  // 필드 위의 타 플레이어 터치 시 힐/버프 아군 지원 대상으로 선택
+  // 필드 위의 타 플레이어 터치 시 힐/버프 아군 지원 대상으로 선택 + 스마트폰용 플로팅 액션바(거래신청/파티/귓속말) 표시
   if (Array.isArray(window.otherPlayers) && window.otherPlayers.length > 0) {
-    const clickedOp = window.otherPlayers.find(op => op && Math.abs((op.x || 0) - cx) < 38 && cy >= (op.y || 0) - 58 && cy <= (op.y || 0) + 18);
+    const clickedOp = window.otherPlayers.find(op => op && !op.gmInvisible && Math.abs((op.x || 0) - cx) < 42 && cy >= (op.y || 0) - 62 && cy <= (op.y || 0) + 22);
     if (clickedOp) {
       window.selectFriendlyOtherPlayer(clickedOp);
+      window.showPlayerTargetActionBar?.(clickedOp);
       return;
     }
   }

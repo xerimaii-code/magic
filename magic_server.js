@@ -360,8 +360,8 @@ function findServerSafeSpot(mapInst, tx, ty) {
 // - 반경 500px (동일 및 인접 9개 격자 + 경계 보정) 고속 탐색 보장
 // ============================================================================
 const SPATIAL_GRID_SIZE = 400;
-const PLAYER_AOI_RADIUS = 1450;           // 실제 유저 카메라 시야(최대 1280px) 및 스킬 이펙트 반경(1450px)과 100% 일치
-const PLAYER_AOI_HYSTERESIS = 1550;       // 격자 경계선 통과 시 깜빡임(Flicker) 원천 차단 버퍼
+const PLAYER_AOI_RADIUS = 1900;           // 실제 유저 광각 카메라(3단계 줌 0.63 -> 반폭 1781px) 시야 전체 100% 커버
+const PLAYER_AOI_HYSTERESIS = 2000;       // 격자 경계선 통과 시 깜빡임(Flicker) 및 화면 가장자리 정지 현상 원천 차단 버퍼
 const AI_PLAYER_AOI_RADIUS = 760;         // AI 에이전트용 파티 초대/인식 반경
 const AI_PLAYER_AOI_HYSTERESIS = 820;
 const MAX_CONCURRENT_USERS_TARGET = Number(process.env.MAX_CONCURRENT_USERS || 150);
@@ -1152,7 +1152,107 @@ function spawnServerGroundItem(mapInst, itemObj, rawX, rawY) {
 const activeCharSockets = new Map(); // charId -> SessionEntry
 const mutedCharMap = new Map();      // lowerCharName -> unmuteTimestamp
 const serverParties = new Map();     // partyId -> { partyId, leaderCharId, leaderTargetMobId, partyMode: 'FREE', members: [charId, ...] }
+const serverTrades = new Map();      // tradeId -> TradeSession (원자적 플레이어 거래 세션)
+const activeCharTradeMap = new Map();// charId -> tradeId (1인 다중 거래 및 복사 원천 차단)
 const aiRunnerControlConns = new Set(); // AI Agent Runner 제어 전용 WebSocket 연결 목록
+
+function cancelActiveTradeForChar(charId, reason = '거래가 취소되었습니다.') {
+  if (!charId) return;
+  const tradeId = activeCharTradeMap.get(charId);
+  if (!tradeId) return;
+  const trade = serverTrades.get(tradeId);
+  activeCharTradeMap.delete(charId);
+  if (!trade) return;
+  if (trade.state === 'COMMITTING' || trade.state === 'COMPLETED') return;
+  trade.state = 'CANCELLED';
+  serverTrades.delete(tradeId);
+
+  const otherCharId = trade.playerA.charId === charId ? trade.playerB.charId : trade.playerA.charId;
+  activeCharTradeMap.delete(otherCharId);
+
+  [trade.playerA.charId, trade.playerB.charId].forEach(cid => {
+    const e = activeCharSockets.get(cid);
+    if (e && e.conn) {
+      sendWsMessage(e.conn, {
+        type: 'TRADE_CANCELLED',
+        tradeId,
+        reason
+      });
+    }
+  });
+}
+
+function buildTradeSnapshot(trade) {
+  if (!trade) return null;
+  return {
+    tradeId: trade.tradeId,
+    state: trade.state,
+    offerVersion: trade.offerVersion,
+    playerA: {
+      charId: trade.playerA.charId,
+      name: trade.playerA.name,
+      level: trade.playerA.level,
+      class: trade.playerA.class,
+      items: trade.playerA.items,
+      gold: trade.playerA.gold,
+      locked: trade.playerA.locked,
+      confirmed: trade.playerA.confirmed
+    },
+    playerB: {
+      charId: trade.playerB.charId,
+      name: trade.playerB.name,
+      level: trade.playerB.level,
+      class: trade.playerB.class,
+      items: trade.playerB.items,
+      gold: trade.playerB.gold,
+      locked: trade.playerB.locked,
+      confirmed: trade.playerB.confirmed
+    }
+  };
+}
+
+function broadcastTradeSync(trade) {
+  if (!trade) return;
+  const snap = buildTradeSnapshot(trade);
+  [trade.playerA.charId, trade.playerB.charId].forEach(cid => {
+    const e = activeCharSockets.get(cid);
+    if (e && e.conn) {
+      sendWsMessage(e.conn, {
+        type: 'TRADE_STATE_SYNC',
+        trade: snap
+      });
+    }
+  });
+}
+
+function sanitizeTradeOfferItems(rawItems) {
+  if (!Array.isArray(rawItems)) return [];
+  const usedSlots = new Set();
+  const sanitized = [];
+  for (let i = 0; i < rawItems.length && sanitized.length < 6; i++) {
+    const it = rawItems[i];
+    if (!it || typeof it !== 'object') continue;
+    const invIdx = Number(it.invIdx);
+    if (!Number.isInteger(invIdx) || invIdx < 0 || invIdx >= 100 || usedSlots.has(invIdx)) continue;
+    const itemType = String(it.type || '').trim();
+    if (!itemType || !SERVER_ITEM_DICT[itemType]) continue;
+    const qty = Math.max(1, Math.min(9999, Math.floor(Number(it.qty || it.count || 1))));
+    usedSlots.add(invIdx);
+    sanitized.push({
+      invIdx,
+      uid: String(it.uid || `tr_${invIdx}_${Date.now()}`),
+      type: itemType,
+      qty,
+      plus: Math.max(0, Math.min(30, Math.floor(Number(it.plus || it.enchantLevel || 0)))),
+      gradeIdx: Math.max(0, Math.min(5, Math.floor(Number(it.gradeIdx || 0)))),
+      gradeName: it.gradeName || undefined,
+      gradeColor: it.gradeColor || undefined,
+      mult: typeof it.mult === 'number' ? it.mult : undefined,
+      options: Array.isArray(it.options) ? it.options.slice(0, 6) : undefined
+    });
+  }
+  return sanitized;
+}
 
 function getPartyByCharId(charId) {
   if (!charId) return null;
@@ -1169,9 +1269,19 @@ function getPartyByCharId(charId) {
 function buildPartySnapshot(party) {
   if (!party) return null;
   const memberDetails = [];
+  let leaderInSafeZone = false;
   party.members.forEach((cId, idx) => {
     const e = activeCharSockets.get(cId);
     if (e && e.player) {
+      const mMapKey = e.mapKey || 'R01_sub1';
+      const px = Math.round(e.player.x || 2000);
+      const py = Math.round(e.player.y || 14250);
+      const mMapInst = worldMaps.get(normalizeMapKey(mMapKey));
+      const inSafe = mMapInst ? isServerPointInSafeZone(mMapInst, px, py) : false;
+      const isLdr = party.leaderCharId === cId;
+      if (isLdr) {
+        leaderInSafeZone = inSafe;
+      }
       memberDetails.push({
         charId: cId,
         name: e.player.name || '모험가',
@@ -1181,20 +1291,29 @@ function buildPartySnapshot(party) {
         maxHp: e.player.maxHp || 100,
         mp: Math.ceil(e.player.mp ?? 50),
         maxMp: e.player.maxMp || 50,
-        mapKey: e.mapKey || 'R01_sub1',
+        mapKey: mMapKey,
         regionKey: e.regionKey || 'R01',
-        x: Math.round(e.player.x || 2000),
-        y: Math.round(e.player.y || 14250),
-        isLeader: party.leaderCharId === cId,
+        x: px,
+        y: py,
+        inSafeZone: inSafe,
+        isAI: isAIEntry(e),
+        isLeader: isLdr,
         joinOrder: idx + 1
       });
     }
   });
+  if (leaderInSafeZone) {
+    party.leaderTargetMobId = null;
+  }
+  const baseMode = party.partyMode || 'FREE';
+  const effectivePartyMode = (baseMode === 'FOCUS' && leaderInSafeZone) ? 'FREE' : baseMode;
   return {
     partyId: party.partyId,
     leaderCharId: party.leaderCharId,
-    leaderTargetMobId: party.leaderTargetMobId || null,
-    partyMode: party.partyMode || 'FREE',
+    leaderTargetMobId: leaderInSafeZone ? null : (party.leaderTargetMobId || null),
+    partyMode: baseMode,
+    effectivePartyMode,
+    leaderInSafeZone,
     members: memberDetails
   };
 }
@@ -1214,6 +1333,9 @@ function broadcastPartyUpdate(party) {
 }
 
 function removeCharFromParty(charId, reason = 'leave') {
+  if (reason === 'disconnect') {
+    cancelActiveTradeForChar(charId, '상대방의 접속이 종료되어 거래가 자동 취소되었습니다.');
+  }
   const party = getPartyByCharId(charId);
   if (!party) return;
   const leavingEntry = activeCharSockets.get(charId);
@@ -1431,6 +1553,8 @@ function buildMapInitStatePacket(rawMapKey, receiverEntry = null) {
         ...entry.player,
         partyId: pParty ? pParty.partyId : null,
         isPartyLeader: Boolean(pParty && pParty.leaderCharId === entry.charId),
+        partyMemberCount: pParty ? pParty.members.length : 0,
+        isAI: isAIEntry(entry),
         isAdmin: Boolean(entry.isAdmin),
         gmInvisible: Boolean(entry.gmInvisible),
         gmInvincible: Boolean(entry.gmInvincible)
@@ -1962,8 +2086,12 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
       const hasAIMember = targetParty.members.some(cid => isAIEntry(activeCharSockets.get(cid)));
       const allTargetMembersAI = targetParty.members.every(cid => isAIEntry(activeCharSockets.get(cid)));
 
-      // 1) 인간 플레이어가 솔로 상태일 때 -> 해당 AI 파티의 일원으로 즉시 합류! (5명 풀파티면 AI 1명이 자리 양보)
-      if (!myParty && hasAIMember) {
+      // 1) 인간 플레이어가 솔로이거나 다른 파티에서 합류를 요청했을 때 -> 해당 파티의 일원으로 즉시 합류! (5명 풀파티면 AI 1명이 자리 양보)
+      if (myParty && myParty.partyId !== targetParty.partyId && (cmd === '/파티합류' || cmd === '/파티가입' || cmd === '/파티신청')) {
+        removeCharFromParty(entry.charId, 'leave');
+      }
+      const curMyParty = getPartyByCharId(entry.charId);
+      if (!curMyParty && hasAIMember) {
         if (targetParty.members.length >= 5) {
           const yieldAiId = [...targetParty.members].reverse().find(cid => cid !== targetParty.leaderCharId && isAIEntry(activeCharSockets.get(cid)));
           if (yieldAiId) {
@@ -2155,6 +2283,26 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
   // --------------------------------------------------------------------------
   // [1] 일반 유저 & 공용 한글 대화 명령어 (/귓속말, /전체, /지역, /좌표, /청소, /도움말)
   // --------------------------------------------------------------------------
+  if (cmd === '/거래' || cmd === '/교환' || cmd === '/트레이드') {
+    const targetName = args[0];
+    if (!targetName) {
+      sendSystemMsgToEntry(entry, `💡 사용법: /거래 <캐릭터이름> (또는 필드/파티창에서 대상을 터치하여 거래 신청)`, 'log-sys');
+      return true;
+    }
+    const targetEntry = findOnlineEntryByName(targetName);
+    if (!targetEntry || !targetEntry.player || (targetEntry.gmInvisible && !entry.isAdmin)) {
+      sendSystemMsgToEntry(entry, `⚠️ '${targetName}' 캐릭터가 현재 접속 중이지 않습니다.`, 'log-hit');
+      return true;
+    }
+    handleClientWsPacket(entry.conn, {
+      type: 'TRADE_REQUEST',
+      charId: entry.charId,
+      targetCharId: targetEntry.charId,
+      targetName: targetEntry.player.name
+    });
+    return true;
+  }
+
   if (cmd === '/좌표' || cmd === '/위치') {
     const reg = (GameDB.Regions || []).find(r => r.id === entry.regionKey) || { name: entry.regionKey };
     const px = Math.round(entry.player?.x || 0);
@@ -3227,11 +3375,12 @@ function handleClientWsPacket(conn, msg) {
 
     sendWsMessage(conn, buildMapInitStatePacket(newCanonicalMap, entry));
     if (oldMap && oldMap !== newCanonicalMap) {
+      cancelActiveTradeForChar(entry.charId, '맵 이동으로 인해 거래가 취소되었습니다.');
       broadcastToMap(oldMap, { type: 'PLAYER_LEFT_MAP', charId: entry.charId });
-      const movedParty = getPartyByCharId(entry.charId);
-      if (movedParty) {
-        broadcastPartyUpdate(movedParty);
-      }
+    }
+    const movedParty = getPartyByCharId(entry.charId);
+    if (movedParty) {
+      broadcastPartyUpdate(movedParty);
     }
     return;
   }
@@ -3251,11 +3400,26 @@ function handleClientWsPacket(conn, msg) {
         : Math.max(1, Math.min(250, Number(rawP.level ?? prevPlayer.level) || 1));
       const myParty = getPartyByCharId(entry.charId);
       let leaderTargetChanged = false;
-      if (myParty && myParty.leaderCharId === entry.charId && rawP.targetMobId !== undefined) {
-        const nextLdrTarget = rawP.targetMobId ? String(rawP.targetMobId) : null;
-        if (myParty.leaderTargetMobId !== nextLdrTarget) {
-          myParty.leaderTargetMobId = nextLdrTarget;
-          leaderTargetChanged = true;
+      const syncMapInst = worldMaps.get(incomingMap);
+      const curInSafe = syncMapInst
+        ? isServerPointInSafeZone(syncMapInst, Number(rawP.x ?? prevPlayer.x) || 2000, Number(rawP.y ?? prevPlayer.y) || 14250)
+        : false;
+      if (entry._wasInSafeZone !== curInSafe) {
+        entry._wasInSafeZone = curInSafe;
+        if (myParty) leaderTargetChanged = true;
+      }
+      if (myParty && myParty.leaderCharId === entry.charId) {
+        if (curInSafe) {
+          if (myParty.leaderTargetMobId !== null) {
+            myParty.leaderTargetMobId = null;
+            leaderTargetChanged = true;
+          }
+        } else if (rawP.targetMobId !== undefined) {
+          const nextLdrTarget = rawP.targetMobId ? String(rawP.targetMobId) : null;
+          if (myParty.leaderTargetMobId !== nextLdrTarget) {
+            myParty.leaderTargetMobId = nextLdrTarget;
+            leaderTargetChanged = true;
+          }
         }
       }
       entry.partyId = myParty ? myParty.partyId : null;
@@ -3337,7 +3501,18 @@ function handleClientWsPacket(conn, msg) {
 
     targetIds.forEach(mobId => {
       const ent = (mapInst.monsterById && mapInst.monsterById.get(String(mobId))) || mapInst.monsters.find(m => m.id === String(mobId));
-      if (!ent || ent.isDead) return;
+      if (!ent || ent.isDead) {
+        // AI나 클라이언트가 패킷 누락으로 이미 사망한 유령 몬스터를 계속 공격하며 정지해 있는 현상을 즉시 해제!
+        sendWsMessage(conn, {
+          type: 'MONSTER_KILLED',
+          mapKey: mapInst.mapKey,
+          mobId: String(mobId),
+          hp: 0,
+          isDead: true,
+          respawnTimer: ent ? Math.ceil(ent.respawnTimer || 12) : 12
+        });
+        return;
+      }
 
       for (let h = 0; h < hitCount; h++) {
         if (ent.isDead) break;
@@ -3787,6 +3962,356 @@ function handleClientWsPacket(conn, msg) {
     return;
   }
 
+  // [8-D] 현재 지역 에이전트/플레이어 실시간 목록 조회 (파티창 오픈 시 호출)
+  if (msg.type === 'REGION_PLAYERS_REQ' && msg.charId) {
+    const entry = activeCharSockets.get(msg.charId);
+    if (!entry) return;
+    const myRegion = String(msg.regionKey || entry.regionKey || entry.mapKey || 'R01').split('_')[0];
+    const list = [];
+    activeCharSockets.forEach(other => {
+      if (!other || !other.player || other.charId === entry.charId) return;
+      if (other.gmInvisible && !entry.isAdmin) return;
+      const oReg = String(other.regionKey || other.mapKey || 'R01').split('_')[0];
+      if (oReg !== myRegion) return;
+      const oParty = getPartyByCharId(other.charId);
+      const ldrEntry = oParty ? activeCharSockets.get(oParty.leaderCharId) : null;
+      list.push({
+        charId: other.charId,
+        name: other.player.name || '모험가',
+        class: other.player.class || 'knight',
+        level: other.player.level || 1,
+        x: Math.round(other.player.x || 2000),
+        y: Math.round(other.player.y || 14250),
+        mapKey: other.mapKey || `${myRegion}_sub1`,
+        regionKey: oReg,
+        isAI: isAIEntry(other),
+        partyId: oParty ? oParty.partyId : null,
+        isPartyLeader: Boolean(oParty && oParty.leaderCharId === other.charId),
+        partyMemberCount: oParty ? oParty.members.length : 0,
+        partyMaxMembers: 5,
+        partyLeaderName: ldrEntry?.player?.name || null,
+        partyMode: oParty ? (oParty.partyMode || 'FREE') : null
+      });
+    });
+    sendWsMessage(conn, {
+      type: 'REGION_PLAYERS_RESP',
+      regionKey: myRegion,
+      players: list
+    });
+    return;
+  }
+
+  // [8-E] 이미 결성된 파티에 즉시 합류 요청 (PARTY_JOIN_EXISTING_REQ)
+  if (msg.type === 'PARTY_JOIN_EXISTING_REQ' && msg.charId && (msg.targetCharId || msg.targetName)) {
+    const entry = activeCharSockets.get(msg.charId);
+    if (!entry || !entry.player) return;
+    const targetEntry = msg.targetCharId
+      ? activeCharSockets.get(msg.targetCharId)
+      : findOnlineEntryByName(msg.targetName);
+    if (!targetEntry || !targetEntry.player) {
+      sendSystemMsgToEntry(entry, `⚠️ 대상 캐릭터가 현재 접속 중이지 않습니다.`, 'log-hit');
+      return;
+    }
+    const targetParty = getPartyByCharId(targetEntry.charId);
+    if (!targetParty) {
+      // 대상이 아직 파티가 없으면 일반 파티 초대로 연결
+      handleChatCommand(entry, `/파티초대 ${targetEntry.player.name}`);
+      return;
+    }
+    const myParty = getPartyByCharId(entry.charId);
+    if (myParty && myParty.partyId === targetParty.partyId) {
+      sendSystemMsgToEntry(entry, `ℹ️ 이미 해당 파티에 소속되어 있습니다.`, 'log-sys');
+      return;
+    }
+    if (myParty) {
+      removeCharFromParty(entry.charId, 'leave');
+    }
+    // 정원(5명)이 가득 찼을 때 AI 파티원이 있으면 1명 양보 처리
+    if (targetParty.members.length >= 5) {
+      const yieldAiId = [...targetParty.members].reverse().find(cid => cid !== targetParty.leaderCharId && isAIEntry(activeCharSockets.get(cid)));
+      if (yieldAiId) {
+        removeCharFromParty(yieldAiId, 'leave');
+      } else {
+        sendSystemMsgToEntry(entry, `⚠️ 해당 파티의 인원(5/5명)이 가득 차 있어 합류할 수 없습니다.`, 'log-hit');
+        return;
+      }
+    }
+    if (!targetParty.members.includes(entry.charId)) {
+      targetParty.members.push(entry.charId);
+    }
+    entry.partyId = targetParty.partyId;
+    entry.player.partyId = targetParty.partyId;
+    entry.player.isPartyLeader = (targetParty.leaderCharId === entry.charId);
+
+    targetParty.members.forEach(cId => {
+      const mE = activeCharSockets.get(cId);
+      if (mE) {
+        sendSystemMsgToEntry(mE, `🎉 [파티 합류] '${entry.player.name}'님이 파티에 합류했습니다! (현재 ${targetParty.members.length}/5명)`, 'log-kill');
+      }
+    });
+    broadcastPartyUpdate(targetParty);
+    return;
+  }
+
+  // [8-F] 플레이어 간 아이템 · 골드 안전 거래 시스템 (원자적 상태 검증 & 복사 원천 차단)
+  if (msg.type === 'TRADE_REQUEST' && msg.charId) {
+    const entry = activeCharSockets.get(msg.charId);
+    if (!entry || !entry.player) return;
+    const targetEntry = msg.targetCharId
+      ? activeCharSockets.get(msg.targetCharId)
+      : findOnlineEntryByName(msg.targetName);
+    if (!targetEntry || !targetEntry.player || (targetEntry.gmInvisible && !entry.isAdmin)) {
+      sendSystemMsgToEntry(entry, `⚠️ 거래 대상이 현재 접속 중이지 않습니다.`, 'log-hit');
+      return;
+    }
+    if (targetEntry.charId === entry.charId) {
+      sendSystemMsgToEntry(entry, `⚠️ 본인에게는 거래를 신청할 수 없습니다.`, 'log-hit');
+      return;
+    }
+    const myReg = String(entry.regionKey || entry.mapKey || 'R01').split('_')[0];
+    const targetReg = String(targetEntry.regionKey || targetEntry.mapKey || 'R01').split('_')[0];
+    if (myReg !== targetReg) {
+      sendSystemMsgToEntry(entry, `⚠️ '${targetEntry.player.name}'님과 같은 지역에 있어야 거래할 수 있습니다.`, 'log-hit');
+      return;
+    }
+    if (activeCharTradeMap.has(entry.charId)) {
+      sendSystemMsgToEntry(entry, `⚠️ 이미 진행 중인 거래가 있습니다.`, 'log-hit');
+      return;
+    }
+    if (activeCharTradeMap.has(targetEntry.charId)) {
+      sendSystemMsgToEntry(entry, `⚠️ '${targetEntry.player.name}'님은 현재 다른 거래를 진행 중입니다.`, 'log-hit');
+      return;
+    }
+
+    const tradeId = `trd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const tradeSession = {
+      tradeId,
+      state: 'INVITED',
+      offerVersion: 1,
+      createdAt: Date.now(),
+      playerA: {
+        charId: entry.charId,
+        name: entry.player.name || '모험가',
+        level: entry.player.level || 1,
+        class: entry.player.class || 'knight',
+        items: [],
+        gold: 0,
+        freeSlots: 10,
+        currentGold: entry.player.gold || 0,
+        locked: false,
+        confirmed: false
+      },
+      playerB: {
+        charId: targetEntry.charId,
+        name: targetEntry.player.name || '모험가',
+        level: targetEntry.player.level || 1,
+        class: targetEntry.player.class || 'knight',
+        items: [],
+        gold: 0,
+        freeSlots: 10,
+        currentGold: targetEntry.player.gold || 0,
+        locked: false,
+        confirmed: false
+      }
+    };
+
+    serverTrades.set(tradeId, tradeSession);
+    activeCharTradeMap.set(entry.charId, tradeId);
+    activeCharTradeMap.set(targetEntry.charId, tradeId);
+
+    sendWsMessage(entry.conn, {
+      type: 'TRADE_REQUEST_SENT',
+      tradeId,
+      targetCharId: targetEntry.charId,
+      targetName: targetEntry.player.name,
+      targetLevel: targetEntry.player.level || 1
+    });
+    sendWsMessage(targetEntry.conn, {
+      type: 'TRADE_INVITE_RECEIVED',
+      tradeId,
+      requesterCharId: entry.charId,
+      requesterName: entry.player.name || '모험가',
+      requesterLevel: entry.player.level || 1,
+      requesterClass: entry.player.class || 'knight'
+    });
+    sendSystemMsgToEntry(entry, `🤝 '${targetEntry.player.name}'님에게 거래를 신청했습니다. (응답 대기 중)`, 'log-sys');
+    return;
+  }
+
+  if (msg.type === 'TRADE_INVITE_RESP' && msg.charId && msg.tradeId) {
+    const trade = serverTrades.get(msg.tradeId);
+    if (!trade || trade.state !== 'INVITED') return;
+    if (trade.playerB.charId !== msg.charId) return;
+
+    const reqEntry = activeCharSockets.get(trade.playerA.charId);
+    const respEntry = activeCharSockets.get(trade.playerB.charId);
+
+    if (!msg.accept || !reqEntry || !respEntry) {
+      cancelActiveTradeForChar(msg.charId, `'${trade.playerB.name}'님이 거래 신청을 거절했습니다.`);
+      return;
+    }
+
+    trade.state = 'OPEN';
+    trade.offerVersion = 1;
+    broadcastTradeSync(trade);
+    return;
+  }
+
+  if (msg.type === 'TRADE_UPDATE_OFFER' && msg.charId && msg.tradeId) {
+    const trade = serverTrades.get(msg.tradeId);
+    if (!trade || trade.state !== 'OPEN') return;
+    const isA = trade.playerA.charId === msg.charId;
+    const isB = trade.playerB.charId === msg.charId;
+    if (!isA && !isB) return;
+
+    const mySide = isA ? trade.playerA : trade.playerB;
+    if (mySide.locked) {
+      // 잠금 상태에서는 먼저 잠금을 해제해야만 수정 가능
+      return;
+    }
+
+    const curGold = Math.max(0, Math.min(999999999, Math.floor(Number(msg.currentGold) || 0)));
+    const offerGold = Math.max(0, Math.min(curGold, Math.floor(Number(msg.gold) || 0)));
+    const cleanItems = sanitizeTradeOfferItems(msg.items);
+    const freeSlots = Math.max(0, Math.min(100, Math.floor(Number(msg.freeSlots) ?? 10)));
+
+    mySide.items = cleanItems;
+    mySide.gold = offerGold;
+    mySide.currentGold = curGold;
+    mySide.freeSlots = freeSlots;
+
+    // 🛡️ 사기/복사 방지 핵심: 어느 한쪽이라도 물품/골드를 변경하면 양측 모두 잠금(locked) 및 확정(confirmed) 즉시 해제!
+    trade.offerVersion++;
+    trade.playerA.locked = false;
+    trade.playerB.locked = false;
+    trade.playerA.confirmed = false;
+    trade.playerB.confirmed = false;
+
+    broadcastTradeSync(trade);
+    return;
+  }
+
+  if (msg.type === 'TRADE_LOCK_REQ' && msg.charId && msg.tradeId) {
+    const trade = serverTrades.get(msg.tradeId);
+    if (!trade || trade.state !== 'OPEN') return;
+    const isA = trade.playerA.charId === msg.charId;
+    const isB = trade.playerB.charId === msg.charId;
+    if (!isA && !isB) return;
+
+    const mySide = isA ? trade.playerA : trade.playerB;
+    const wantLock = Boolean(msg.locked);
+
+    if (wantLock) {
+      const curGold = Math.max(0, Math.min(999999999, Math.floor(Number(msg.currentGold) || 0)));
+      const offerGold = Math.max(0, Math.min(curGold, Math.floor(Number(msg.gold) || 0)));
+      const cleanItems = sanitizeTradeOfferItems(msg.items);
+      const freeSlots = Math.max(0, Math.min(100, Math.floor(Number(msg.freeSlots) ?? 10)));
+      mySide.items = cleanItems;
+      mySide.gold = offerGold;
+      mySide.currentGold = curGold;
+      mySide.freeSlots = freeSlots;
+      mySide.locked = true;
+    } else {
+      mySide.locked = false;
+      trade.playerA.confirmed = false;
+      trade.playerB.confirmed = false;
+      trade.offerVersion++;
+    }
+
+    broadcastTradeSync(trade);
+    return;
+  }
+
+  if (msg.type === 'TRADE_CONFIRM_REQ' && msg.charId && msg.tradeId) {
+    const trade = serverTrades.get(msg.tradeId);
+    if (!trade || trade.state !== 'OPEN') return;
+    if (!trade.playerA.locked || !trade.playerB.locked) {
+      const caller = activeCharSockets.get(msg.charId);
+      if (caller) sendSystemMsgToEntry(caller, `⚠️ 양측 모두 먼저 [🔒 등록완료]를 눌러야 거래를 확정할 수 있습니다.`, 'log-hit');
+      return;
+    }
+    if (msg.offerVersion !== undefined && Number(msg.offerVersion) !== trade.offerVersion) {
+      const caller = activeCharSockets.get(msg.charId);
+      if (caller) sendSystemMsgToEntry(caller, `⚠️ 거래 조건이 변경되었습니다. 내역을 다시 확인한 후 확정해주세요.`, 'log-hit');
+      return;
+    }
+
+    const isA = trade.playerA.charId === msg.charId;
+    const isB = trade.playerB.charId === msg.charId;
+    if (!isA && !isB) return;
+
+    const mySide = isA ? trade.playerA : trade.playerB;
+    mySide.confirmed = true;
+
+    if (!trade.playerA.confirmed || !trade.playerB.confirmed) {
+      broadcastTradeSync(trade);
+      return;
+    }
+
+    // 🔒 양측 모두 거래확정 완료 -> 즉시 원자적 커밋 상태로 전환 및 맵에서 제거하여 중복 패킷/레이스 컨디션 100% 차단!
+    trade.state = 'COMMITTING';
+    serverTrades.delete(trade.tradeId);
+    activeCharTradeMap.delete(trade.playerA.charId);
+    activeCharTradeMap.delete(trade.playerB.charId);
+
+    const entryA = activeCharSockets.get(trade.playerA.charId);
+    const entryB = activeCharSockets.get(trade.playerB.charId);
+    if (!entryA || !entryB || !entryA.conn || !entryB.conn) {
+      [entryA, entryB].forEach(e => {
+        if (e && e.conn) sendWsMessage(e.conn, { type: 'TRADE_CANCELLED', tradeId: trade.tradeId, reason: '상대방의 연결이 끊어져 거래가 취소되었습니다.' });
+      });
+      return;
+    }
+
+    // 가방 여유 슬롯 및 보유 골드 한도 최종 검증
+    if (trade.playerA.gold > trade.playerA.currentGold || trade.playerB.gold > trade.playerB.currentGold) {
+      [entryA, entryB].forEach(e => {
+        sendWsMessage(e.conn, { type: 'TRADE_CANCELLED', tradeId: trade.tradeId, reason: '보유 골드 검증에 실패하여 거래가 취소되었습니다.' });
+      });
+      return;
+    }
+    if (trade.playerA.freeSlots < trade.playerB.items.length || trade.playerB.freeSlots < trade.playerA.items.length) {
+      [entryA, entryB].forEach(e => {
+        sendWsMessage(e.conn, { type: 'TRADE_CANCELLED', tradeId: trade.tradeId, reason: '가방 빈 슬롯이 부족하여 거래를 완료할 수 없습니다. 가방을 비운 뒤 다시 시도해주세요.' });
+      });
+      return;
+    }
+
+    const tradeTxId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    trade.state = 'COMPLETED';
+
+    // A에게 B의 물품/골드 지급 & A의 물품/골드 차감 명령 전송
+    sendWsMessage(entryA.conn, {
+      type: 'TRADE_COMMIT_EXECUTE',
+      tradeId: trade.tradeId,
+      tradeTxId,
+      partnerName: trade.playerB.name,
+      giveItems: trade.playerA.items,
+      giveGold: trade.playerA.gold,
+      receiveItems: trade.playerB.items,
+      receiveGold: trade.playerB.gold
+    });
+
+    // B에게 A의 물품/골드 지급 & B의 물품/골드 차감 명령 전송
+    sendWsMessage(entryB.conn, {
+      type: 'TRADE_COMMIT_EXECUTE',
+      tradeId: trade.tradeId,
+      tradeTxId,
+      partnerName: trade.playerA.name,
+      giveItems: trade.playerB.items,
+      giveGold: trade.playerB.gold,
+      receiveItems: trade.playerA.items,
+      receiveGold: trade.playerA.gold
+    });
+    return;
+  }
+
+  if (msg.type === 'TRADE_CANCEL_REQ' && msg.charId) {
+    const cancelBy = activeCharSockets.get(msg.charId)?.player?.name || '상대방';
+    cancelActiveTradeForChar(msg.charId, `'${cancelBy}'님이 거래를 취소했습니다.`);
+    return;
+  }
+
   // [9] 멀티 채팅 및 한글 운영자/일반 명령어 처리
   if (msg.type === 'CHAT_MSG') {
     const entry = activeCharSockets.get(msg.charId);
@@ -3951,6 +4476,11 @@ setInterval(() => {
                 p.mercenary.x = Math.round((p.mercenary.x || p.x) + (dx / dist) * step);
                 p.mercenary.y = Math.round((p.mercenary.y || p.y) + (dy / dist) * step);
               }
+              if (dist <= spd + 0.5) {
+                p.isWalking = false;
+              }
+            } else {
+              p.isWalking = false;
             }
           }
           mapPlayers.push(entry);
@@ -4348,7 +4878,7 @@ setInterval(() => {
                 aiPkt.class = op.class;
               }
               if (partyId) aiPkt.partyId = partyId;
-              if (op.targetMobId) aiPkt.targetMobId = op.targetMobId;
+              aiPkt.targetMobId = op.targetMobId || null;
               visiblePlayers.push(aiPkt);
             }
             continue;
@@ -4382,7 +4912,9 @@ setInterval(() => {
                 x: ox,
                 y: oy,
                 partyId,
-                isPartyLeader: isLeader
+                isPartyLeader: isLeader,
+                partyMemberCount: oParty ? oParty.members.length : 0,
+                isAI: isAIEntry(other)
               });
             } else {
               // 📉 정적 메타데이터를 제거한 초경량 델타 패킷
@@ -4442,17 +4974,24 @@ setInterval(() => {
             const prevFar = receiver._knownPlayers.get(farOther.charId);
             const justLeftAoi = Boolean(prevFar && prevFar.metaSig !== 'minimap');
 
-            if (justLeftAoi || (isRadarTick && (!prevFar || Math.abs(prevFar.x - fox) >= 15 || Math.abs(prevFar.y - foy) >= 15))) {
+            if (!prevFar || justLeftAoi || (isRadarTick && (Math.abs(prevFar.x - fox) >= 15 || Math.abs(prevFar.y - foy) >= 15))) {
               receiver._knownPlayers.set(farOther.charId, {
                 x: fox,
                 y: foy,
                 metaSig: 'minimap'
               });
+              const fParty = getPartyByCharId(farOther.charId);
               visiblePlayers.push({
                 charId: farOther.charId,
+                name: fop.name || '모험가',
+                level: fop.level || 1,
+                class: fop.class || 'knight',
                 x: fox,
                 y: foy,
-                partyId: farOther.partyId || null,
+                partyId: fParty ? fParty.partyId : (farOther.partyId || null),
+                isPartyLeader: Boolean(fParty && fParty.leaderCharId === farOther.charId),
+                partyMemberCount: fParty ? fParty.members.length : 0,
+                isAI: isAIEntry(farOther),
                 _minimapOnly: true
               });
             }

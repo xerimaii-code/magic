@@ -316,10 +316,47 @@ window.openNpcModal = function(npc) {
 };
 
 let currentGuideTab = 'basic';
-window.renderBeginnerGuideNpcBody = function(tabKey = 'basic') {
+window.openGameTipWindowFromChat = function(ev) {
+  if (ev) {
+    if (ev.cancelable) ev.preventDefault();
+    ev.stopPropagation();
+  }
+  ensureAllGameModals();
+  // 대화창 최소화(숨김) 처리
+  window.toggleChatWindow?.(false);
+
+  let modal = document.getElementById('game-tip-modal');
+  if (!modal) return;
+  makeDraggable('game-tip-modal');
+  const wasHidden = modal.classList.contains('hidden');
+  modal.classList.remove('hidden');
+  window.bringModalToFront?.(modal);
+  window.renderBeginnerGuideNpcBody(currentGuideTab || 'basic', 'game-tip-modal-body');
+  if (wasHidden && !modal._hasCustomDragPos) {
+    window.centerModalOnScreen?.(modal);
+  }
+};
+
+window.closeGameTipModal = function() {
+  document.getElementById('game-tip-modal')?.classList.add('hidden');
+};
+
+window.renderBeginnerGuideNpcBody = function(tabKey = 'basic', targetContainerId = null) {
   currentGuideTab = tabKey || currentGuideTab || 'basic';
-  const bodyEl = document.getElementById('npc-modal-body');
-  if (!bodyEl) return;
+  const targets = [];
+  if (targetContainerId) {
+    const el = document.getElementById(targetContainerId);
+    if (el) targets.push(el);
+  } else {
+    const npcBody = document.getElementById('npc-modal-body');
+    const npcModal = document.getElementById('npc-modal-ui');
+    if (npcBody && npcModal && !npcModal.classList.contains('hidden')) targets.push(npcBody);
+    const tipBody = document.getElementById('game-tip-modal-body');
+    const tipModal = document.getElementById('game-tip-modal');
+    if (tipBody && tipModal && !tipModal.classList.contains('hidden')) targets.push(tipBody);
+    if (targets.length === 0 && npcBody) targets.push(npcBody);
+  }
+  if (targets.length === 0) return;
 
   const tabs = [
     { key: 'basic', label: '🕹️ 조작·자동사냥' },
@@ -435,12 +472,12 @@ window.renderBeginnerGuideNpcBody = function(tabKey = 'basic') {
           • 사냥터에서 일반 몬스터보다 약 2배 거대한 <b>[★거대 몬스터]</b>가 자연스럽게 출현하며, 처치 시 <b>경험치·골드 2배 이상 및 높은 장비 드롭률</b>을 제공합니다.<br>
           • 일반 사냥 중에도 일정 확률로 <b>💰행운 보너스 골드</b>가 즉시 지급됩니다.
         </div>
-        <button type="button" class="auth-primary-btn" style="padding:7px; font-size:12px;" onclick="closeNpcModal(); window.toggleImmersive20Modal && window.toggleImmersive20Modal();">📖 몬스터 · 드롭 도감 바로 열기</button>
+        <button type="button" class="auth-primary-btn" style="padding:7px; font-size:12px;" onclick="closeNpcModal(); closeGameTipModal(); window.toggleImmersive20Modal && window.toggleImmersive20Modal();">📖 몬스터 · 드롭 도감 바로 열기</button>
       </div>
     `;
   }
 
-  bodyEl.innerHTML = `
+  const finalGuideHtml = `
     <div style="padding:2px 2px 4px 2px;">
       ${tabBarHtml}
       <div style="max-height:46dvh; overflow-y:auto; padding-right:2px;">
@@ -448,6 +485,7 @@ window.renderBeginnerGuideNpcBody = function(tabKey = 'basic') {
       </div>
     </div>
   `;
+  targets.forEach(tEl => { tEl.innerHTML = finalGuideHtml; });
 };
 
 // 📦 계정 공유 창고 상태 (같은 계정의 모든 캐릭터가 공유)
@@ -556,6 +594,7 @@ window.renderBankWarehouseModal = function() {
 };
 
 window.depositItemToBank = function(invIdx) {
+  if (window.isTradeLockedOrActive?.()) return;
   const inst = player.inventory[invIdx];
   if (!inst) return;
   const eqSet = new Set(Object.values(player.equip || {}).filter(v => v !== null && v !== undefined).map(Number));
@@ -603,6 +642,7 @@ window.depositItemToBank = function(invIdx) {
 };
 
 window.withdrawItemFromBank = function(bankIdx) {
+  if (window.isTradeLockedOrActive?.()) return;
   const inst = window.accountStorage.bankItems[bankIdx];
   if (!inst) return;
 
@@ -641,6 +681,7 @@ window.withdrawItemFromBank = function(bankIdx) {
 };
 
 window.bankAction = function(mode, customAmt = null) {
+  if (mode !== 'heal' && window.isTradeLockedOrActive?.()) return;
   const stepGold = customAmt || GameDB.Shops?.bankGoldStep || 1000;
   window.accountStorage.bankGold = Number(window.accountStorage.bankGold) || 0;
 
@@ -1193,12 +1234,30 @@ window.completeQuest = function(qId) {
   const st = player.quests[qId];
   if (!q || !st || st.status !== 'ACTIVE' || st.count < q.reqCount) return;
 
+  const rewardId = getQuestRewardItemId(q);
+  const rewardDef = window.itemDict[rewardId];
+  const isStackableReward = rewardId && (
+    rewardId.startsWith('C_') ||
+    rewardId.startsWith('S_') ||
+    rewardId.startsWith('Q_') ||
+    rewardId.startsWith('BOOK_')
+  );
+  const hasEmptySlot = player.inventory.some(s => s === null);
+  const hasStackSlot = isStackableReward && player.inventory.some(s => s && s.type === rewardId);
+  if (!hasEmptySlot && !hasStackSlot) {
+    window.addChat(`⚠️ [인벤토리 가득 참] 가방(100슬롯)에 빈 공간이 없어 퀘스트 보상([${rewardDef?.name || rewardId}])을 수령할 수 없습니다! 가방을 최소 1칸 비운 뒤 다시 완료해 주세요.`, 'log-hit');
+    return;
+  }
+
+  const granted = giveItem(rewardId, q.rewardQty || 1, rewardDef?.fixedGrade ?? null);
+  if (!granted) {
+    window.addChat(`⚠️ [인벤토리 가득 참] 보상 아이템을 지급할 공간이 부족합니다. 가방을 정리한 후 다시 시도해 주세요.`, 'log-hit');
+    return;
+  }
+
   st.status = 'DONE';
   st.everAccepted = true;
   player.gold += (q.gold || 0);
-  const rewardId = getQuestRewardItemId(q);
-  const rewardDef = window.itemDict[rewardId];
-  giveItem(rewardId, q.rewardQty || 1, rewardDef?.fixedGrade ?? null);
   gainExp(q.exp || 100);
 
   window.addChat(`🎉 [퀘스트 완료] '${q.name}' 달성! 보상: [${rewardDef?.name || rewardId}] 획득! (EXP +${Number(q.exp || 0).toLocaleString()}, 💰+${Number(q.gold || 0).toLocaleString()} G)`, 'log-kill');
@@ -1207,16 +1266,21 @@ window.completeQuest = function(qId) {
   }
   updateStatusHUD();
   window.renderQuestUI();
+  window.triggerAutoSave?.('quest_complete', true);
 };
 
 window.buyShopItem = function(itemId, unitPrice, count = 1) {
+  if (window.isTradeLockedOrActive?.()) return;
   const totalPrice = unitPrice * count;
   if (player.gold < totalPrice) {
     window.addChat(`[상점] 골드가 부족합니다! (필요: ${totalPrice.toLocaleString()} G)`, 'log-hit');
     return;
   }
+  const granted = giveItem(itemId, count);
+  if (!granted) {
+    return;
+  }
   player.gold -= totalPrice;
-  giveItem(itemId, count);
   const it = window.itemDict[itemId];
   window.addChat(`🛒 [구매 완료] ${it ? it.name : itemId} x${count}개를 구매했습니다.`, 'log-sys');
   updateStatusHUD();
@@ -2475,6 +2539,7 @@ function renderEquipUI() {
 }
 
 window.unequipSlotFromPaperdoll = function(slotKey, slotLabel) {
+  if (window.isTradeLockedOrActive?.()) return;
   const eqIdx = player.equip[slotKey];
   if (eqIdx === null || eqIdx === undefined) return;
   const inst = player.inventory[eqIdx];
@@ -2491,6 +2556,7 @@ window.unequipSlotFromPaperdoll = function(slotKey, slotLabel) {
 
 // 캐릭터 정보창(Paperdoll)에서 빈 슬롯을 터치했을 때 가방의 해당 부위 최고 장비를 즉시 찾아 장착
 window.equipSlotFromPaperdoll = function(slotKey, slotLabel) {
+  if (window.isTradeLockedOrActive?.()) return;
   const eqSet = new Set(Object.values(player.equip).filter(v => v !== null && v !== undefined).map(Number));
   let bestIdx = -1;
   let bestScore = -1;
@@ -3073,4 +3139,632 @@ window.focusLastActiveQuestRow = function() {
   document.querySelectorAll('#quest-ui-body .shop-list, #npc-modal-body .shop-list').forEach(listEl => {
     listEl.scrollTop = 0;
   });
+};
+
+// ============================================================================
+// 🤝 플레이어 간 1:1 아이템/골드 안전 거래 시스템 (복사 방지 검증 · 비암전 · 드래그 지원)
+// - 아이템 VS 아이템, 아이템 VS 골드, 무상 증여(그냥 주기) 완벽 지원
+// - 거래 중 가방 아이템 장착/해제/판매/버리기/정렬/강화/창고보관/용병전달 전면 차단
+// ============================================================================
+window.activeTradeState = null;
+window._processedTradeTxIds = window._processedTradeTxIds || new Set();
+window._pendingTradeQtySlotIdx = null;
+let _tradeInviteTimer = null;
+let _tradeInviteCountdown = null;
+
+window.isTradeLockedOrActive = function(silent = false) {
+  if (window.activeTradeState && window.activeTradeState.tradeId) {
+    if (!silent) {
+      window.addChat?.(`⚠️ [거래 중 보호] 현재 1:1 거래가 진행 중이어서 아이템 장착·판매·버리기·정렬·강화·창고 이동을 할 수 없습니다.`, 'log-hit');
+    }
+    return true;
+  }
+  return false;
+};
+
+window.showPlayerTargetActionBar = function(op) {
+  if (!op || !op.charId || op.charId === activeCharacterId) return;
+  let bar = document.getElementById('player-target-action-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'player-target-action-bar';
+    bar.style.cssText = 'position:fixed; top:50px; left:50%; transform:translateX(-50%); z-index:9150; background:rgba(15, 23, 42, 0.95); border:1.5px solid #38bdf8; border-radius:999px; padding:4px 10px; display:flex; align-items:center; gap:6px; box-shadow:0 4px 16px rgba(0,0,0,0.85); color:#fff; pointer-events:auto; white-space:nowrap;';
+    document.body.appendChild(bar);
+  }
+  const escName = String(op.name || '모험가').replace(/'/g, "\'");
+  const hasPty = Boolean(op.partyId);
+  const isSamePty = Boolean(window.partyState && window.partyState.partyId && op.partyId === window.partyState.partyId);
+  const clsIcon = op.class === 'wizard' ? '🔮' : (op.class === 'ranger' ? '🏹' : '🛡️');
+
+  bar.innerHTML = `
+    <span style="font-size:11px; font-weight:bold; color:#fde047;">${clsIcon} ${op.name} <span style="color:#93c5fd; font-size:9.5px;">Lv.${op.level || 1}</span></span>
+    <button type="button" class="shop-buy-btn" style="padding:3px 7px; font-size:9.5px; background:#b45309; border-color:#facc15; border-radius:999px;" onclick="requestTradeWithPlayer('${op.charId}', '${escName}')">🤝 거래신청</button>
+    ${!isSamePty ? (hasPty
+      ? `<button type="button" class="shop-buy-btn" style="padding:3px 7px; font-size:9.5px; background:#065f46; border-color:#34d399; border-radius:999px;" onclick="requestJoinExistingParty('${op.charId}', '${op.partyId}')">🎗️ 파티합류</button>`
+      : `<button type="button" class="shop-buy-btn" style="padding:3px 7px; font-size:9.5px; background:#0284c7; border-color:#38bdf8; border-radius:999px;" onclick="requestQuickPartyWith('${escName}')">📩 파티초대</button>`
+    ) : ''}
+    <button type="button" class="shop-buy-btn" style="padding:3px 7px; font-size:9.5px; background:#4c1d95; border-color:#c084fc; border-radius:999px;" onclick="startQuickWhisperTo('${escName}')">💌 귓속말</button>
+    <button type="button" onclick="hidePlayerTargetActionBar()" style="background:none; border:none; color:#9ca3af; font-size:12px; cursor:pointer; padding:0 2px;">✖</button>
+  `;
+  bar.style.display = 'flex';
+  clearTimeout(window._playerTargetBarHideTimer);
+  window._playerTargetBarHideTimer = setTimeout(() => {
+    window.hidePlayerTargetActionBar();
+  }, 9000);
+};
+
+window.hidePlayerTargetActionBar = function() {
+  const bar = document.getElementById('player-target-action-bar');
+  if (bar) bar.style.display = 'none';
+};
+
+window.requestTradeWithPlayer = function(targetCharId, targetName) {
+  if (window.activeTradeState && window.activeTradeState.tradeId) {
+    window.addChat(`⚠️ 이미 진행 중인 거래가 있습니다.`, 'log-hit');
+    return;
+  }
+  window.hidePlayerTargetActionBar?.();
+  sendCentralWsPacket({
+    type: 'TRADE_REQUEST',
+    charId: activeCharacterId,
+    targetCharId: targetCharId || null,
+    targetName: targetName || null
+  });
+};
+
+function clearTradeInviteTimers() {
+  if (_tradeInviteTimer) {
+    clearTimeout(_tradeInviteTimer);
+    _tradeInviteTimer = null;
+  }
+  if (_tradeInviteCountdown) {
+    clearInterval(_tradeInviteCountdown);
+    _tradeInviteCountdown = null;
+  }
+}
+
+window.showTradeInvitePopup = function(msg) {
+  clearTradeInviteTimers();
+  let pop = document.getElementById('trade-invite-popup');
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.id = 'trade-invite-popup';
+    pop.style.cssText = 'position:fixed; top:112px; left:50%; transform:translateX(-50%); z-index:9650; width:min(88vw, 295px); background:rgba(15, 23, 42, 0.97); border:2px solid #facc15; border-radius:8px; padding:10px; box-shadow:0 8px 25px rgba(0,0,0,0.9); color:#fff; pointer-events:auto;';
+    document.body.appendChild(pop);
+  }
+  let remainSec = 15;
+  pop.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <span style="font-size:12px; font-weight:bold; color:#fde047;">🤝 1:1 거래 요청 도착</span>
+      <span id="trade-invite-countdown" style="font-size:10px; font-weight:bold; color:#fde047; background:rgba(0,0,0,0.55); padding:1px 6px; border-radius:999px;">⏳ ${remainSec}초</span>
+    </div>
+    <div style="font-size:11px; color:#e5e7eb; margin-bottom:8px;">
+      <b style="color:#38bdf8;">${msg.inviterName}</b> (Lv.${msg.inviterLevel || 1})님이 아이템/골드 거래를 요청했습니다.
+    </div>
+    <div style="display:flex; gap:6px;">
+      <button type="button" class="auth-sub-btn" style="flex:1; padding:5px;" onclick="respondTradeInvite('${msg.tradeId}', false)">거절</button>
+      <button type="button" class="auth-primary-btn" style="flex:1; padding:5px; background:linear-gradient(180deg,#ca8a04,#854d0e); border-color:#fde047;" onclick="respondTradeInvite('${msg.tradeId}', true)">수락</button>
+    </div>
+  `;
+  pop.style.display = 'block';
+
+  _tradeInviteCountdown = setInterval(() => {
+    remainSec = Math.max(0, remainSec - 1);
+    const cdEl = document.getElementById('trade-invite-countdown');
+    if (cdEl) cdEl.innerText = `⏳ ${remainSec}초`;
+  }, 1000);
+
+  _tradeInviteTimer = setTimeout(() => {
+    clearTradeInviteTimers();
+    const curPop = document.getElementById('trade-invite-popup');
+    if (curPop && curPop.style.display !== 'none') {
+      curPop.style.display = 'none';
+      sendCentralWsPacket({
+        type: 'TRADE_INVITE_RESP',
+        charId: activeCharacterId,
+        tradeId: msg.tradeId,
+        accept: false
+      });
+    }
+  }, 15000);
+};
+
+window.respondTradeInvite = function(tradeId, accept) {
+  clearTradeInviteTimers();
+  const pop = document.getElementById('trade-invite-popup');
+  if (pop) pop.style.display = 'none';
+  sendCentralWsPacket({
+    type: 'TRADE_INVITE_RESP',
+    charId: activeCharacterId,
+    tradeId,
+    accept: Boolean(accept)
+  });
+};
+
+window.onTradeStateSync = function(msg) {
+  ensureAllGameModals();
+  // 선택했던 판매 팝업이나 인챈트 대기 상태 즉시 해제 (복사 원천 방지)
+  enchantScrollType = null;
+  document.getElementById('enchant-indicator')?.classList.add('hidden');
+  window.closeSellQuantityPopup?.();
+
+  window.activeTradeState = {
+    tradeId: msg.tradeId,
+    offerVersion: msg.offerVersion || 1,
+    mySide: msg.mySide,
+    partner: msg.partner || { charId: '', name: '상대방', level: 1, class: 'knight' },
+    myOffer: {
+      items: Array.isArray(msg.myOffer?.items) ? msg.myOffer.items : [],
+      gold: Math.max(0, Math.floor(Number(msg.myOffer?.gold) || 0)),
+      locked: Boolean(msg.myOffer?.locked),
+      confirmed: Boolean(msg.myOffer?.confirmed)
+    },
+    partnerOffer: {
+      items: Array.isArray(msg.partnerOffer?.items) ? msg.partnerOffer.items : [],
+      gold: Math.max(0, Math.floor(Number(msg.partnerOffer?.gold) || 0)),
+      locked: Boolean(msg.partnerOffer?.locked),
+      confirmed: Boolean(msg.partnerOffer?.confirmed)
+    }
+  };
+
+  const modal = document.getElementById('trade-modal-ui');
+  if (!modal) return;
+  makeDraggable('trade-modal-ui');
+  const wasHidden = modal.classList.contains('hidden');
+  modal.classList.remove('hidden');
+  window.bringModalToFront?.(modal);
+  window.renderTradeModal();
+  if (wasHidden && !modal._hasCustomDragPos) {
+    window.centerModalOnScreen?.(modal);
+  }
+};
+
+window.sendCurrentTradeOfferToServer = function() {
+  const st = window.activeTradeState;
+  if (!st || !st.tradeId) return;
+  const eqSet = new Set(Object.values(player.equip || {}).filter(v => v !== null && v !== undefined).map(Number));
+  const usedIdx = new Set();
+  const validatedItems = [];
+
+  for (const entry of (st.myOffer.items || [])) {
+    const idx = Number(entry.invIdx);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= player.inventory.length) continue;
+    if (eqSet.has(idx) || usedIdx.has(idx)) continue;
+    const liveInst = player.inventory[idx];
+    if (!liveInst || liveInst.type !== entry.item?.type) continue;
+    const maxQty = Math.max(1, Number(liveInst.qty) || 1);
+    const offerQty = Math.max(1, Math.min(maxQty, Number(entry.qty) || 1));
+    usedIdx.add(idx);
+    validatedItems.push({
+      invIdx: idx,
+      qty: offerQty,
+      item: {
+        ...JSON.parse(JSON.stringify(liveInst)),
+        qty: offerQty
+      }
+    });
+  }
+
+  st.myOffer.items = validatedItems;
+  st.myOffer.gold = Math.max(0, Math.min(Math.floor(player.gold || 0), Math.floor(Number(st.myOffer.gold) || 0)));
+
+  sendCentralWsPacket({
+    type: 'TRADE_UPDATE_OFFER',
+    charId: activeCharacterId,
+    tradeId: st.tradeId,
+    gold: st.myOffer.gold,
+    items: st.myOffer.items
+  });
+};
+
+window.onTradeBagItemTap = function(invIdx) {
+  const st = window.activeTradeState;
+  if (!st || !st.tradeId) return;
+  if (st.myOffer.locked) {
+    window.addChat(`🔒 [등록 잠금 중] 물품을 변경하려면 먼저 [🔓 수정하기] 버튼을 누르세요.`, 'log-hit');
+    return;
+  }
+  const idx = Number(invIdx);
+  const inst = player.inventory[idx];
+  if (!inst) return;
+  const eqSet = new Set(Object.values(player.equip || {}).filter(v => v !== null && v !== undefined).map(Number));
+  if (eqSet.has(idx)) {
+    window.addChat(`⚠️ 장착 중인 장비는 거래창에 올릴 수 없습니다.`, 'log-hit');
+    return;
+  }
+  const existingIdx = st.myOffer.items.findIndex(x => Number(x.invIdx) === idx);
+  if (existingIdx > -1) {
+    st.myOffer.items.splice(existingIdx, 1);
+    window._pendingTradeQtySlotIdx = null;
+    window.sendCurrentTradeOfferToServer();
+    window.renderTradeModal();
+    return;
+  }
+  if (st.myOffer.items.length >= 6) {
+    window.addChat(`⚠️ 한 번에 최대 6종류의 아이템까지 거래창에 등록할 수 있습니다.`, 'log-hit');
+    return;
+  }
+  const maxQty = Math.max(1, Number(inst.qty) || 1);
+  if (maxQty > 1) {
+    window._pendingTradeQtySlotIdx = idx;
+    window.renderTradeModal();
+    return;
+  }
+  st.myOffer.items.push({
+    invIdx: idx,
+    qty: 1,
+    item: { ...JSON.parse(JSON.stringify(inst)), qty: 1 }
+  });
+  window._pendingTradeQtySlotIdx = null;
+  window.sendCurrentTradeOfferToServer();
+  window.renderTradeModal();
+};
+
+window.confirmAddTradeStackItem = function(invIdx, rawQty) {
+  const st = window.activeTradeState;
+  if (!st || !st.tradeId || st.myOffer.locked) return;
+  const idx = Number(invIdx);
+  const inst = player.inventory[idx];
+  if (!inst) {
+    window._pendingTradeQtySlotIdx = null;
+    window.renderTradeModal();
+    return;
+  }
+  const maxQty = Math.max(1, Number(inst.qty) || 1);
+  const qty = Math.max(1, Math.min(maxQty, parseInt(rawQty, 10) || 1));
+  const existPos = st.myOffer.items.findIndex(x => Number(x.invIdx) === idx);
+  if (existPos > -1) st.myOffer.items.splice(existPos, 1);
+  st.myOffer.items.push({
+    invIdx: idx,
+    qty,
+    item: { ...JSON.parse(JSON.stringify(inst)), qty }
+  });
+  window._pendingTradeQtySlotIdx = null;
+  window.sendCurrentTradeOfferToServer();
+  window.renderTradeModal();
+};
+
+window.removeTradeOfferSlot = function(slotPos) {
+  const st = window.activeTradeState;
+  if (!st || !st.tradeId) return;
+  if (st.myOffer.locked) {
+    window.addChat(`🔒 [등록 잠금 중] 물품을 빼려면 먼저 [🔓 수정하기] 버튼을 누르세요.`, 'log-hit');
+    return;
+  }
+  st.myOffer.items.splice(Number(slotPos), 1);
+  window.sendCurrentTradeOfferToServer();
+  window.renderTradeModal();
+};
+
+window.adjustTradeGoldOffer = function(mode, val = 0) {
+  const st = window.activeTradeState;
+  if (!st || !st.tradeId) return;
+  if (st.myOffer.locked) {
+    window.addChat(`🔒 [등록 잠금 중] 골드를 수정하려면 먼저 [🔓 수정하기] 버튼을 누르세요.`, 'log-hit');
+    return;
+  }
+  const maxGold = Math.max(0, Math.floor(player.gold || 0));
+  let nextGold = st.myOffer.gold || 0;
+  if (mode === 'set') nextGold = Math.floor(Number(val) || 0);
+  else if (mode === 'add') nextGold += Math.floor(Number(val) || 0);
+  else if (mode === 'max') nextGold = maxGold;
+  else if (mode === 'clear') nextGold = 0;
+
+  st.myOffer.gold = Math.max(0, Math.min(maxGold, nextGold));
+  window.sendCurrentTradeOfferToServer();
+  window.renderTradeModal();
+};
+
+window.toggleTradeLockState = function() {
+  const st = window.activeTradeState;
+  if (!st || !st.tradeId) return;
+  sendCentralWsPacket({
+    type: 'TRADE_LOCK_REQ',
+    charId: activeCharacterId,
+    tradeId: st.tradeId,
+    locked: !st.myOffer.locked
+  });
+};
+
+window.confirmActiveTradeFinal = function() {
+  const st = window.activeTradeState;
+  if (!st || !st.tradeId) return;
+  if (!st.myOffer.locked || !st.partnerOffer.locked) {
+    window.addChat(`⚠️ 양쪽 모두 [🔒 등록완료] 버튼을 누른 뒤에 최종 거래 확정이 가능합니다.`, 'log-hit');
+    return;
+  }
+  sendCentralWsPacket({
+    type: 'TRADE_CONFIRM_REQ',
+    charId: activeCharacterId,
+    tradeId: st.tradeId,
+    offerVersion: st.offerVersion
+  });
+};
+
+window.cancelActiveTrade = function(reason = '거래를 취소했습니다.') {
+  const st = window.activeTradeState;
+  if (st && st.tradeId) {
+    sendCentralWsPacket({
+      type: 'TRADE_CANCEL_REQ',
+      charId: activeCharacterId,
+      tradeId: st.tradeId,
+      reason
+    });
+  }
+  window.activeTradeState = null;
+  window._pendingTradeQtySlotIdx = null;
+  document.getElementById('trade-modal-ui')?.classList.add('hidden');
+};
+
+window.onTradeCancelledByServer = function(msg) {
+  window.activeTradeState = null;
+  window._pendingTradeQtySlotIdx = null;
+  document.getElementById('trade-modal-ui')?.classList.add('hidden');
+  window.addChat(`🚫 [거래 종료] ${msg?.reason || '거래가 취소되었습니다.'}`, 'log-hit');
+};
+
+window.onTradeCommitExecute = function(msg) {
+  if (!msg || !msg.tradeTxId) return;
+  if (window._processedTradeTxIds.has(msg.tradeTxId)) return;
+  window._processedTradeTxIds.add(msg.tradeTxId);
+
+  const myGiveItems = Array.isArray(msg.myOffer?.items) ? msg.myOffer.items : [];
+  const myGiveGold = Math.max(0, Math.floor(Number(msg.myOffer?.gold) || 0));
+  const recvItems = Array.isArray(msg.partnerOffer?.items) ? msg.partnerOffer.items : [];
+  const recvGold = Math.max(0, Math.floor(Number(msg.partnerOffer?.gold) || 0));
+
+  const eqSet = new Set(Object.values(player.equip || {}).filter(v => v !== null && v !== undefined).map(Number));
+
+  // 1) 거래 무결성 최종 검증 (보유 골드 및 인벤토리 슬롯/수량 확인)
+  if ((player.gold || 0) < myGiveGold) {
+    window.cancelActiveTrade('보유 골드가 부족하여 거래가 중단되었습니다.');
+    return;
+  }
+  for (const entry of myGiveItems) {
+    const idx = Number(entry.invIdx);
+    const qty = Math.max(1, Number(entry.qty) || 1);
+    const liveInst = player.inventory[idx];
+    if (!liveInst || eqSet.has(idx) || liveInst.type !== entry.item?.type || (Number(liveInst.qty) || 1) < qty) {
+      window.cancelActiveTrade('거래 물품 상태가 변경되어 복사 방지를 위해 거래가 자동 취소되었습니다.');
+      return;
+    }
+  }
+
+  // 빈 가방 공간 검증
+  const freedSlots = myGiveItems.filter(entry => {
+    const liveInst = player.inventory[Number(entry.invIdx)];
+    return liveInst && (Number(liveInst.qty) || 1) <= (Number(entry.qty) || 1);
+  }).length;
+  const currentEmptySlots = player.inventory.filter(x => x === null || x === undefined).length;
+  if (currentEmptySlots + freedSlots < recvItems.length) {
+    window.cancelActiveTrade('가방에 빈 슬롯이 부족하여 거래 물품을 수령할 수 없습니다.');
+    return;
+  }
+
+  // 2) 내 제공 골드 및 아이템 정확히 차감
+  player.gold = Math.max(0, (player.gold || 0) - myGiveGold);
+  const givenSummary = [];
+  for (const entry of myGiveItems) {
+    const idx = Number(entry.invIdx);
+    const qty = Math.max(1, Number(entry.qty) || 1);
+    const liveInst = player.inventory[idx];
+    if (!liveInst) continue;
+    const def = window.itemDict?.[liveInst.type] || { name: liveInst.type };
+    const plusStr = liveInst.plus > 0 ? `+${liveInst.plus} ` : '';
+    givenSummary.push(`${plusStr}${def.name}${qty > 1 ? ` x${qty}` : ''}`);
+    const curQty = Math.max(1, Number(liveInst.qty) || 1);
+    if (qty >= curQty) {
+      player.inventory[idx] = null;
+    } else {
+      liveInst.qty = curQty - qty;
+    }
+  }
+  if (myGiveGold > 0) givenSummary.push(`${myGiveGold.toLocaleString()} G`);
+
+  // 3) 상대방 제공 골드 및 아이템 수령 (장비는 신규 고유 UID 발급하여 복사/충돌 원천 차단)
+  player.gold += recvGold;
+  const recvSummary = [];
+  for (const entry of recvItems) {
+    const rawIt = entry.item;
+    if (!rawIt || !rawIt.type) continue;
+    const qty = Math.max(1, Number(entry.qty || rawIt.qty) || 1);
+    const def = window.itemDict?.[rawIt.type] || { name: rawIt.type };
+    const isEquip = Boolean(def.type && ['한손검', '양손활', '양손지팡이', '방패', '투구', '갑옷', '장갑', '망토', '신발', '반지', '목걸이', '귀걸이', '티셔츠', '벨트'].some(t => def.type.includes(t)));
+    const cloned = JSON.parse(JSON.stringify(rawIt));
+    cloned.qty = isEquip ? 1 : qty;
+    delete cloned.isMercStarter;
+
+    if (isEquip) {
+      cloned.uid = 'trd_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const emptyIdx = player.inventory.findIndex(x => x === null || x === undefined);
+      if (emptyIdx > -1) player.inventory[emptyIdx] = cloned;
+    } else {
+      const stackIdx = player.inventory.findIndex((x, idx) => x && x.type === cloned.type && !eqSet.has(idx));
+      if (stackIdx > -1) {
+        player.inventory[stackIdx].qty = (Number(player.inventory[stackIdx].qty) || 1) + qty;
+      } else {
+        const emptyIdx = player.inventory.findIndex(x => x === null || x === undefined);
+        if (emptyIdx > -1) player.inventory[emptyIdx] = cloned;
+      }
+    }
+    const plusStr = cloned.plus > 0 ? `+${cloned.plus} ` : '';
+    recvSummary.push(`${plusStr}${def.name}${qty > 1 ? ` x${qty}` : ''}`);
+  }
+  if (recvGold > 0) recvSummary.push(`${recvGold.toLocaleString()} G`);
+
+  window.activeTradeState = null;
+  window._pendingTradeQtySlotIdx = null;
+  document.getElementById('trade-modal-ui')?.classList.add('hidden');
+
+  updateStatusHUD();
+  renderHotbarSlots();
+  if (!document.getElementById('inventory-ui')?.classList.contains('hidden')) renderInventory();
+
+  const partnerName = msg.partnerName || '상대 모험가';
+  const giveTxt = givenSummary.length > 0 ? givenSummary.join(', ') : '없음(무상 수령)';
+  const recvTxt = recvSummary.length > 0 ? recvSummary.join(', ') : '없음(무상 증여)';
+  window.addChat(`🤝 [거래 성사 완료!] '${partnerName}'님과 거래 완료! (보냄: ${giveTxt} ↔ 받음: ${recvTxt})`, 'log-kill');
+  window.triggerAutoSave?.('player_trade_commit', true);
+};
+
+window.renderTradeModal = function() {
+  const body = document.getElementById('trade-modal-body');
+  const hdr = document.getElementById('trade-modal-header');
+  const st = window.activeTradeState;
+  if (!body || !st) return;
+
+  if (hdr) {
+    hdr.innerHTML = `🤝 ${st.partner.name} (Lv.${st.partner.level || 1})님과 1:1 거래`;
+  }
+
+  const renderSlotBox = (entry, isMine = false, slotPos = 0) => {
+    if (!entry || !entry.item) {
+      return `<div style="height:40px; background:#090b10; border:1px dashed #374151; border-radius:5px; display:flex; align-items:center; justify-content:center; color:#4b5563; font-size:9px;">빈 슬롯</div>`;
+    }
+    const it = entry.item;
+    const def = window.itemDict?.[it.type] || { name: it.type };
+    const bCol = def.questOnly ? '#e879f9' : (it.gradeColor || '#60a5fa');
+    const plusVal = Number(it.plus) || 0;
+    const qtyVal = Math.max(1, Number(entry.qty || it.qty) || 1);
+    const clickAttr = (isMine && !st.myOffer.locked) ? `onclick="removeTradeOfferSlot(${slotPos})"` : '';
+    return `
+      <div ${clickAttr} title="${plusVal > 0 ? '+' + plusVal + ' ' : ''}${def.name} x${qtyVal}${isMine && !st.myOffer.locked ? ' (터치하여 제외)' : ''}"
+           style="height:40px; background:#18181b; border:1.5px solid ${bCol}; border-radius:5px; position:relative; display:flex; align-items:center; justify-content:center; cursor:${isMine && !st.myOffer.locked ? 'pointer' : 'default'};">
+        ${window.getItemIconHTML ? window.getItemIconHTML(it.type) : '📦'}
+        ${plusVal > 0 ? `<span style="position:absolute; top:1px; right:2px; font-size:8px; font-weight:bold; color:#fde047; background:rgba(0,0,0,0.85); padding:0 2px; border-radius:2px;">+${plusVal}</span>` : ''}
+        ${qtyVal > 1 ? `<span style="position:absolute; bottom:1px; right:2px; font-size:8.5px; font-weight:bold; color:#fff; background:rgba(0,0,0,0.75); padding:0 2px; border-radius:2px;">x${qtyVal}</span>` : ''}
+      </div>
+    `;
+  };
+
+  let partnerSlotsHtml = '';
+  let mySlotsHtml = '';
+  for (let i = 0; i < 6; i++) {
+    partnerSlotsHtml += renderSlotBox(st.partnerOffer.items[i], false, i);
+    mySlotsHtml += renderSlotBox(st.myOffer.items[i], true, i);
+  }
+
+  const partnerItemNames = st.partnerOffer.items.map(e => {
+    const d = window.itemDict?.[e.item?.type] || { name: e.item?.type || '아이템' };
+    return `${e.item?.plus > 0 ? '+' + e.item.plus + ' ' : ''}${d.name}${e.qty > 1 ? ' x' + e.qty : ''}`;
+  }).join(', ') || '등록된 아이템 없음';
+
+  const myItemNames = st.myOffer.items.map(e => {
+    const d = window.itemDict?.[e.item?.type] || { name: e.item?.type || '아이템' };
+    return `${e.item?.plus > 0 ? '+' + e.item.plus + ' ' : ''}${d.name}${e.qty > 1 ? ' x' + e.qty : ''}`;
+  }).join(', ') || '가방에서 터치하여 등록 (0개면 무상 증여/수령 가능)';
+
+  // 수량 선택 인라인 바 (중첩 아이템 선택 시)
+  let pendingQtyBarHtml = '';
+  if (window._pendingTradeQtySlotIdx !== null && !st.myOffer.locked) {
+    const pInst = player.inventory[window._pendingTradeQtySlotIdx];
+    if (pInst) {
+      const pDef = window.itemDict?.[pInst.type] || { name: pInst.type };
+      const maxQ = Math.max(1, Number(pInst.qty) || 1);
+      pendingQtyBarHtml = `
+        <div style="background:#1e293b; border:1.5px solid #facc15; border-radius:6px; padding:5px 7px; display:flex; align-items:center; justify-content:space-between; gap:5px;">
+          <span style="font-size:10px; color:#fde047; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">📦 ${pDef.name} (최대 ${maxQ}개)</span>
+          <div style="display:flex; align-items:center; gap:3px; flex-shrink:0;">
+            <input id="trade-stack-qty-inp" type="number" min="1" max="${maxQ}" value="${maxQ}" style="width:52px; text-align:center; background:#090b10; color:#fde047; border:1px solid #facc15; border-radius:4px; padding:2px; font-size:11px; font-weight:bold;">
+            <button type="button" class="shop-buy-btn" style="padding:2px 6px; font-size:9.5px; background:#16a34a; border-color:#4ade80;" onclick="confirmAddTradeStackItem(${window._pendingTradeQtySlotIdx}, document.getElementById('trade-stack-qty-inp')?.value || 1)">등록</button>
+            <button type="button" class="shop-buy-btn" style="padding:2px 5px; font-size:9.5px; background:#374151;" onclick="window._pendingTradeQtySlotIdx=null; renderTradeModal();">취소</button>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  // 내 가방 아이템 그리드 (장착 중인 아이템 제외)
+  const eqSet = new Set(Object.values(player.equip || {}).filter(v => v !== null && v !== undefined).map(Number));
+  const offeredIdxSet = new Set(st.myOffer.items.map(x => Number(x.invIdx)));
+  let bagGridHtml = '';
+  player.inventory.forEach((inst, idx) => {
+    if (!inst || eqSet.has(idx)) return;
+    const def = window.itemDict?.[inst.type] || { name: inst.type };
+    const isOffered = offeredIdxSet.has(idx);
+    const bCol = isOffered ? '#22c55e' : (def.questOnly ? '#e879f9' : (inst.gradeColor || '#4b5563'));
+    const plusVal = Number(inst.plus) || 0;
+    bagGridHtml += `
+      <div onclick="onTradeBagItemTap(${idx})" title="${plusVal > 0 ? '+' + plusVal + ' ' : ''}${def.name}${inst.qty > 1 ? ' x' + inst.qty : ''}"
+           style="height:36px; background:${isOffered ? '#052e16' : '#14171f'}; border:${isOffered ? '2px' : '1.5px'} solid ${bCol}; border-radius:5px; position:relative; display:flex; align-items:center; justify-content:center; cursor:pointer; opacity:${st.myOffer.locked ? '0.6' : '1'};">
+        ${window.getItemIconHTML ? window.getItemIconHTML(inst.type) : '📦'}
+        ${isOffered ? `<span style="position:absolute; top:0px; left:1px; font-size:7.5px; font-weight:bold; color:#4ade80; background:rgba(0,0,0,0.85); padding:0 2px; border-radius:2px;">등록</span>` : ''}
+        ${plusVal > 0 ? `<span style="position:absolute; top:0px; right:1px; font-size:7.5px; font-weight:bold; color:#fde047; background:rgba(0,0,0,0.85); padding:0 2px; border-radius:2px;">+${plusVal}</span>` : ''}
+        ${inst.qty > 1 ? `<span style="position:absolute; bottom:0px; right:1px; font-size:8px; font-weight:bold; color:#fff; text-shadow:0 0 2px #000;">${inst.qty}</span>` : ''}
+      </div>
+    `;
+  });
+  if (!bagGridHtml) {
+    bagGridHtml = `<div style="grid-column:1 / -1; text-align:center; color:#9ca3af; font-size:9.5px; padding:8px;">거래 가능한 미장착 가방 아이템이 없습니다.</div>`;
+  }
+
+  const bothLocked = Boolean(st.myOffer.locked && st.partnerOffer.locked);
+
+  body.innerHTML = `
+    <!-- 1. 상대방 제시 영역 -->
+    <div style="background:#111827; border:1.5px solid ${st.partnerOffer.locked ? '#22c55e' : '#374151'}; border-radius:6px; padding:5px 7px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+        <span style="font-size:10.5px; font-weight:bold; color:#93c5fd;">👤 ${st.partner.name}님의 제시 물품</span>
+        <span style="font-size:9px; font-weight:bold; padding:1px 6px; border-radius:999px; background:${st.partnerOffer.confirmed ? '#15803d' : (st.partnerOffer.locked ? '#065f46' : '#1f2937')}; color:${st.partnerOffer.locked ? '#86efac' : '#9ca3af'};">
+          ${st.partnerOffer.confirmed ? '✅ 거래확정 완료' : (st.partnerOffer.locked ? '🔒 등록완료' : '✏️ 물품 선택중')}
+        </span>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:3px; margin-bottom:4px;">
+        ${partnerSlotsHtml}
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; font-size:9.5px; color:#d1d5db;">
+        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:62%;">${partnerItemNames}</span>
+        <b style="color:#fde047; font-size:10.5px;">💰 ${st.partnerOffer.gold.toLocaleString()} G</b>
+      </div>
+    </div>
+
+    <!-- 2. 내 제시 영역 (아이템 VS 아이템 / 아이템 VS 골드 / 그냥 주기) -->
+    <div style="background:#111827; border:1.5px solid ${st.myOffer.locked ? '#facc15' : '#4b5563'}; border-radius:6px; padding:5px 7px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+        <span style="font-size:10.5px; font-weight:bold; color:#fde047;">🙋 내 제시 물품 (보유: ${Math.floor(player.gold || 0).toLocaleString()} G)</span>
+        <span style="font-size:9px; font-weight:bold; padding:1px 6px; border-radius:999px; background:${st.myOffer.confirmed ? '#15803d' : (st.myOffer.locked ? '#78350f' : '#1f2937')}; color:${st.myOffer.locked ? '#fde047' : '#9ca3af'};">
+          ${st.myOffer.confirmed ? '✅ 최종확정 대기중' : (st.myOffer.locked ? '🔒 등록완료' : '✏️ 물품 선택중')}
+        </span>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:3px; margin-bottom:4px;">
+        ${mySlotsHtml}
+      </div>
+      <div style="font-size:9px; color:#9ca3af; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${myItemNames}</div>
+      <div style="display:flex; align-items:center; gap:3px; flex-wrap:wrap;">
+        <span style="font-size:10px; color:#fde047; font-weight:bold;">💰골드:</span>
+        <input type="number" min="0" max="${Math.floor(player.gold || 0)}" value="${st.myOffer.gold}" ${st.myOffer.locked ? 'disabled' : ''}
+               onchange="adjustTradeGoldOffer('set', this.value)"
+               style="width:76px; background:#090b10; color:#fde047; border:1px solid #6b5535; border-radius:4px; padding:2px 4px; font-size:10.5px; font-weight:bold; text-align:right;">
+        <button type="button" class="shop-buy-btn" style="padding:2px 5px; font-size:9px;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('add', 1000)">+1천</button>
+        <button type="button" class="shop-buy-btn" style="padding:2px 5px; font-size:9px;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('add', 10000)">+1만</button>
+        <button type="button" class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#1e3a8a; border-color:#60a5fa;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('max')">전액</button>
+        <button type="button" class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#374151; border-color:#6b7280;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('clear')">0G</button>
+      </div>
+    </div>
+
+    ${pendingQtyBarHtml}
+
+    <!-- 3. 내 가방 아이템 선택 그리드 -->
+    <div style="background:#0f131c; border:1px solid #3d3020; border-radius:6px; padding:5px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+        <span style="font-size:10px; font-weight:bold; color:#e5e7eb;">🎒 내 가방 물품 터치하여 등록/제외</span>
+        <span style="font-size:8.5px; color:#86efac;">※ 대가 없이 그냥 주기도 가능</span>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:3px; max-height:116px; overflow-y:auto; padding:2px;">
+        ${bagGridHtml}
+      </div>
+    </div>
+
+    <!-- 4. 하단 2단계 안전 잠금 & 거래 확정 버튼 -->
+    <div style="display:flex; gap:5px;">
+      <button type="button" class="auth-sub-btn" style="flex:0.8; padding:6px; font-size:10.5px;" onclick="cancelActiveTrade('거래를 취소했습니다.')">취소</button>
+      <button type="button" class="shop-buy-btn" style="flex:1.1; padding:6px; font-size:10.5px; background:${st.myOffer.locked ? '#374151' : '#b45309'}; border-color:${st.myOffer.locked ? '#9ca3af' : '#facc15'};" onclick="toggleTradeLockState()">
+        ${st.myOffer.locked ? '🔓 물품 수정하기' : '🔒 물품 등록완료'}
+      </button>
+      <button type="button" class="auth-primary-btn" style="flex:1.2; padding:6px; font-size:10.5px; opacity:${bothLocked && !st.myOffer.confirmed ? '1' : '0.5'}; background:${bothLocked ? 'linear-gradient(180deg,#16a34a,#14532d)' : '#1f2937'}; border-color:${bothLocked ? '#4ade80' : '#4b5563'};"
+              ${(!bothLocked || st.myOffer.confirmed) ? 'disabled' : ''} onclick="confirmActiveTradeFinal()">
+        ${st.myOffer.confirmed ? '⏳ 상대 확정 대기' : '✅ 최종 거래확정'}
+      </button>
+    </div>
+  `;
 };
