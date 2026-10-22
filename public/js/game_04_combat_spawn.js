@@ -2899,6 +2899,8 @@ function loadMapData(mapKey, customSpawn = null) {
         regionKey: currentRegionKey,
         player: buildMultiplayerPlayerSnapshot()
       });
+      window.regionPlayersCache = [];
+      window.requestRegionPlayersRefresh?.();
     } else {
       spawnAltriaMonsters(mapKey, mapData);
     }

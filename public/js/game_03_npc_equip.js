@@ -3208,7 +3208,9 @@ window.requestTradeWithPlayer = function(targetCharId, targetName) {
     type: 'TRADE_REQUEST',
     charId: activeCharacterId,
     targetCharId: targetCharId || null,
-    targetName: targetName || null
+    targetName: targetName || null,
+    mapKey: currentMapKey,
+    regionKey: currentRegionKey
   });
 };
 
@@ -3223,6 +3225,29 @@ function clearTradeInviteTimers() {
   }
 }
 
+function normalizeClientTradeItemEntry(entry, idxFallback = 0) {
+  if (!entry || typeof entry !== 'object') return null;
+  const srcItem = (entry.item && typeof entry.item === 'object') ? entry.item : entry;
+  const itemType = String(srcItem.type || entry.type || '').trim();
+  if (!itemType) return null;
+  const invIdx = Number(entry.invIdx ?? srcItem.invIdx ?? idxFallback);
+  const qty = Math.max(1, Math.floor(Number(entry.qty ?? srcItem.qty ?? srcItem.count ?? 1)));
+  const plus = Math.max(0, Math.floor(Number(srcItem.plus ?? entry.plus ?? srcItem.enchantLevel ?? 0)));
+  const itemObj = {
+    ...srcItem,
+    type: itemType,
+    qty,
+    plus
+  };
+  return {
+    invIdx: Number.isInteger(invIdx) ? invIdx : idxFallback,
+    qty,
+    type: itemType,
+    plus,
+    item: itemObj
+  };
+}
+
 window.showTradeInvitePopup = function(msg) {
   clearTradeInviteTimers();
   let pop = document.getElementById('trade-invite-popup');
@@ -3232,6 +3257,8 @@ window.showTradeInvitePopup = function(msg) {
     pop.style.cssText = 'position:fixed; top:112px; left:50%; transform:translateX(-50%); z-index:9650; width:min(88vw, 295px); background:rgba(15, 23, 42, 0.97); border:2px solid #facc15; border-radius:8px; padding:10px; box-shadow:0 8px 25px rgba(0,0,0,0.9); color:#fff; pointer-events:auto;';
     document.body.appendChild(pop);
   }
+  const inviterName = msg.inviterName || msg.requesterName || '모험가';
+  const inviterLevel = msg.inviterLevel || msg.requesterLevel || 1;
   let remainSec = 15;
   pop.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
@@ -3239,7 +3266,7 @@ window.showTradeInvitePopup = function(msg) {
       <span id="trade-invite-countdown" style="font-size:10px; font-weight:bold; color:#fde047; background:rgba(0,0,0,0.55); padding:1px 6px; border-radius:999px;">⏳ ${remainSec}초</span>
     </div>
     <div style="font-size:11px; color:#e5e7eb; margin-bottom:8px;">
-      <b style="color:#38bdf8;">${msg.inviterName}</b> (Lv.${msg.inviterLevel || 1})님이 아이템/골드 거래를 요청했습니다.
+      <b style="color:#38bdf8;">${inviterName}</b> (Lv.${inviterLevel})님이 아이템/골드 거래를 요청했습니다.
     </div>
     <div style="display:flex; gap:6px;">
       <button type="button" class="auth-sub-btn" style="flex:1; padding:5px;" onclick="respondTradeInvite('${msg.tradeId}', false)">거절</button>
@@ -3283,27 +3310,64 @@ window.respondTradeInvite = function(tradeId, accept) {
 
 window.onTradeStateSync = function(msg) {
   ensureAllGameModals();
+  clearTradeInviteTimers();
+  const invPop = document.getElementById('trade-invite-popup');
+  if (invPop) invPop.style.display = 'none';
+
   // 선택했던 판매 팝업이나 인챈트 대기 상태 즉시 해제 (복사 원천 방지)
   enchantScrollType = null;
   document.getElementById('enchant-indicator')?.classList.add('hidden');
   window.closeSellQuantityPopup?.();
 
+  const t = msg.trade || msg;
+  const tradeId = msg.tradeId || t?.tradeId;
+  if (!tradeId) return;
+
+  let mySideKey = msg.mySide;
+  let myRawOffer = msg.myOffer;
+  let partnerRawOffer = msg.partnerOffer;
+  let partnerInfo = msg.partner;
+
+  if (t && t.playerA && t.playerB) {
+    const isA = String(t.playerA.charId) === String(activeCharacterId);
+    const meObj = isA ? t.playerA : t.playerB;
+    const otherObj = isA ? t.playerB : t.playerA;
+    if (!mySideKey) mySideKey = isA ? 'A' : 'B';
+    if (!myRawOffer) myRawOffer = meObj;
+    if (!partnerRawOffer) partnerRawOffer = otherObj;
+    if (!partnerInfo) {
+      partnerInfo = {
+        charId: otherObj.charId || '',
+        name: otherObj.name || '상대방',
+        level: otherObj.level || 1,
+        class: otherObj.class || 'knight'
+      };
+    }
+  }
+
+  const normMyItems = Array.isArray(myRawOffer?.items)
+    ? myRawOffer.items.map((x, idx) => normalizeClientTradeItemEntry(x, idx)).filter(Boolean)
+    : [];
+  const normPartnerItems = Array.isArray(partnerRawOffer?.items)
+    ? partnerRawOffer.items.map((x, idx) => normalizeClientTradeItemEntry(x, idx)).filter(Boolean)
+    : [];
+
   window.activeTradeState = {
-    tradeId: msg.tradeId,
-    offerVersion: msg.offerVersion || 1,
-    mySide: msg.mySide,
-    partner: msg.partner || { charId: '', name: '상대방', level: 1, class: 'knight' },
+    tradeId,
+    offerVersion: Number(msg.offerVersion ?? t?.offerVersion) || 1,
+    mySide: mySideKey || 'A',
+    partner: partnerInfo || { charId: '', name: '상대방', level: 1, class: 'knight' },
     myOffer: {
-      items: Array.isArray(msg.myOffer?.items) ? msg.myOffer.items : [],
-      gold: Math.max(0, Math.floor(Number(msg.myOffer?.gold) || 0)),
-      locked: Boolean(msg.myOffer?.locked),
-      confirmed: Boolean(msg.myOffer?.confirmed)
+      items: normMyItems,
+      gold: Math.max(0, Math.floor(Number(myRawOffer?.gold) || 0)),
+      locked: Boolean(myRawOffer?.locked),
+      confirmed: Boolean(myRawOffer?.confirmed)
     },
     partnerOffer: {
-      items: Array.isArray(msg.partnerOffer?.items) ? msg.partnerOffer.items : [],
-      gold: Math.max(0, Math.floor(Number(msg.partnerOffer?.gold) || 0)),
-      locked: Boolean(msg.partnerOffer?.locked),
-      confirmed: Boolean(msg.partnerOffer?.confirmed)
+      items: normPartnerItems,
+      gold: Math.max(0, Math.floor(Number(partnerRawOffer?.gold) || 0)),
+      locked: Boolean(partnerRawOffer?.locked),
+      confirmed: Boolean(partnerRawOffer?.confirmed)
     }
   };
 
@@ -3331,28 +3395,42 @@ window.sendCurrentTradeOfferToServer = function() {
     if (!Number.isInteger(idx) || idx < 0 || idx >= player.inventory.length) continue;
     if (eqSet.has(idx) || usedIdx.has(idx)) continue;
     const liveInst = player.inventory[idx];
-    if (!liveInst || liveInst.type !== entry.item?.type) continue;
+    const entryType = entry.item?.type || entry.type;
+    if (!liveInst || liveInst.type !== entryType) continue;
     const maxQty = Math.max(1, Number(liveInst.qty) || 1);
     const offerQty = Math.max(1, Math.min(maxQty, Number(entry.qty) || 1));
     usedIdx.add(idx);
+    const clonedInst = {
+      ...JSON.parse(JSON.stringify(liveInst)),
+      qty: offerQty
+    };
     validatedItems.push({
       invIdx: idx,
+      uid: clonedInst.uid,
+      type: clonedInst.type,
       qty: offerQty,
-      item: {
-        ...JSON.parse(JSON.stringify(liveInst)),
-        qty: offerQty
-      }
+      plus: clonedInst.plus || 0,
+      gradeIdx: clonedInst.gradeIdx || 0,
+      gradeName: clonedInst.gradeName,
+      gradeColor: clonedInst.gradeColor,
+      mult: clonedInst.mult,
+      options: clonedInst.options,
+      item: clonedInst
     });
   }
 
   st.myOffer.items = validatedItems;
-  st.myOffer.gold = Math.max(0, Math.min(Math.floor(player.gold || 0), Math.floor(Number(st.myOffer.gold) || 0)));
+  const currentGold = Math.max(0, Math.floor(player.gold || 0));
+  st.myOffer.gold = Math.max(0, Math.min(currentGold, Math.floor(Number(st.myOffer.gold) || 0)));
+  const freeSlots = player.inventory.filter(x => x === null || x === undefined).length;
 
   sendCentralWsPacket({
     type: 'TRADE_UPDATE_OFFER',
     charId: activeCharacterId,
     tradeId: st.tradeId,
     gold: st.myOffer.gold,
+    currentGold,
+    freeSlots,
     items: st.myOffer.items
   });
 };
@@ -3458,11 +3536,18 @@ window.adjustTradeGoldOffer = function(mode, val = 0) {
 window.toggleTradeLockState = function() {
   const st = window.activeTradeState;
   if (!st || !st.tradeId) return;
+  const nextLocked = !st.myOffer.locked;
+  const currentGold = Math.max(0, Math.floor(player.gold || 0));
+  const freeSlots = player.inventory.filter(x => x === null || x === undefined).length;
   sendCentralWsPacket({
     type: 'TRADE_LOCK_REQ',
     charId: activeCharacterId,
     tradeId: st.tradeId,
-    locked: !st.myOffer.locked
+    locked: nextLocked,
+    gold: st.myOffer.gold || 0,
+    currentGold,
+    freeSlots,
+    items: st.myOffer.items || []
   });
 };
 
@@ -3482,6 +3567,9 @@ window.confirmActiveTradeFinal = function() {
 };
 
 window.cancelActiveTrade = function(reason = '거래를 취소했습니다.') {
+  clearTradeInviteTimers();
+  const invPop = document.getElementById('trade-invite-popup');
+  if (invPop) invPop.style.display = 'none';
   const st = window.activeTradeState;
   if (st && st.tradeId) {
     sendCentralWsPacket({
@@ -3497,6 +3585,9 @@ window.cancelActiveTrade = function(reason = '거래를 취소했습니다.') {
 };
 
 window.onTradeCancelledByServer = function(msg) {
+  clearTradeInviteTimers();
+  const invPop = document.getElementById('trade-invite-popup');
+  if (invPop) invPop.style.display = 'none';
   window.activeTradeState = null;
   window._pendingTradeQtySlotIdx = null;
   document.getElementById('trade-modal-ui')?.classList.add('hidden');
@@ -3508,10 +3599,17 @@ window.onTradeCommitExecute = function(msg) {
   if (window._processedTradeTxIds.has(msg.tradeTxId)) return;
   window._processedTradeTxIds.add(msg.tradeTxId);
 
-  const myGiveItems = Array.isArray(msg.myOffer?.items) ? msg.myOffer.items : [];
-  const myGiveGold = Math.max(0, Math.floor(Number(msg.myOffer?.gold) || 0));
-  const recvItems = Array.isArray(msg.partnerOffer?.items) ? msg.partnerOffer.items : [];
-  const recvGold = Math.max(0, Math.floor(Number(msg.partnerOffer?.gold) || 0));
+  const rawGiveItems = Array.isArray(msg.myOffer?.items)
+    ? msg.myOffer.items
+    : (Array.isArray(msg.giveItems) ? msg.giveItems : []);
+  const rawRecvItems = Array.isArray(msg.partnerOffer?.items)
+    ? msg.partnerOffer.items
+    : (Array.isArray(msg.receiveItems) ? msg.receiveItems : []);
+
+  const myGiveItems = rawGiveItems.map((x, idx) => normalizeClientTradeItemEntry(x, idx)).filter(Boolean);
+  const myGiveGold = Math.max(0, Math.floor(Number(msg.myOffer?.gold ?? msg.giveGold) || 0));
+  const recvItems = rawRecvItems.map((x, idx) => normalizeClientTradeItemEntry(x, idx)).filter(Boolean);
+  const recvGold = Math.max(0, Math.floor(Number(msg.partnerOffer?.gold ?? msg.receiveGold) || 0));
 
   const eqSet = new Set(Object.values(player.equip || {}).filter(v => v !== null && v !== undefined).map(Number));
 

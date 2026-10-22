@@ -545,12 +545,19 @@ function generateAICharacterRecord(slotIndex, userId) {
 
   const isDungeonSpawn = (Math.floor(idx / REGION_CONFIGS.length) % 3 === 1);
   const mapKey = isDungeonSpawn ? `${regCfg.id}_dungeon` : `${regCfg.id}_sub1`;
+  const fieldZoneAnchors = [
+    { x: regCfg.townX || 2000, y: Math.max(1400, (regCfg.townY || 14250) - 950) },
+    { x: regCfg.fieldX || 1800, y: regCfg.fieldY || 9200 },
+    { x: regCfg.dungeonX || 2100, y: (regCfg.dungeonY || 5200) + 420 },
+    { x: regCfg.bossX || 2000, y: (regCfg.bossY || 1850) + 420 }
+  ];
+  const fAnchor = fieldZoneAnchors[Math.floor(idx / REGION_CONFIGS.length) % fieldZoneAnchors.length];
   const posX = isDungeonSpawn
     ? Math.round(950 + ((idx * 193) % 1150))
-    : Math.round(1350 + ((idx * 173) % 1300));
+    : Math.max(400, Math.min(3600, Math.round(fAnchor.x + (((idx * 173) % 720) - 360))));
   const posY = isDungeonSpawn
     ? Math.round(950 + ((idx * 257) % 1150))
-    : Math.round(8300 + ((idx * 389) % 4400));
+    : Math.max(1300, Math.min(13500, Math.round(fAnchor.y + (((idx * 257) % 720) - 360))));
 
   let nameHash = idx * 31;
   for (let i = 0; i < rawName.length; i++) nameHash += rawName.charCodeAt(i);

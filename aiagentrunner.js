@@ -229,13 +229,19 @@ function pickBalancedMapPlacement(level, slotIndex, excludeCharId = null, prefer
               y: Math.round(750 + ((slotIndex * 263) % 1500))
             };
           }
-          let px = Math.round((cfg.fieldX || 1800) + (((slotIndex * 173) % 1200) - 600));
-          let py = Math.round((cfg.fieldY || 9200) + (((slotIndex * 389) % 1600) - 800));
+          const zoneCenters = [
+            { x: cfg.townX || 2000, y: Math.max(1400, (cfg.townY || 14250) - 950) },
+            { x: cfg.fieldX || 1800, y: cfg.fieldY || 9200 },
+            { x: cfg.dungeonX || 2100, y: (cfg.dungeonY || 5200) + 420 },
+            { x: cfg.bossX || 2000, y: (cfg.bossY || 1850) + 420 }
+          ];
+          const zc = zoneCenters[slotIndex % zoneCenters.length];
+          let px = Math.round(zc.x + (((slotIndex * 173) % 760) - 380));
+          let py = Math.round(zc.y + (((slotIndex * 389) % 760) - 380));
           px = Math.max(350, Math.min(3650, px));
-          py = Math.max(1200, Math.min(13400, py));
-          if (fastHypot(px - cfg.townX, py - cfg.townY) <= 840) {
-            px = Math.max(350, Math.min(3650, (cfg.fieldX || 1800) + ((slotIndex % 7) - 3) * 110));
-            py = Math.max(1200, Math.min(13400, (cfg.fieldY || 9200) + ((slotIndex % 7) - 3) * 140));
+          py = Math.max(1200, Math.min(13600, py));
+          if (fastHypot(px - cfg.townX, py - cfg.townY) <= 820) {
+            py = Math.max(1200, (cfg.townY || 14250) - 920);
           }
           return { x: px, y: py };
         };

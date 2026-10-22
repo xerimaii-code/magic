@@ -102,6 +102,7 @@ let OBJ = {};
 let HardcodedMapDB = {};
 let GameDB = {};
 const serverItemDict = {};
+const SERVER_ITEM_DICT = serverItemDict;
 
 function loadSharedGameData() {
   const mapRendererPath = path.join(PUBLIC_DIR, 'js', 'map_renderer.js');
@@ -322,8 +323,58 @@ function checkServerCollision(mapInst, nx, ny, extraMargin = 0) {
 }
 
 function isInsideServerSafeZone(mapInst, x, y) {
-  if (!mapInst.safeZone) return false;
+  if (!mapInst || !mapInst.safeZone) return false;
   return Math.hypot(x - mapInst.safeZone.x, y - mapInst.safeZone.y) <= mapInst.safeZone.radius;
+}
+
+function isServerPointInSafeZone(mapInst, x, y) {
+  return isInsideServerSafeZone(mapInst, x, y);
+}
+
+function resolveServerEntityZone(rawRegionKey, rawMapKey, x, y) {
+  const regId = String(rawRegionKey || rawMapKey || 'R01').split('_')[0] || 'R01';
+  const regObj = (GameDB.Regions || []).find(r => r.id === regId) || (GameDB.Regions || [])[0] || {
+    id: regId, name: regId, sub1: '마을', sub2: '필드', sub3: '던전 입구', sub4: '보스 성역'
+  };
+  const normMap = normalizeMapKey(rawMapKey || `${regId}_sub1`);
+  if (normMap.endsWith('_dungeon')) {
+    return {
+      regionKey: regId,
+      mapKey: normMap,
+      zoneType: 'dungeon',
+      zoneKey: `${regId}_dungeon`,
+      zoneName: `${regObj.sub3 || '던전'} [던전]`
+    };
+  }
+  const mapData = HardcodedMapDB[normMap] || {};
+  const px = Number(x) || (mapData.spawn?.x ?? 2000);
+  const py = Number(y) || (mapData.spawn?.y ?? 14250);
+  const townPt = mapData.spawn || { x: 2000, y: 14250 };
+  const fieldPt = mapData.fieldCenterPos || mapData.fieldPos || { x: 2000, y: 9200 };
+  const dungPt = mapData.dungeonEntrance || { x: 2000, y: 5200 };
+  const bossPt = mapData.bossPos || mapData.bossWarpPos || { x: 2000, y: 1850 };
+  const anchors = [
+    { type: 'town', x: townPt.x, y: townPt.y, name: regObj.sub1 || '마을' },
+    { type: 'field', x: fieldPt.x, y: fieldPt.y, name: regObj.sub2 || '필드' },
+    { type: 'dungeon_entrance', x: dungPt.x, y: dungPt.y, name: regObj.sub3 || '던전 입구' },
+    { type: 'boss_camp', x: bossPt.x, y: bossPt.y, name: regObj.sub4 || '보스 성역' }
+  ];
+  let best = anchors[0];
+  let bestDist = Infinity;
+  for (const a of anchors) {
+    const d = Math.hypot(px - a.x, py - a.y);
+    if (d < bestDist) {
+      bestDist = d;
+      best = a;
+    }
+  }
+  return {
+    regionKey: regId,
+    mapKey: normMap,
+    zoneType: best.type,
+    zoneKey: `${regId}_${best.type}`,
+    zoneName: best.name
+  };
 }
 
 function isInsideServerWarpSafeZone(mapInst, x, y) {
@@ -1214,12 +1265,36 @@ function buildTradeSnapshot(trade) {
 function broadcastTradeSync(trade) {
   if (!trade) return;
   const snap = buildTradeSnapshot(trade);
-  [trade.playerA.charId, trade.playerB.charId].forEach(cid => {
-    const e = activeCharSockets.get(cid);
+  [
+    { my: trade.playerA, other: trade.playerB, side: 'A' },
+    { my: trade.playerB, other: trade.playerA, side: 'B' }
+  ].forEach(({ my, other, side }) => {
+    const e = activeCharSockets.get(my.charId);
     if (e && e.conn) {
       sendWsMessage(e.conn, {
         type: 'TRADE_STATE_SYNC',
-        trade: snap
+        trade: snap,
+        tradeId: trade.tradeId,
+        offerVersion: trade.offerVersion,
+        mySide: side,
+        partner: {
+          charId: other.charId,
+          name: other.name || '모험가',
+          level: other.level || 1,
+          class: other.class || 'knight'
+        },
+        myOffer: {
+          items: my.items || [],
+          gold: my.gold || 0,
+          locked: Boolean(my.locked),
+          confirmed: Boolean(my.confirmed)
+        },
+        partnerOffer: {
+          items: other.items || [],
+          gold: other.gold || 0,
+          locked: Boolean(other.locked),
+          confirmed: Boolean(other.confirmed)
+        }
       });
     }
   });
@@ -1232,23 +1307,43 @@ function sanitizeTradeOfferItems(rawItems) {
   for (let i = 0; i < rawItems.length && sanitized.length < 6; i++) {
     const it = rawItems[i];
     if (!it || typeof it !== 'object') continue;
-    const invIdx = Number(it.invIdx);
+    const srcItem = (it.item && typeof it.item === 'object') ? it.item : it;
+    const invIdx = Number(it.invIdx ?? srcItem.invIdx ?? i);
     if (!Number.isInteger(invIdx) || invIdx < 0 || invIdx >= 100 || usedSlots.has(invIdx)) continue;
-    const itemType = String(it.type || '').trim();
-    if (!itemType || !SERVER_ITEM_DICT[itemType]) continue;
-    const qty = Math.max(1, Math.min(9999, Math.floor(Number(it.qty || it.count || 1))));
+    const itemType = String(srcItem.type || it.type || '').trim();
+    if (!itemType || !serverItemDict[itemType]) continue;
+    const qty = Math.max(1, Math.min(9999, Math.floor(Number(it.qty ?? srcItem.qty ?? srcItem.count ?? it.count ?? 1))));
+    const uid = String(srcItem.uid || it.uid || `tr_${invIdx}_${Date.now()}`);
+    const plus = Math.max(0, Math.min(30, Math.floor(Number(srcItem.plus ?? it.plus ?? srcItem.enchantLevel ?? 0))));
+    const gradeIdx = Math.max(0, Math.min(5, Math.floor(Number(srcItem.gradeIdx ?? it.gradeIdx ?? 0))));
+    const gradeName = srcItem.gradeName || it.gradeName || undefined;
+    const gradeColor = srcItem.gradeColor || it.gradeColor || undefined;
+    const mult = typeof (srcItem.mult ?? it.mult) === 'number' ? (srcItem.mult ?? it.mult) : undefined;
+    const options = Array.isArray(srcItem.options || it.options) ? (srcItem.options || it.options).slice(0, 6) : undefined;
     usedSlots.add(invIdx);
-    sanitized.push({
-      invIdx,
-      uid: String(it.uid || `tr_${invIdx}_${Date.now()}`),
+    const cleanItemObj = {
+      uid,
       type: itemType,
       qty,
-      plus: Math.max(0, Math.min(30, Math.floor(Number(it.plus || it.enchantLevel || 0)))),
-      gradeIdx: Math.max(0, Math.min(5, Math.floor(Number(it.gradeIdx || 0)))),
-      gradeName: it.gradeName || undefined,
-      gradeColor: it.gradeColor || undefined,
-      mult: typeof it.mult === 'number' ? it.mult : undefined,
-      options: Array.isArray(it.options) ? it.options.slice(0, 6) : undefined
+      plus,
+      gradeIdx,
+      gradeName,
+      gradeColor,
+      mult,
+      options
+    };
+    sanitized.push({
+      invIdx,
+      uid,
+      type: itemType,
+      qty,
+      plus,
+      gradeIdx,
+      gradeName,
+      gradeColor,
+      mult,
+      options,
+      item: cleanItemObj
     });
   }
   return sanitized;
@@ -1282,6 +1377,7 @@ function buildPartySnapshot(party) {
       if (isLdr) {
         leaderInSafeZone = inSafe;
       }
+      const zInfo = resolveServerEntityZone(e.regionKey, mMapKey, px, py);
       memberDetails.push({
         charId: cId,
         name: e.player.name || '모험가',
@@ -1292,7 +1388,9 @@ function buildPartySnapshot(party) {
         mp: Math.ceil(e.player.mp ?? 50),
         maxMp: e.player.maxMp || 50,
         mapKey: mMapKey,
-        regionKey: e.regionKey || 'R01',
+        regionKey: zInfo.regionKey,
+        zoneKey: zInfo.zoneKey,
+        zoneName: zInfo.zoneName,
         x: px,
         y: py,
         inSafeZone: inSafe,
@@ -1360,6 +1458,22 @@ function removeCharFromParty(charId, reason = 'leave') {
 
   if (party.members.length === 0) {
     serverParties.delete(party.partyId);
+    return;
+  }
+
+  if (party.members.length === 1) {
+    const lastCharId = party.members[0];
+    const lastEntry = activeCharSockets.get(lastCharId);
+    serverParties.delete(party.partyId);
+    if (lastEntry) {
+      lastEntry.partyId = null;
+      if (lastEntry.player) {
+        lastEntry.player.partyId = null;
+        lastEntry.player.isPartyLeader = false;
+      }
+      sendWsMessage(lastEntry.conn, { type: 'PARTY_STATE_UPDATE', party: null });
+      sendSystemMsgToEntry(lastEntry, `ℹ️ [파티 해산] '${leavingName}'님이 ${reason === 'disconnect' ? '접속 종료' : '탈퇴'}하여 남은 파티원이 없어 파티가 해산되었습니다.`, 'log-sys');
+    }
     return;
   }
 
@@ -1517,12 +1631,41 @@ function broadcastToAll(packetObj, excludeCharId = null) {
   });
 }
 
-function findOnlineEntryByName(charName) {
+function findOnlineEntryByName(charName, preferredRegionKey = null, preferredMapKey = null) {
   const target = String(charName || '').trim().toLowerCase();
   if (!target) return null;
+  const prefMap = preferredMapKey ? normalizeMapKey(preferredMapKey) : null;
+  const prefReg = preferredRegionKey ? String(preferredRegionKey).split('_')[0] : null;
+
+  if (prefMap) {
+    for (const entry of activeCharSockets.values()) {
+      const pName = String(entry.player?.name || '').trim().toLowerCase();
+      if (pName === target && normalizeMapKey(entry.mapKey) === prefMap) return entry;
+    }
+  }
+  if (prefReg) {
+    for (const entry of activeCharSockets.values()) {
+      const pName = String(entry.player?.name || '').trim().toLowerCase();
+      const eReg = String(entry.regionKey || entry.mapKey || '').split('_')[0];
+      if (pName === target && eReg === prefReg) return entry;
+    }
+  }
   for (const entry of activeCharSockets.values()) {
     const pName = String(entry.player?.name || '').trim().toLowerCase();
     if (pName === target) return entry;
+  }
+  if (prefMap) {
+    for (const entry of activeCharSockets.values()) {
+      const pName = String(entry.player?.name || '').trim().toLowerCase();
+      if (pName.includes(target) && normalizeMapKey(entry.mapKey) === prefMap) return entry;
+    }
+  }
+  if (prefReg) {
+    for (const entry of activeCharSockets.values()) {
+      const pName = String(entry.player?.name || '').trim().toLowerCase();
+      const eReg = String(entry.regionKey || entry.mapKey || '').split('_')[0];
+      if (pName.includes(target) && eReg === prefReg) return entry;
+    }
   }
   for (const entry of activeCharSockets.values()) {
     const pName = String(entry.player?.name || '').trim().toLowerCase();
@@ -2060,12 +2203,14 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
 
   // 🤝 파티 명령어 (/파티초대 <이름>, /파티가입 <이름>, /파티장요구, /파티탈퇴, /파티위임 <이름>, /파티 <할말>)
   if (cmd === '/파티초대' || cmd === '/초대' || cmd === '/파티가입' || cmd === '/파티신청' || cmd === '/파티합류') {
-    const targetName = args[0];
+    const targetName = args.join(' ').trim();
     if (!targetName) {
       sendSystemMsgToEntry(entry, `💡 사용법: /파티초대 <캐릭터이름> (AI끼리 맺은 파티에도 즉시 합류/초대 가능!)`, 'log-sys');
       return true;
     }
-    const targetEntry = findOnlineEntryByName(targetName);
+    const targetEntry = (entry._pendingInviteTargetCharId && activeCharSockets.get(entry._pendingInviteTargetCharId))
+      || findOnlineEntryByName(targetName, entry.regionKey, entry.mapKey);
+    entry._pendingInviteTargetCharId = null;
     if (!targetEntry || !targetEntry.player || (targetEntry.gmInvisible && !entry.isAdmin)) {
       sendSystemMsgToEntry(entry, `⚠️ '${targetName}' 캐릭터가 현재 접속 중이지 않습니다.`, 'log-hit');
       return true;
@@ -2074,9 +2219,26 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
       sendSystemMsgToEntry(entry, `⚠️ 본인에게는 파티 초대를 보낼 수 없습니다.`, 'log-hit');
       return true;
     }
-    if (normalizeMapKey(targetEntry.mapKey) !== normalizeMapKey(entry.mapKey) && targetEntry.regionKey !== entry.regionKey) {
-      sendSystemMsgToEntry(entry, `⚠️ '${targetEntry.player.name}'님이 같은 존(지역)에 있지 않아 초대할 수 없습니다.`, 'log-hit');
-      return true;
+    const myNormMap = normalizeMapKey(entry.mapKey);
+    const targetNormMap = normalizeMapKey(targetEntry.mapKey);
+    const myReg = String(entry.regionKey || myNormMap || 'R01').split('_')[0];
+    const targetReg = String(targetEntry.regionKey || targetNormMap || 'R01').split('_')[0];
+
+    if (targetNormMap !== myNormMap && targetReg !== myReg) {
+      if (isAIEntry(targetEntry) && !isAIEntry(entry)) {
+        // 인간 플레이어가 파티창에서 선택한 AI가 방금 다른 맵으로 이동한 경우 플레이어 맵/존으로 동기화
+        targetEntry.mapKey = myNormMap;
+        targetEntry.regionKey = myReg;
+        if (targetEntry.player && entry.player) {
+          targetEntry.player.mapKey = myNormMap;
+          targetEntry.player.regionKey = myReg;
+          targetEntry.player.x = Math.round((entry.player.x || 2000) + ((Math.random() - 0.5) * 180));
+          targetEntry.player.y = Math.round((entry.player.y || 9200) + ((Math.random() - 0.5) * 180));
+        }
+      } else {
+        sendSystemMsgToEntry(entry, `⚠️ '${targetEntry.player.name}'님이 같은 존(지역)에 있지 않아 초대할 수 없습니다.`, 'log-hit');
+        return true;
+      }
     }
     const targetParty = getPartyByCharId(targetEntry.charId);
     const myParty = getPartyByCharId(entry.charId);
@@ -2175,6 +2337,50 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
       partyId: myParty ? myParty.partyId : null
     });
     sendSystemMsgToEntry(entry, `📩 '${targetEntry.player.name}'님에게 파티 초대장을 보냈습니다.`, 'log-sys');
+
+    // 인간 플레이어가 AI 에이전트를 초대한 경우: 에이전트 소켓 응답 지연이 있더라도 400ms 내 자동 합류 및 PARTY_STATE_UPDATE 보장!
+    if (!isAIEntry(entry) && isAIEntry(targetEntry)) {
+      const invCharId = entry.charId;
+      const tgtCharId = targetEntry.charId;
+      setTimeout(() => {
+        const curInv = activeCharSockets.get(invCharId);
+        const curTgt = activeCharSockets.get(tgtCharId);
+        if (!curInv || !curTgt) return;
+        const existingTgtParty = getPartyByCharId(tgtCharId);
+        if (existingTgtParty) return; // 이미 PARTY_INVITE_RESP로 합류 완료됨
+        let pty = getPartyByCharId(invCharId);
+        if (!pty) {
+          const newPartyId = `pty_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          pty = {
+            partyId: newPartyId,
+            leaderCharId: invCharId,
+            leaderTargetMobId: null,
+            partyMode: 'FREE',
+            members: [invCharId]
+          };
+          serverParties.set(newPartyId, pty);
+          curInv.partyId = newPartyId;
+          if (curInv.player) {
+            curInv.player.partyId = newPartyId;
+            curInv.player.isPartyLeader = true;
+          }
+        }
+        if (pty.members.length >= 5) return;
+        if (!pty.members.includes(tgtCharId)) pty.members.push(tgtCharId);
+        curTgt.partyId = pty.partyId;
+        if (curTgt.player) {
+          curTgt.player.partyId = pty.partyId;
+          curTgt.player.isPartyLeader = (pty.leaderCharId === tgtCharId);
+        }
+        pty.members.forEach(cId => {
+          const mE = activeCharSockets.get(cId);
+          if (mE) {
+            sendSystemMsgToEntry(mE, `🎉 [파티 합류] '${curTgt.player?.name}'님이 파티에 합류했습니다! (현재 ${pty.members.length}명)`, 'log-kill');
+          }
+        });
+        broadcastPartyUpdate(pty);
+      }, 450);
+    }
     return true;
   }
 
@@ -3864,9 +4070,18 @@ function handleClientWsPacket(conn, msg) {
       sendSystemMsgToEntry(inviterEntry, `ℹ️ '${entry.player?.name || '모험가'}'님이 파티 초대를 거절했습니다.`, 'log-hit');
       return;
     }
-    if (getPartyByCharId(entry.charId)) {
-      sendSystemMsgToEntry(entry, `⚠️ 이미 가입된 파티가 있습니다.`, 'log-hit');
-      return;
+    const existingEntryParty = getPartyByCharId(entry.charId);
+    if (existingEntryParty) {
+      if (existingEntryParty.members.includes(inviterEntry.charId)) {
+        broadcastPartyUpdate(existingEntryParty);
+        return;
+      }
+      if (isAIEntry(entry) && !isAIEntry(inviterEntry)) {
+        removeCharFromParty(entry.charId, 'leave');
+      } else {
+        sendSystemMsgToEntry(entry, `⚠️ 이미 가입된 파티가 있습니다.`, 'log-hit');
+        return;
+      }
     }
     let party = getPartyByCharId(inviterEntry.charId);
     if (!party) {
@@ -3962,17 +4177,91 @@ function handleClientWsPacket(conn, msg) {
     return;
   }
 
-  // [8-D] 현재 지역 에이전트/플레이어 실시간 목록 조회 (파티창 오픈 시 호출)
+  // [8-D] 현재 존(Zone) 에이전트/플레이어 실시간 목록 조회 (파티창 오픈 및 존 이동 시 호출)
   if (msg.type === 'REGION_PLAYERS_REQ' && msg.charId) {
     const entry = activeCharSockets.get(msg.charId);
     if (!entry) return;
+    entry.lastSeen = Date.now();
+    if (msg.mapKey) entry.mapKey = normalizeMapKey(msg.mapKey);
+    if (msg.regionKey) entry.regionKey = String(msg.regionKey).split('_')[0] || entry.regionKey;
+    if (entry.player) {
+      if (typeof msg.x === 'number' && !isNaN(msg.x)) entry.player.x = Math.round(msg.x);
+      if (typeof msg.y === 'number' && !isNaN(msg.y)) entry.player.y = Math.round(msg.y);
+    }
+
     const myRegion = String(msg.regionKey || entry.regionKey || entry.mapKey || 'R01').split('_')[0];
+    const myMapKey = normalizeMapKey(msg.mapKey || entry.mapKey || `${myRegion}_sub1`);
+    const myX = Number(msg.x ?? entry.player?.x) || 2000;
+    const myY = Number(msg.y ?? entry.player?.y) || 14250;
+    const myZone = resolveServerEntityZone(myRegion, myMapKey, myX, myY);
+
+    // 현재 존(Zone)에 AI 모험가가 부족할 경우 같은 지역/맵의 솔로 AI 에이전트 일부를 해당 존 사냥터로 자연스럽게 배치
+    let sameZoneCount = 0;
+    const sameRegionSoloAIs = [];
+    activeCharSockets.forEach(other => {
+      if (!other || !other.player || other.charId === entry.charId) return;
+      if (other.gmInvisible && !entry.isAdmin) return;
+      const oReg = String(other.regionKey || other.mapKey || 'R01').split('_')[0];
+      if (oReg !== myRegion) return;
+      const oZone = resolveServerEntityZone(oReg, other.mapKey, other.player.x, other.player.y);
+      if (oZone.zoneKey === myZone.zoneKey) {
+        sameZoneCount++;
+      } else if (isAIEntry(other) && !getPartyByCharId(other.charId)) {
+        sameRegionSoloAIs.push(other);
+      }
+    });
+
+    if (sameZoneCount < 3 && sameRegionSoloAIs.length > 0) {
+      const mapData = HardcodedMapDB[myMapKey] || {};
+      let anchorX = myX;
+      let anchorY = myY;
+      if (myZone.zoneType === 'town') {
+        const tPt = mapData.spawn || { x: 2000, y: 14250 };
+        anchorX = tPt.x;
+        anchorY = Math.max(1200, tPt.y - 920);
+      } else if (myZone.zoneType === 'field') {
+        const fPt = mapData.fieldCenterPos || mapData.fieldPos || { x: 2000, y: 9200 };
+        anchorX = fPt.x;
+        anchorY = fPt.y;
+      } else if (myZone.zoneType === 'dungeon_entrance') {
+        const dPt = mapData.dungeonEntrance || { x: 2000, y: 5200 };
+        anchorX = dPt.x;
+        anchorY = dPt.y + 460;
+      } else if (myZone.zoneType === 'boss_camp') {
+        const bPt = mapData.bossWarpPos || mapData.bossPos || { x: 2000, y: 2000 };
+        anchorX = bPt.x;
+        anchorY = bPt.y + 380;
+      } else if (myZone.zoneType === 'dungeon') {
+        anchorX = 1200;
+        anchorY = 1200;
+      }
+      const needCnt = Math.min(3 - sameZoneCount, sameRegionSoloAIs.length);
+      for (let i = 0; i < needCnt; i++) {
+        const aiEnt = sameRegionSoloAIs[i];
+        aiEnt.mapKey = myMapKey;
+        aiEnt.regionKey = myRegion;
+        aiEnt.player.mapKey = myMapKey;
+        aiEnt.player.regionKey = myRegion;
+        aiEnt.player.x = Math.round(anchorX + ((i - 1) * 180));
+        aiEnt.player.y = Math.round(anchorY + (((i % 2) * 2 - 1) * 140));
+      }
+    }
+
     const list = [];
     activeCharSockets.forEach(other => {
       if (!other || !other.player || other.charId === entry.charId) return;
       if (other.gmInvisible && !entry.isAdmin) return;
       const oReg = String(other.regionKey || other.mapKey || 'R01').split('_')[0];
       if (oReg !== myRegion) return;
+      const ox = Math.round(other.player.x || 2000);
+      const oy = Math.round(other.player.y || 14250);
+      const oMapKey = normalizeMapKey(other.mapKey || `${oReg}_sub1`);
+      const oZone = resolveServerEntityZone(oReg, oMapKey, ox, oy);
+      // 해당 지역 전체가 아니라 플레이어가 위치한 '해당 존(Zone)'에 있는 AI 및 유저만 필터링!
+      if (oZone.zoneKey !== myZone.zoneKey) return;
+
+      const oMapInst = worldMaps.get(oMapKey);
+      const inSafe = oMapInst ? isInsideServerSafeZone(oMapInst, ox, oy) : false;
       const oParty = getPartyByCharId(other.charId);
       const ldrEntry = oParty ? activeCharSockets.get(oParty.leaderCharId) : null;
       list.push({
@@ -3980,10 +4269,13 @@ function handleClientWsPacket(conn, msg) {
         name: other.player.name || '모험가',
         class: other.player.class || 'knight',
         level: other.player.level || 1,
-        x: Math.round(other.player.x || 2000),
-        y: Math.round(other.player.y || 14250),
-        mapKey: other.mapKey || `${myRegion}_sub1`,
+        x: ox,
+        y: oy,
+        mapKey: oMapKey,
         regionKey: oReg,
+        zoneKey: oZone.zoneKey,
+        zoneName: oZone.zoneName,
+        inSafeZone: inSafe,
         isAI: isAIEntry(other),
         partyId: oParty ? oParty.partyId : null,
         isPartyLeader: Boolean(oParty && oParty.leaderCharId === other.charId),
@@ -3996,31 +4288,57 @@ function handleClientWsPacket(conn, msg) {
     sendWsMessage(conn, {
       type: 'REGION_PLAYERS_RESP',
       regionKey: myRegion,
+      mapKey: myMapKey,
+      zoneKey: myZone.zoneKey,
+      zoneName: myZone.zoneName,
       players: list
     });
     return;
   }
 
-  // [8-E] 이미 결성된 파티에 즉시 합류 요청 (PARTY_JOIN_EXISTING_REQ)
-  if (msg.type === 'PARTY_JOIN_EXISTING_REQ' && msg.charId && (msg.targetCharId || msg.targetName)) {
+  // [8-D2] 파티창에서 특정 캐릭터(charId 또는 이름) 클릭하여 즉시 파티 초대/합류 요청 (PARTY_INVITE_REQ)
+  if (msg.type === 'PARTY_INVITE_REQ' && msg.charId && (msg.targetCharId || msg.targetName)) {
     const entry = activeCharSockets.get(msg.charId);
     if (!entry || !entry.player) return;
-    const targetEntry = msg.targetCharId
-      ? activeCharSockets.get(msg.targetCharId)
-      : findOnlineEntryByName(msg.targetName);
+    entry.lastSeen = Date.now();
+    if (msg.mapKey) entry.mapKey = normalizeMapKey(msg.mapKey);
+    if (msg.regionKey) entry.regionKey = String(msg.regionKey).split('_')[0] || entry.regionKey;
+    const targetEntry = (msg.targetCharId && activeCharSockets.get(msg.targetCharId))
+      || findOnlineEntryByName(msg.targetName, entry.regionKey, entry.mapKey);
+    if (!targetEntry || !targetEntry.player) {
+      sendSystemMsgToEntry(entry, `⚠️ '${msg.targetName || '대상'}' 캐릭터가 현재 접속 중이지 않습니다.`, 'log-hit');
+      return;
+    }
+    entry._pendingInviteTargetCharId = targetEntry.charId;
+    handleChatCommand(entry, `/파티초대 ${targetEntry.player.name}`);
+    return;
+  }
+
+  // [8-E] 이미 결성된 파티에 즉시 합류 요청 (PARTY_JOIN_EXISTING_REQ)
+  if (msg.type === 'PARTY_JOIN_EXISTING_REQ' && msg.charId && (msg.targetCharId || msg.targetName || msg.targetPartyId)) {
+    const entry = activeCharSockets.get(msg.charId);
+    if (!entry || !entry.player) return;
+    entry.lastSeen = Date.now();
+    if (msg.mapKey) entry.mapKey = normalizeMapKey(msg.mapKey);
+    if (msg.regionKey) entry.regionKey = String(msg.regionKey).split('_')[0] || entry.regionKey;
+    const targetEntry = (msg.targetCharId && activeCharSockets.get(msg.targetCharId))
+      || (msg.targetName && findOnlineEntryByName(msg.targetName, entry.regionKey, entry.mapKey))
+      || (msg.targetPartyId && serverParties.get(msg.targetPartyId) ? activeCharSockets.get(serverParties.get(msg.targetPartyId).leaderCharId) : null);
     if (!targetEntry || !targetEntry.player) {
       sendSystemMsgToEntry(entry, `⚠️ 대상 캐릭터가 현재 접속 중이지 않습니다.`, 'log-hit');
       return;
     }
-    const targetParty = getPartyByCharId(targetEntry.charId);
+    const targetParty = getPartyByCharId(targetEntry.charId) || (msg.targetPartyId ? serverParties.get(msg.targetPartyId) : null);
     if (!targetParty) {
       // 대상이 아직 파티가 없으면 일반 파티 초대로 연결
+      entry._pendingInviteTargetCharId = targetEntry.charId;
       handleChatCommand(entry, `/파티초대 ${targetEntry.player.name}`);
       return;
     }
     const myParty = getPartyByCharId(entry.charId);
     if (myParty && myParty.partyId === targetParty.partyId) {
       sendSystemMsgToEntry(entry, `ℹ️ 이미 해당 파티에 소속되어 있습니다.`, 'log-sys');
+      broadcastPartyUpdate(targetParty);
       return;
     }
     if (myParty) {
@@ -4057,9 +4375,12 @@ function handleClientWsPacket(conn, msg) {
   if (msg.type === 'TRADE_REQUEST' && msg.charId) {
     const entry = activeCharSockets.get(msg.charId);
     if (!entry || !entry.player) return;
-    const targetEntry = msg.targetCharId
-      ? activeCharSockets.get(msg.targetCharId)
-      : findOnlineEntryByName(msg.targetName);
+    entry.lastSeen = Date.now();
+    if (msg.mapKey) entry.mapKey = normalizeMapKey(msg.mapKey);
+    if (msg.regionKey) entry.regionKey = String(msg.regionKey).split('_')[0] || entry.regionKey;
+
+    const targetEntry = (msg.targetCharId && activeCharSockets.get(msg.targetCharId))
+      || findOnlineEntryByName(msg.targetName, entry.regionKey, entry.mapKey);
     if (!targetEntry || !targetEntry.player || (targetEntry.gmInvisible && !entry.isAdmin)) {
       sendSystemMsgToEntry(entry, `⚠️ 거래 대상이 현재 접속 중이지 않습니다.`, 'log-hit');
       return;
@@ -4071,16 +4392,33 @@ function handleClientWsPacket(conn, msg) {
     const myReg = String(entry.regionKey || entry.mapKey || 'R01').split('_')[0];
     const targetReg = String(targetEntry.regionKey || targetEntry.mapKey || 'R01').split('_')[0];
     if (myReg !== targetReg) {
-      sendSystemMsgToEntry(entry, `⚠️ '${targetEntry.player.name}'님과 같은 지역에 있어야 거래할 수 있습니다.`, 'log-hit');
-      return;
+      if (isAIEntry(targetEntry) && !isAIEntry(entry)) {
+        targetEntry.regionKey = myReg;
+        targetEntry.mapKey = normalizeMapKey(entry.mapKey);
+      } else {
+        sendSystemMsgToEntry(entry, `⚠️ '${targetEntry.player.name}'님과 같은 지역에 있어야 거래할 수 있습니다.`, 'log-hit');
+        return;
+      }
     }
     if (activeCharTradeMap.has(entry.charId)) {
-      sendSystemMsgToEntry(entry, `⚠️ 이미 진행 중인 거래가 있습니다.`, 'log-hit');
-      return;
+      const oldTid = activeCharTradeMap.get(entry.charId);
+      const oldTrd = oldTid ? serverTrades.get(oldTid) : null;
+      if (!oldTrd || (oldTrd.state === 'INVITED' && Date.now() - oldTrd.createdAt > 15000)) {
+        cancelActiveTradeForChar(entry.charId, '이전 거래 요청 시간이 만료되어 초기화되었습니다.');
+      } else {
+        sendSystemMsgToEntry(entry, `⚠️ 이미 진행 중인 거래가 있습니다.`, 'log-hit');
+        return;
+      }
     }
     if (activeCharTradeMap.has(targetEntry.charId)) {
-      sendSystemMsgToEntry(entry, `⚠️ '${targetEntry.player.name}'님은 현재 다른 거래를 진행 중입니다.`, 'log-hit');
-      return;
+      const oldTid = activeCharTradeMap.get(targetEntry.charId);
+      const oldTrd = oldTid ? serverTrades.get(oldTid) : null;
+      if (!oldTrd || (oldTrd.state === 'INVITED' && Date.now() - oldTrd.createdAt > 15000)) {
+        cancelActiveTradeForChar(targetEntry.charId, '이전 거래 요청 시간이 만료되어 초기화되었습니다.');
+      } else {
+        sendSystemMsgToEntry(entry, `⚠️ '${targetEntry.player.name}'님은 현재 다른 거래를 진행 중입니다.`, 'log-hit');
+        return;
+      }
     }
 
     const tradeId = `trd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -4096,8 +4434,8 @@ function handleClientWsPacket(conn, msg) {
         class: entry.player.class || 'knight',
         items: [],
         gold: 0,
-        freeSlots: 10,
-        currentGold: entry.player.gold || 0,
+        freeSlots: 20,
+        currentGold: Math.max(0, Number(entry.player.gold) || 0),
         locked: false,
         confirmed: false
       },
@@ -4108,8 +4446,8 @@ function handleClientWsPacket(conn, msg) {
         class: targetEntry.player.class || 'knight',
         items: [],
         gold: 0,
-        freeSlots: 10,
-        currentGold: targetEntry.player.gold || 0,
+        freeSlots: 20,
+        currentGold: Math.max(0, Number(targetEntry.player.gold) || 0),
         locked: false,
         confirmed: false
       }
@@ -4129,12 +4467,36 @@ function handleClientWsPacket(conn, msg) {
     sendWsMessage(targetEntry.conn, {
       type: 'TRADE_INVITE_RECEIVED',
       tradeId,
+      inviterCharId: entry.charId,
+      inviterName: entry.player.name || '모험가',
+      inviterLevel: entry.player.level || 1,
+      inviterClass: entry.player.class || 'knight',
       requesterCharId: entry.charId,
       requesterName: entry.player.name || '모험가',
       requesterLevel: entry.player.level || 1,
       requesterClass: entry.player.class || 'knight'
     });
     sendSystemMsgToEntry(entry, `🤝 '${targetEntry.player.name}'님에게 거래를 신청했습니다. (응답 대기 중)`, 'log-sys');
+
+    // AI 대상일 경우 600ms 후에도 INVITED 상태면 서버에서 자동 수락 폴백 처리
+    if (isAIEntry(targetEntry)) {
+      setTimeout(() => {
+        const curTrd = serverTrades.get(tradeId);
+        if (curTrd && curTrd.state === 'INVITED') {
+          curTrd.state = 'OPEN';
+          curTrd.offerVersion = 1;
+          broadcastTradeSync(curTrd);
+        }
+      }, 600);
+    }
+
+    // 16초 무응답 시 서버 세션 자동 만료 정리
+    setTimeout(() => {
+      const curTrd = serverTrades.get(tradeId);
+      if (curTrd && curTrd.state === 'INVITED') {
+        cancelActiveTradeForChar(entry.charId, '거래 요청 응답 시간이 만료되었습니다.');
+      }
+    }, 16000);
     return;
   }
 
@@ -4170,15 +4532,20 @@ function handleClientWsPacket(conn, msg) {
       return;
     }
 
-    const curGold = Math.max(0, Math.min(999999999, Math.floor(Number(msg.currentGold) || 0)));
+    const callerEntry = activeCharSockets.get(msg.charId);
+    const fallbackGold = Math.max(mySide.currentGold || 0, Number(callerEntry?.player?.gold) || 0, Number(msg.gold) || 0);
+    const curGold = Math.max(0, Math.min(999999999, Math.floor(msg.currentGold !== undefined ? Number(msg.currentGold) : fallbackGold)));
     const offerGold = Math.max(0, Math.min(curGold, Math.floor(Number(msg.gold) || 0)));
     const cleanItems = sanitizeTradeOfferItems(msg.items);
-    const freeSlots = Math.max(0, Math.min(100, Math.floor(Number(msg.freeSlots) ?? 10)));
+    const freeSlots = Math.max(0, Math.min(100, Math.floor(Number(msg.freeSlots ?? mySide.freeSlots ?? 20))));
 
     mySide.items = cleanItems;
     mySide.gold = offerGold;
     mySide.currentGold = curGold;
     mySide.freeSlots = freeSlots;
+    if (callerEntry?.player && msg.currentGold !== undefined) {
+      callerEntry.player.gold = curGold;
+    }
 
     // 🛡️ 사기/복사 방지 핵심: 어느 한쪽이라도 물품/골드를 변경하면 양측 모두 잠금(locked) 및 확정(confirmed) 즉시 해제!
     trade.offerVersion++;
@@ -4199,13 +4566,17 @@ function handleClientWsPacket(conn, msg) {
     if (!isA && !isB) return;
 
     const mySide = isA ? trade.playerA : trade.playerB;
+    const otherSide = isA ? trade.playerB : trade.playerA;
     const wantLock = Boolean(msg.locked);
 
     if (wantLock) {
-      const curGold = Math.max(0, Math.min(999999999, Math.floor(Number(msg.currentGold) || 0)));
-      const offerGold = Math.max(0, Math.min(curGold, Math.floor(Number(msg.gold) || 0)));
-      const cleanItems = sanitizeTradeOfferItems(msg.items);
-      const freeSlots = Math.max(0, Math.min(100, Math.floor(Number(msg.freeSlots) ?? 10)));
+      const callerEntry = activeCharSockets.get(msg.charId);
+      const fallbackGold = Math.max(mySide.currentGold || 0, Number(callerEntry?.player?.gold) || 0, Number(msg.gold ?? mySide.gold) || 0);
+      const curGold = Math.max(0, Math.min(999999999, Math.floor(msg.currentGold !== undefined ? Number(msg.currentGold) : fallbackGold)));
+      const rawOfferGold = msg.gold !== undefined ? Number(msg.gold) : mySide.gold;
+      const offerGold = Math.max(0, Math.min(curGold, Math.floor(rawOfferGold || 0)));
+      const cleanItems = msg.items !== undefined ? sanitizeTradeOfferItems(msg.items) : (mySide.items || []);
+      const freeSlots = Math.max(0, Math.min(100, Math.floor(Number(msg.freeSlots ?? mySide.freeSlots ?? 20))));
       mySide.items = cleanItems;
       mySide.gold = offerGold;
       mySide.currentGold = curGold;
@@ -4219,6 +4590,21 @@ function handleClientWsPacket(conn, msg) {
     }
 
     broadcastTradeSync(trade);
+
+    // 상대방이 AI 에이전트이고 내가 잠금 완료했을 때 AI 자동 잠금 폴백
+    const otherEntry = activeCharSockets.get(otherSide.charId);
+    if (wantLock && otherEntry && isAIEntry(otherEntry) && !otherSide.locked) {
+      const lockVer = trade.offerVersion;
+      setTimeout(() => {
+        const curTrd = serverTrades.get(trade.tradeId);
+        if (!curTrd || curTrd.state !== 'OPEN' || curTrd.offerVersion !== lockVer) return;
+        if (mySide.locked && !otherSide.locked) {
+          otherSide.locked = true;
+          otherSide.freeSlots = Math.max(20, otherSide.freeSlots || 20);
+          broadcastTradeSync(curTrd);
+        }
+      }, 650);
+    }
     return;
   }
 
@@ -4241,7 +4627,14 @@ function handleClientWsPacket(conn, msg) {
     if (!isA && !isB) return;
 
     const mySide = isA ? trade.playerA : trade.playerB;
+    const otherSide = isA ? trade.playerB : trade.playerA;
     mySide.confirmed = true;
+
+    // 상대방이 AI 에이전트면 즉시 함께 확정 처리
+    const otherEntry = activeCharSockets.get(otherSide.charId);
+    if (otherEntry && isAIEntry(otherEntry) && otherSide.locked && !otherSide.confirmed) {
+      otherSide.confirmed = true;
+    }
 
     if (!trade.playerA.confirmed || !trade.playerB.confirmed) {
       broadcastTradeSync(trade);
@@ -4280,7 +4673,14 @@ function handleClientWsPacket(conn, msg) {
     const tradeTxId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     trade.state = 'COMPLETED';
 
-    // A에게 B의 물품/골드 지급 & A의 물품/골드 차감 명령 전송
+    if (entryA.player) {
+      entryA.player.gold = Math.max(0, (Number(entryA.player.gold) || trade.playerA.currentGold || 0) - trade.playerA.gold + trade.playerB.gold);
+    }
+    if (entryB.player) {
+      entryB.player.gold = Math.max(0, (Number(entryB.player.gold) || trade.playerB.currentGold || 0) - trade.playerB.gold + trade.playerA.gold);
+    }
+
+    // A에게 B의 물품/골드 지급 & A의 물품/골드 차감 명령 전송 (클라이언트 myOffer/partnerOffer 스키마 + AI give/receive 스키마 동시 포함)
     sendWsMessage(entryA.conn, {
       type: 'TRADE_COMMIT_EXECUTE',
       tradeId: trade.tradeId,
@@ -4289,7 +4689,15 @@ function handleClientWsPacket(conn, msg) {
       giveItems: trade.playerA.items,
       giveGold: trade.playerA.gold,
       receiveItems: trade.playerB.items,
-      receiveGold: trade.playerB.gold
+      receiveGold: trade.playerB.gold,
+      myOffer: {
+        items: trade.playerA.items,
+        gold: trade.playerA.gold
+      },
+      partnerOffer: {
+        items: trade.playerB.items,
+        gold: trade.playerB.gold
+      }
     });
 
     // B에게 A의 물품/골드 지급 & B의 물품/골드 차감 명령 전송
@@ -4301,7 +4709,15 @@ function handleClientWsPacket(conn, msg) {
       giveItems: trade.playerB.items,
       giveGold: trade.playerB.gold,
       receiveItems: trade.playerA.items,
-      receiveGold: trade.playerA.gold
+      receiveGold: trade.playerA.gold,
+      myOffer: {
+        items: trade.playerB.items,
+        gold: trade.playerB.gold
+      },
+      partnerOffer: {
+        items: trade.playerA.items,
+        gold: trade.playerA.gold
+      }
     });
     return;
   }
@@ -4317,6 +4733,13 @@ function handleClientWsPacket(conn, msg) {
     const entry = activeCharSockets.get(msg.charId);
     const text = String(msg.text || '').trim();
     if (!text) return;
+
+    if (entry) {
+      entry.lastSeen = Date.now();
+      if (msg.mapKey) entry.mapKey = normalizeMapKey(msg.mapKey);
+      if (msg.regionKey) entry.regionKey = String(msg.regionKey).split('_')[0] || entry.regionKey;
+      if (msg.targetCharId) entry._pendingInviteTargetCharId = msg.targetCharId;
+    }
 
     if (text.startsWith('/') && entry) {
       handleChatCommand(entry, text);

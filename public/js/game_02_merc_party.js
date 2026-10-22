@@ -1457,14 +1457,64 @@ window.onPartyHudCancel = function() {
 
 window.regionPlayersCache = [];
 window._selectedPartyWindowCharId = null;
+window._lastClientZoneKey = null;
+
+window.resolveClientZoneInfo = function(rawRegionKey, rawMapKey, x, y) {
+  const regId = String(rawRegionKey || rawMapKey || currentRegionKey || 'R01').split('_')[0] || 'R01';
+  const regObj = (GameDB?.Regions || []).find(r => r.id === regId) || (GameDB?.Regions || [])[0] || {
+    id: regId, name: regId, sub1: '마을', sub2: '필드', sub3: '던전 입구', sub4: '보스 성역'
+  };
+  const mKey = String(rawMapKey || currentMapKey || `${regId}_sub1`).trim();
+  if (mKey.endsWith('_dungeon') || mKey.endsWith('_sub3')) {
+    return {
+      regionKey: regId,
+      mapKey: `${regId}_dungeon`,
+      zoneType: 'dungeon',
+      zoneKey: `${regId}_dungeon`,
+      zoneName: `${regObj.sub3 || '던전'} [던전]`
+    };
+  }
+  const normMap = `${regId}_sub1`;
+  const mapData = (typeof HardcodedMapDB !== 'undefined' && HardcodedMapDB[normMap]) ? HardcodedMapDB[normMap] : {};
+  const px = Number(x ?? player?.x) || (mapData.spawn?.x ?? 2000);
+  const py = Number(y ?? player?.y) || (mapData.spawn?.y ?? 14250);
+  const townPt = mapData.spawn || { x: 2000, y: 14250 };
+  const fieldPt = mapData.fieldCenterPos || mapData.fieldPos || { x: 2000, y: 9200 };
+  const dungPt = mapData.dungeonEntrance || { x: 2000, y: 5200 };
+  const bossPt = mapData.bossPos || mapData.bossWarpPos || { x: 2000, y: 1850 };
+  const anchors = [
+    { type: 'town', x: townPt.x, y: townPt.y, name: regObj.sub1 || '마을' },
+    { type: 'field', x: fieldPt.x, y: fieldPt.y, name: regObj.sub2 || '필드' },
+    { type: 'dungeon_entrance', x: dungPt.x, y: dungPt.y, name: regObj.sub3 || '던전 입구' },
+    { type: 'boss_camp', x: bossPt.x, y: bossPt.y, name: regObj.sub4 || '보스 성역' }
+  ];
+  let best = anchors[0];
+  let bestDist = Infinity;
+  for (const a of anchors) {
+    const d = Math.hypot(px - a.x, py - a.y);
+    if (d < bestDist) {
+      bestDist = d;
+      best = a;
+    }
+  }
+  return {
+    regionKey: regId,
+    mapKey: normMap,
+    zoneType: best.type,
+    zoneKey: `${regId}_${best.type}`,
+    zoneName: best.name
+  };
+};
 
 window.requestRegionPlayersRefresh = function() {
-  if (typeof sendCentralWsPacket === 'function') {
+  if (typeof sendCentralWsPacket === 'function' && activeCharacterId) {
     sendCentralWsPacket({
       type: 'REGION_PLAYERS_REQ',
       charId: activeCharacterId,
       regionKey: currentRegionKey,
-      mapKey: currentMapKey
+      mapKey: currentMapKey,
+      x: Math.round(player?.x || 2000),
+      y: Math.round(player?.y || 14250)
     });
   }
 };
@@ -1513,25 +1563,28 @@ window.togglePartyWindowCharSelect = function(charId, ev) {
   window.renderPartyControlModal();
 };
 
-window.requestQuickPartyWith = function(targetName) {
-  if (!targetName) return;
+window.requestQuickPartyWith = function(targetName, targetCharId = null) {
+  if (!targetName && !targetCharId) return;
   sendCentralWsPacket({
-    type: 'CHAT_MSG',
+    type: 'PARTY_INVITE_REQ',
     charId: activeCharacterId,
+    targetCharId: targetCharId || null,
+    targetName: targetName || null,
     mapKey: currentMapKey,
-    regionKey: currentRegionKey,
-    sender: player.name,
-    text: `/파티초대 ${targetName}`
+    regionKey: currentRegionKey
   });
 };
 
-window.requestJoinExistingParty = function(targetCharId, targetPartyId = null) {
-  if (!targetCharId && !targetPartyId) return;
+window.requestJoinExistingParty = function(targetCharId, targetPartyId = null, targetName = null) {
+  if (!targetCharId && !targetPartyId && !targetName) return;
   sendCentralWsPacket({
     type: 'PARTY_JOIN_EXISTING_REQ',
     charId: activeCharacterId,
     targetCharId: targetCharId || null,
-    targetPartyId: targetPartyId || null
+    targetPartyId: targetPartyId || null,
+    targetName: targetName || null,
+    mapKey: currentMapKey,
+    regionKey: currentRegionKey
   });
 };
 
@@ -1605,14 +1658,29 @@ window.requestPartyDelegate = function(targetCharId) {
 };
 
 window.getMergedRegionCandidates = function() {
+  const myZone = window.resolveClientZoneInfo(currentRegionKey, currentMapKey, player?.x, player?.y);
   const map = new Map();
   (window.regionPlayersCache || []).forEach(p => {
     if (p && p.charId && p.charId !== activeCharacterId) {
-      map.set(p.charId, { ...p });
+      const pZone = p.zoneKey
+        ? { zoneKey: p.zoneKey, zoneName: p.zoneName || myZone.zoneName }
+        : window.resolveClientZoneInfo(p.regionKey || currentRegionKey, p.mapKey || currentMapKey, p.x, p.y);
+      if (pZone.zoneKey === myZone.zoneKey) {
+        map.set(p.charId, {
+          ...p,
+          zoneKey: pZone.zoneKey,
+          zoneName: pZone.zoneName
+        });
+      }
     }
   });
   (window.otherPlayers || []).forEach(op => {
     if (op && op.charId && op.charId !== activeCharacterId && !op.gmInvisible) {
+      const opZone = window.resolveClientZoneInfo(currentRegionKey, currentMapKey, op.x, op.y);
+      if (opZone.zoneKey !== myZone.zoneKey) {
+        map.delete(op.charId);
+        return;
+      }
       const prev = map.get(op.charId) || {};
       map.set(op.charId, {
         ...prev,
@@ -1620,11 +1688,13 @@ window.getMergedRegionCandidates = function() {
         name: op.name || prev.name || '모험가',
         level: op.level || prev.level || 1,
         class: op.class || prev.class || 'knight',
-        isAI: Boolean(op.isAI ?? prev.isAI ?? String(op.charId).startsWith('ai_char_')),
+        isAI: Boolean(op.isAI ?? prev.isAI ?? String(op.charId).startsWith('a1000000-') ?? String(op.charId).startsWith('ai_char_')),
         partyId: op.partyId !== undefined ? op.partyId : prev.partyId,
         isPartyLeader: Boolean(op.isPartyLeader ?? prev.isPartyLeader),
         partyMemberCount: op.partyMemberCount || prev.partyMemberCount || (op.partyId ? 2 : 0),
         partyMax: 5,
+        zoneKey: opZone.zoneKey,
+        zoneName: opZone.zoneName,
         inSafeZone: typeof isInsideSafeZone === 'function' ? isInsideSafeZone(op.x, op.y) : Boolean(prev.inSafeZone),
         x: op.x,
         y: op.y
@@ -1647,6 +1717,7 @@ window.renderPartyControlModal = function() {
   if (!modal) return;
 
   const regObj = (GameDB.Regions || []).find(r => r.id === currentRegionKey) || GameDB.Regions[0];
+  const myZone = window.resolveClientZoneInfo(currentRegionKey, currentMapKey, player?.x, player?.y);
   const candidates = window.getMergedRegionCandidates();
   const classKor = { knight: '전사', ranger: '궁수', wizard: '마법사' };
   const escName = (s) => String(s || '').replace(/'/g, "\'");
@@ -1659,7 +1730,7 @@ window.renderPartyControlModal = function() {
         const isSelected = window._selectedPartyWindowCharId === op.charId;
         const clsLabel = classKor[op.class] || '모험가';
         const aiTag = op.isAI ? `<span style="color:#38bdf8; font-size:8.5px; background:rgba(2,132,199,0.2); border:1px solid rgba(56,189,248,0.4); padding:0 3px; border-radius:3px;">AI</span>` : `<span style="color:#4ade80; font-size:8.5px; background:rgba(22,163,74,0.2); border:1px solid rgba(74,222,128,0.4); padding:0 3px; border-radius:3px;">유저</span>`;
-        const safeTag = op.inSafeZone ? `<span style="color:#86efac; font-size:8.5px;">[🏡마을]</span>` : `<span style="color:#fca5a5; font-size:8.5px;">[⚔️필드]</span>`;
+        const safeTag = op.inSafeZone ? `<span style="color:#86efac; font-size:8.5px;">[🏡안전지대]</span>` : `<span style="color:#fca5a5; font-size:8.5px;">[⚔️${op.zoneName || myZone.zoneName}]</span>`;
         const ptyBadge = hasPty
           ? `<span style="color:#fde047; font-size:8.5px; font-weight:bold;">[${op.isPartyLeader ? '👑파티장' : '🎗️파티중'} ${ptyCount}/5]</span>`
           : `<span style="color:#9ca3af; font-size:8.5px;">[솔로]</span>`;
@@ -1679,9 +1750,9 @@ window.renderPartyControlModal = function() {
             ${isSelected ? `
               <div style="display:flex; flex-wrap:wrap; gap:4px; padding-top:4px; border-top:1px dashed #334155;">
                 ${hasPty && !isFull ? `
-                  <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#065f46; border-color:#34d399;" onclick="requestJoinExistingParty('${op.charId}', '${op.partyId}')">🎗️ 이 파티에 합류</button>
+                  <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#065f46; border-color:#34d399;" onclick="requestJoinExistingParty('${op.charId}', '${op.partyId}', '${escName(op.name)}')">🎗️ 이 파티에 합류</button>
                 ` : ''}
-                <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#0284c7; border-color:#38bdf8;" onclick="requestQuickPartyWith('${escName(op.name)}')">📩 ${hasPty ? '파티요청/합류' : '파티요청(초대)'}</button>
+                <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#0284c7; border-color:#38bdf8;" onclick="requestQuickPartyWith('${escName(op.name)}', '${op.charId}')">📩 ${hasPty ? '파티요청/합류' : '파티요청(초대)'}</button>
                 <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#b45309; border-color:#facc15;" onclick="requestTradeWithPlayer('${op.charId}', '${escName(op.name)}')">🤝 아이템/골드 거래</button>
                 <button type="button" class="shop-buy-btn" style="padding:4px 6px; font-size:9.5px; background:#4c1d95; border-color:#c084fc;" onclick="startQuickWhisperTo('${escName(op.name)}')">💌 귓속말</button>
               </div>
@@ -1689,7 +1760,7 @@ window.renderPartyControlModal = function() {
           </div>
         `;
       }).join('')
-    : `<div style="color:#9ca3af; font-size:10px; text-align:center; padding:10px;">현재 지역(${regObj.name})에 파티 가능한 다른 모험가가 없습니다.</div>`;
+    : `<div style="color:#9ca3af; font-size:10px; text-align:center; padding:10px;">현재 존(${myZone.zoneName})에 파티 가능한 다른 모험가가 없습니다.</div>`;
 
   const p = window.partyState;
   const isMeLeader = Boolean(p && p.leaderCharId === activeCharacterId);
@@ -1765,14 +1836,14 @@ window.renderPartyControlModal = function() {
 
   modal.innerHTML = `
     <div class="modal-header drag-handle" style="background:linear-gradient(90deg, #0c4a6e, #1e293b, #0c4a6e); border-bottom-color:#38bdf8;">
-      🎗️ ${regObj.name} 파티 · 모험가 관리 <button class="help-q-btn" onclick="showHelpModal('party', event)">?</button>
+      🎗️ ${regObj.name} [${myZone.zoneName}] 파티 관리 <button class="help-q-btn" onclick="showHelpModal('party', event)">?</button>
     </div>
     <button class="close-x-btn" onclick="closePartyControlModal()">✖</button>
     <div style="display:flex; flex-direction:column; gap:6px; padding:4px; font-size:10.5px; overflow-y:auto; max-height:68dvh;">
       ${myPartySectionHtml}
       <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-          <span style="color:#fde047; font-weight:bold;">📍 ${regObj.name} 파티 가능 모험가 (${candidates.length}명)</span>
+          <span style="color:#fde047; font-weight:bold;">📍 현재 존(${myZone.zoneName}) 파티 가능 모험가 (${candidates.length}명)</span>
           <button type="button" class="shop-buy-btn" style="padding:2px 6px; font-size:9px; background:#1e293b; border-color:#64748b;" onclick="requestRegionPlayersRefresh()">🔄 새로고침</button>
         </div>
         <div style="color:#93c5fd; font-size:9px; margin-bottom:4px;">💡 <b>이름을 터치</b>하면 <b>[파티요청]</b>, <b>[기존 파티 합류]</b>, <b>[아이템/골드 거래]</b>를 바로 진행할 수 있습니다!</div>
@@ -1876,6 +1947,17 @@ let _lastRegHudTxt = '';
 let _lastPartyHudHtml = '';
 
 window.updateMercHUD = function() {
+  const curZone = window.resolveClientZoneInfo ? window.resolveClientZoneInfo(currentRegionKey, currentMapKey, player?.x, player?.y) : null;
+  if (curZone && window._lastClientZoneKey !== curZone.zoneKey) {
+    window._lastClientZoneKey = curZone.zoneKey;
+    window.regionPlayersCache = (window.regionPlayersCache || []).filter(p => p && p.zoneKey === curZone.zoneKey);
+    window.requestRegionPlayersRefresh?.();
+    const pModal = document.getElementById('party-control-modal');
+    if (pModal && !pModal.classList.contains('hidden')) {
+      window.renderPartyControlModal?.();
+    }
+  }
+
   const regEl = document.getElementById('current-region-hud');
   if (regEl) {
     const reg = GameDB.Regions.find(r => r.id === currentRegionKey) || GameDB.Regions[0];
@@ -2002,7 +2084,7 @@ window.updateMercHUD = function() {
   }
 
   const nextPartyHtml = cardsHtml.join('');
-  if (_lastPartyHudHtml !== nextPartyHtml) {
+  if (_lastPartyHudHtml !== nextPartyHtml || pHud.innerHTML === '') {
     _lastPartyHudHtml = nextPartyHtml;
     pHud.innerHTML = nextPartyHtml;
   }

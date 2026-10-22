@@ -1210,6 +1210,10 @@ function handleCentralServerPacket(msg) {
       player.isPartyLeader = Boolean(window.partyState && window.partyState.leaderCharId === activeCharacterId);
     }
     window.updateMercHUD?.();
+    const pHud = document.getElementById('party-hud');
+    if (pHud && window.partyState && Array.isArray(window.partyState.members) && window.partyState.members.length > 0) {
+      pHud.style.display = 'flex';
+    }
     const pModal = document.getElementById('party-control-modal');
     if (pModal && !pModal.classList.contains('hidden')) {
       window.renderPartyControlModal?.();
@@ -1352,6 +1356,7 @@ function handleCentralServerPacket(msg) {
         player.partyId = window.partyState ? window.partyState.partyId : null;
         player.isPartyLeader = Boolean(window.partyState && window.partyState.leaderCharId === activeCharacterId);
       }
+      window.updateMercHUD?.();
     }
 
     // A. 초경량 튜플 패킷(msg.ms: [id, x, y, hp, isDead, mp, maxHp, stunUntil, defDownUntil, respawnTimer]) 복원
