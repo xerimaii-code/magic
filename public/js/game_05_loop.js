@@ -2056,6 +2056,26 @@ function gameLoop(rawDelta) {
     it.nameTag.y = Math.round(it.y - 16);
   });
 
+  // 화면 내 이름표(NPC / 플레이어 / 타 플레이어 / 용병) 겹침 방지용 슬롯 리스트
+  const _placedNameLabels = [];
+  const resolveNonOverlappingLabelY = (cx, baseY, halfWidth = 36) => {
+    let curY = Math.round(baseY);
+    for (let pass = 0; pass < 6; pass++) {
+      let collided = false;
+      for (let i = 0; i < _placedNameLabels.length; i++) {
+        const p = _placedNameLabels[i];
+        if (Math.abs(cx - p.x) < (halfWidth + p.hw) && Math.abs(curY - p.y) < 14) {
+          curY = p.y - 15;
+          collided = true;
+          break;
+        }
+      }
+      if (!collided) break;
+    }
+    _placedNameLabels.push({ x: cx, y: curY, hw: halfWidth });
+    return curY;
+  };
+
   // 11-B) NPC 렌더링 + NPC 선택링(2.5D 그림자 기울기 일치)
   npcList.forEach(npc => {
     let inView = Math.abs(npc.x - player.x) <= halfCullW && Math.abs(npc.y - player.y) <= halfCullH;
@@ -2075,7 +2095,7 @@ function gameLoop(rawDelta) {
     }
     npc.nameTag.visible = true;
     npc.nameTag.x = Math.round(npc.x);
-    npc.nameTag.y = Math.round(npc.y - 38);
+    npc.nameTag.y = resolveNonOverlappingLabelY(npc.nameTag.x, npc.y - 38, 42);
   });
 
   // 11-C) 몬스터 렌더링 + 타겟링(2.5D 그림자 기울기와 동일하게 바닥 레이어에 렌더링)
@@ -2257,16 +2277,17 @@ function gameLoop(rawDelta) {
       const nextOpName = `${op.isAdmin ? '👑[GM] ' : ''}${op.name || '모험가'}`;
       if (op.nameTag.text !== nextOpName) op.nameTag.text = nextOpName;
       op.nameTag.x = Math.round(op.x);
-      op.nameTag.y = Math.round(opBarY - 2);
+      const opLabelY = resolveNonOverlappingLabelY(op.nameTag.x, opBarY - 2, 34);
+      op.nameTag.y = opLabelY;
 
       // 🎗️ 타 플레이어가 파티 중이면 이름표 바로 위로 배지 표시
       if (op.partyId) {
-        drawPartyRibbonAboveEntity(uiG, uiContainer, op, op.x, opBarY - 2, Boolean(op.isPartyLeader), Boolean(window.partyState && window.partyState.partyId === op.partyId), null, op.partyId);
+        drawPartyRibbonAboveEntity(uiG, uiContainer, op, op.x, opLabelY, Boolean(op.isPartyLeader), Boolean(window.partyState && window.partyState.partyId === op.partyId), null, op.partyId);
       } else if (op.partyRibbonText) {
         op.partyRibbonText.visible = false;
       }
 
-      renderEntitySpeechBubble(uiG, uiContainer, op, op.x, op.partyId ? (opBarY - 34) : (opBarY - 19), now);
+      renderEntitySpeechBubble(uiG, uiContainer, op, op.x, op.partyId ? (opLabelY - 32) : (opLabelY - 17), now);
 
       // 🤝 타 플레이어의 동행 용병 렌더링
       if (op.mercenary && op.mercenary.hired && !op.mercenary.isDead) {
@@ -2290,7 +2311,8 @@ function gameLoop(rawDelta) {
         om.nameTag.visible = true;
         const nextOmName = normalizeMercenaryDisplayName(om.name, om.class || 'knight');
         if (om.nameTag.text !== nextOmName) om.nameTag.text = nextOmName;
-        drawMercClassBadgeNextToNameTag(uiG, om.class || 'knight', om.nameTag, omX, omBarY - 2);
+        const omLabelY = resolveNonOverlappingLabelY(Math.round(omX), omBarY - 2, 48);
+        drawMercClassBadgeNextToNameTag(uiG, om.class || 'knight', om.nameTag, omX, omLabelY);
       } else if (op.mercenary?.nameTag) {
         op.mercenary.nameTag.visible = false;
       }
@@ -2340,7 +2362,8 @@ function gameLoop(rawDelta) {
     mercenary.name = normalizeMercenaryDisplayName(mercenary.name, mercenary.class || 'knight');
     mercenary.nameTag.visible = true;
     if (mercenary.nameTag.text !== mercenary.name) mercenary.nameTag.text = mercenary.name;
-    drawMercClassBadgeNextToNameTag(uiG, mercenary.class || 'knight', mercenary.nameTag, mercenary.x, mBarY - 2);
+    const myMercLabelY = resolveNonOverlappingLabelY(Math.round(mercenary.x), mBarY - 2, 44);
+    drawMercClassBadgeNextToNameTag(uiG, mercenary.class || 'knight', mercenary.nameTag, mercenary.x, myMercLabelY);
   } else if (mercenary.nameTag) {
     mercenary.nameTag.visible = false;
   }
@@ -2387,17 +2410,18 @@ function gameLoop(rawDelta) {
   const nextPlayerNameTxt = `${player.isAdmin ? '👑[GM] ' : ''}${player.name || pClassName}`;
   if (playerNameTag.text !== nextPlayerNameTxt) playerNameTag.text = nextPlayerNameTxt;
   playerNameTag.x = Math.round(player.x);
-  playerNameTag.y = Math.round(pBarY - 3);
+  const playerLabelY = resolveNonOverlappingLabelY(playerNameTag.x, pBarY - 3, 36);
+  playerNameTag.y = playerLabelY;
 
   // 🎗️ 본인이 파티 중이면 이름표 바로 위로 파티 배지 표시
   const myPartyNow = window.partyState;
   if (myPartyNow && myPartyNow.partyId) {
-    drawPartyRibbonAboveEntity(uiG, uiContainer, player, player.x, pBarY - 3, myPartyNow.leaderCharId === activeCharacterId, true, playerNameTag, myPartyNow.partyId);
+    drawPartyRibbonAboveEntity(uiG, uiContainer, player, player.x, playerLabelY, myPartyNow.leaderCharId === activeCharacterId, true, playerNameTag, myPartyNow.partyId);
   } else if (player.partyRibbonText) {
     player.partyRibbonText.visible = false;
   }
 
-  renderEntitySpeechBubble(uiG, uiContainer, player, player.x, (myPartyNow && myPartyNow.partyId) ? (pBarY - 36) : (pBarY - 21), now);
+  renderEntitySpeechBubble(uiG, uiContainer, player, player.x, (myPartyNow && myPartyNow.partyId) ? (playerLabelY - 33) : (playerLabelY - 18), now);
 
   if (now < player.blockTime) {
     drawIsoSelectionRing(window.bottomMagicCircleG, player.x, player.y + 2, 24, 0xfacc15, 0xfef08a, tick, false, 'select');
@@ -2518,6 +2542,9 @@ function gameLoop(rawDelta) {
   if (activeEffects.length > 30) {
     activeEffects.splice(0, activeEffects.length - 30);
   }
+  if (projectiles.length > 45) {
+    projectiles.splice(0, projectiles.length - 45);
+  }
   if (floatingTexts.length > 18) {
     const overflowCnt = floatingTexts.length - 18;
     for (let k = 0; k < overflowCnt; k++) {
@@ -2534,6 +2561,12 @@ function gameLoop(rawDelta) {
     let ft = floatingTexts[i];
     if (!ft.maxLife) ft.maxLife = ft.life || 26;
     if (!ft.pixiText) {
+      for (let j = 0; j < i; j++) {
+        const prevFt = floatingTexts[j];
+        if (prevFt && Math.abs((prevFt.x || 0) - (ft.x || 0)) < 54 && Math.abs((prevFt.y || 0) - (ft.y || 0)) < 15) {
+          ft.y = (prevFt.y || ft.y) - 16;
+        }
+      }
       const fSize = ft.fontSize || (ft.dmgKind === 'crit' ? 13 : (ft.dmgKind === 'skill' ? 11.5 : 11));
       ft.pixiText = createCrispPixiText(ft.text, fSize, ft.color || 0xffffff);
       if (ft.strokeColor) {
@@ -2559,17 +2592,17 @@ function gameLoop(rawDelta) {
     ft.pixiText.alpha = Math.min(1, ft.life / 10);
 
     if (ft.life <= 0) {
-      uiContainer.removeChild(ft.pixiText);
-      ft.pixiText.destroy();
+      if (ft.pixiText.parent) ft.pixiText.parent.removeChild(ft.pixiText);
+      try { ft.pixiText.destroy(); } catch (e) {}
       floatingTexts.splice(i, 1);
     }
   }
 
-  // 플레이어 Y좌표 기준 활성 청크만 스트리밍 유지 및 장시간 플레이 메모리 정리
+  // 플레이어 Y좌표 기준 활성 청크만 스트리밍 유지 및 장시간 플레이 메모리/고아 텍스트 정리
   if (window.MapChunkManager) {
     window.MapChunkManager.updateActiveChunks(player.y, false);
   }
-  if (!window._lastMemCleanupTs || now - window._lastMemCleanupTs > 20000) {
+  if (!window._lastMemCleanupTs || now - window._lastMemCleanupTs > 8000) {
     window._lastMemCleanupTs = now;
     if (activeEffects.length > 45) activeEffects.splice(0, activeEffects.length - 45);
     if (projectiles.length > 45) projectiles.splice(0, projectiles.length - 45);
@@ -2580,6 +2613,7 @@ function gameLoop(rawDelta) {
         try { oldFt.pixiText.destroy(); } catch (e) {}
       }
     }
+    window.sweepOrphanPixiVisuals?.();
   }
 
   // 미니맵 렌더링은 3프레임(약 20FPS) 주기로 실행하여 모바일/PC 2D 캔버스 드로잉 부하를 66% 절감

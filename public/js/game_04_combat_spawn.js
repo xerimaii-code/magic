@@ -157,7 +157,9 @@ cameraContainer.addChild(window.bottomMagicCircleG);
 window.startGame = function(selectedClass, customCharName = null, savedCharRecord = null, deferDisplay = false) {
   ensureAllGameModals();
   window.partyState = null;
+  window.clearAllOtherPlayersVisuals?.();
   window.otherPlayers = [];
+  window.sweepOrphanPixiVisuals?.();
 
   if (!selectedClass || !CLASS_STATS[selectedClass]) {
     selectedClass = (savedCharRecord?.class && CLASS_STATS[savedCharRecord.class]) ? savedCharRecord.class : 'knight';
@@ -2602,32 +2604,28 @@ function loadMapData(mapKey, customSpawn = null) {
     fadeOverlay.style.opacity = '1';
   }
 
-  setTimeout(async () => {
+  if (window._loadMapDataTimerId) {
+    clearTimeout(window._loadMapDataTimerId);
+    window._loadMapDataTimerId = null;
+  }
+
+  window._loadMapDataTimerId = setTimeout(async () => {
+    window._loadMapDataTimerId = null;
     window.addChat(`🗺️ [지역 진입] ${mapData.title}`, "log-sys");
     window.showGameLoadingScreen?.(`🗺️ ${mapData.title || '차원 지역 이동'}`, '에테르 필드 지형 및 미니맵 렌더링 중...', 68);
     wallBoxes = [];
     portalBoxes = [];
 
-    npcList.forEach(n => { if (n.nameTag) { uiContainer.removeChild(n.nameTag); n.nameTag.destroy(); } });
-    monsterList.forEach(m => { if (m.nameTag) { uiContainer.removeChild(m.nameTag); m.nameTag.destroy(); } });
+    npcList.forEach(n => { if (n.nameTag) { if (n.nameTag.parent) n.nameTag.parent.removeChild(n.nameTag); try { n.nameTag.destroy(); } catch (e) {} n.nameTag = null; } });
+    monsterList.forEach(m => { if (m.nameTag) { if (m.nameTag.parent) m.nameTag.parent.removeChild(m.nameTag); try { m.nameTag.destroy(); } catch (e) {} m.nameTag = null; } });
     itemList.forEach(it => destroyItemGraphics(it));
-    floatingTexts.forEach(ft => { if (ft.pixiText) { uiContainer.removeChild(ft.pixiText); ft.pixiText.destroy(); } });
+    floatingTexts.forEach(ft => { if (ft.pixiText) { if (ft.pixiText.parent) ft.pixiText.parent.removeChild(ft.pixiText); try { ft.pixiText.destroy(); } catch (e) {} ft.pixiText = null; } });
     if (mercenary.nameTag) {
-      uiContainer.removeChild(mercenary.nameTag);
-      mercenary.nameTag.destroy();
+      if (mercenary.nameTag.parent) mercenary.nameTag.parent.removeChild(mercenary.nameTag);
+      try { mercenary.nameTag.destroy(); } catch (e) {}
       mercenary.nameTag = null;
     }
-    if (Array.isArray(window.otherPlayers)) {
-      window.otherPlayers.forEach(op => {
-        if (!op) return;
-        if (op.nameTag?.parent) { op.nameTag.parent.removeChild(op.nameTag); op.nameTag.destroy(); op.nameTag = null; }
-        if (op.bubbleTextObj?.parent) { op.bubbleTextObj.parent.removeChild(op.bubbleTextObj); op.bubbleTextObj.destroy(); op.bubbleTextObj = null; }
-        if (op.partyRibbonText?.parent) { op.partyRibbonText.parent.removeChild(op.partyRibbonText); op.partyRibbonText.destroy(); op.partyRibbonText = null; }
-        if (op.mercenary?.nameTag?.parent) { op.mercenary.nameTag.parent.removeChild(op.mercenary.nameTag); op.mercenary.nameTag.destroy(); op.mercenary.nameTag = null; }
-        destroyOtherPlayerSprite(op);
-      });
-      window.otherPlayers = [];
-    }
+    window.clearAllOtherPlayersVisuals?.();
 
     npcList = [];
     monsterList = [];
@@ -2638,6 +2636,7 @@ function loadMapData(mapKey, customSpawn = null) {
     bossTelegraphs = [];
     bgLoaded = false;
     bossRespawnTimer = 0;
+    window.sweepOrphanPixiVisuals?.();
 
     await loadRegionTmjPortals(currentRegionKey, mapData.width, mapData.height);
 

@@ -53,8 +53,13 @@ function encodePasswordHash(email, password) {
   h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   const hex = (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
-  const b64 = btoa(unescape(encodeURIComponent(password)));
-  return `${hex}_${b64}`;
+  let h3 = 0x811c9dc5;
+  for (let i = 0; i < raw.length; i++) {
+    h3 ^= raw.charCodeAt(i);
+    h3 = Math.imul(h3, 0x01000193);
+  }
+  const hex2 = (h3 >>> 0).toString(16).padStart(8, '0');
+  return `${hex}_${hex2}`;
 }
 
 function buildAccountTokenString(pwHash, sessionToken = '') {
@@ -823,34 +828,120 @@ function showGmNoticeBanner(sender, text) {
 
 function cleanupOtherPlayerVisuals(oldOp) {
   if (!oldOp) return;
-  if (oldOp.nameTag && oldOp.nameTag.parent) {
-    oldOp.nameTag.parent.removeChild(oldOp.nameTag);
-    oldOp.nameTag.destroy();
+  if (oldOp.nameTag) {
+    if (oldOp.nameTag.parent) oldOp.nameTag.parent.removeChild(oldOp.nameTag);
+    try { oldOp.nameTag.destroy(); } catch (e) {}
     oldOp.nameTag = null;
   }
-  if (oldOp.bubbleTextObj && oldOp.bubbleTextObj.parent) {
-    oldOp.bubbleTextObj.parent.removeChild(oldOp.bubbleTextObj);
-    oldOp.bubbleTextObj.destroy();
+  if (oldOp.bubbleTextObj) {
+    if (oldOp.bubbleTextObj.parent) oldOp.bubbleTextObj.parent.removeChild(oldOp.bubbleTextObj);
+    try { oldOp.bubbleTextObj.destroy(); } catch (e) {}
     oldOp.bubbleTextObj = null;
   }
-  if (oldOp.partyRibbonText && oldOp.partyRibbonText.parent) {
-    oldOp.partyRibbonText.parent.removeChild(oldOp.partyRibbonText);
-    oldOp.partyRibbonText.destroy();
+  if (oldOp.partyRibbonText) {
+    if (oldOp.partyRibbonText.parent) oldOp.partyRibbonText.parent.removeChild(oldOp.partyRibbonText);
+    try { oldOp.partyRibbonText.destroy(); } catch (e) {}
     oldOp.partyRibbonText = null;
   }
-  if (oldOp.mercenary?.nameTag && oldOp.mercenary.nameTag.parent) {
-    oldOp.mercenary.nameTag.parent.removeChild(oldOp.mercenary.nameTag);
-    oldOp.mercenary.nameTag.destroy();
+  if (oldOp.mercenary?.nameTag) {
+    if (oldOp.mercenary.nameTag.parent) oldOp.mercenary.nameTag.parent.removeChild(oldOp.mercenary.nameTag);
+    try { oldOp.mercenary.nameTag.destroy(); } catch (e) {}
     oldOp.mercenary.nameTag = null;
   }
   destroyOtherPlayerSprite(oldOp);
 }
+window.cleanupOtherPlayerVisuals = cleanupOtherPlayerVisuals;
+
+window.clearAllOtherPlayersVisuals = function() {
+  if (Array.isArray(window.otherPlayers)) {
+    window.otherPlayers.forEach(op => cleanupOtherPlayerVisuals(op));
+  }
+  window.otherPlayers = [];
+};
+
+window.sweepOrphanPixiVisuals = function() {
+  if (typeof uiContainer !== 'undefined' && uiContainer && Array.isArray(uiContainer.children)) {
+    const validUiNodes = new Set();
+    if (window.fxG) validUiNodes.add(window.fxG);
+    if (typeof uiG !== 'undefined' && uiG) validUiNodes.add(uiG);
+    if (typeof playerNameTag !== 'undefined' && playerNameTag) validUiNodes.add(playerNameTag);
+    if (typeof player !== 'undefined' && player) {
+      if (player.partyRibbonText) validUiNodes.add(player.partyRibbonText);
+      if (player.bubbleTextObj) validUiNodes.add(player.bubbleTextObj);
+    }
+    if (typeof mercenary !== 'undefined' && mercenary && mercenary.nameTag) {
+      validUiNodes.add(mercenary.nameTag);
+    }
+    if (typeof npcList !== 'undefined' && Array.isArray(npcList)) {
+      for (let i = 0; i < npcList.length; i++) {
+        if (npcList[i]?.nameTag) validUiNodes.add(npcList[i].nameTag);
+      }
+    }
+    if (typeof monsterList !== 'undefined' && Array.isArray(monsterList)) {
+      for (let i = 0; i < monsterList.length; i++) {
+        if (monsterList[i]?.nameTag) validUiNodes.add(monsterList[i].nameTag);
+      }
+    }
+    if (typeof itemList !== 'undefined' && Array.isArray(itemList)) {
+      for (let i = 0; i < itemList.length; i++) {
+        if (itemList[i]?.nameTag) validUiNodes.add(itemList[i].nameTag);
+      }
+    }
+    if (typeof floatingTexts !== 'undefined' && Array.isArray(floatingTexts)) {
+      for (let i = 0; i < floatingTexts.length; i++) {
+        if (floatingTexts[i]?.pixiText) validUiNodes.add(floatingTexts[i].pixiText);
+      }
+    }
+    if (Array.isArray(window.otherPlayers)) {
+      for (let i = 0; i < window.otherPlayers.length; i++) {
+        const op = window.otherPlayers[i];
+        if (!op) continue;
+        if (op.nameTag) validUiNodes.add(op.nameTag);
+        if (op.bubbleTextObj) validUiNodes.add(op.bubbleTextObj);
+        if (op.partyRibbonText) validUiNodes.add(op.partyRibbonText);
+        if (op.mercenary?.nameTag) validUiNodes.add(op.mercenary.nameTag);
+      }
+    }
+    for (let i = uiContainer.children.length - 1; i >= 0; i--) {
+      const child = uiContainer.children[i];
+      if (!validUiNodes.has(child)) {
+        uiContainer.removeChildAt(i);
+        try { child.destroy(); } catch (e) {}
+      }
+    }
+  }
+
+  if (typeof entityContainer !== 'undefined' && entityContainer && Array.isArray(entityContainer.children)) {
+    const validEntNodes = new Set();
+    if (typeof mainG !== 'undefined' && mainG) validEntNodes.add(mainG);
+    if (typeof PlayerSpriteManager !== 'undefined' && PlayerSpriteManager?.sprite) {
+      validEntNodes.add(PlayerSpriteManager.sprite);
+    }
+    if (typeof itemList !== 'undefined' && Array.isArray(itemList)) {
+      for (let i = 0; i < itemList.length; i++) {
+        if (itemList[i]?.pixiSprite) validEntNodes.add(itemList[i].pixiSprite);
+      }
+    }
+    if (Array.isArray(window.otherPlayers)) {
+      for (let i = 0; i < window.otherPlayers.length; i++) {
+        if (window.otherPlayers[i]?.pixiSprite) validEntNodes.add(window.otherPlayers[i].pixiSprite);
+      }
+    }
+    for (let i = entityContainer.children.length - 1; i >= 0; i--) {
+      const child = entityContainer.children[i];
+      if (!validEntNodes.has(child)) {
+        entityContainer.removeChildAt(i);
+        try { child.destroy({ children: false, texture: false, baseTexture: false }); } catch (e) {}
+      }
+    }
+  }
+};
 
 function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = null) {
   if (!Array.isArray(playersArr)) return;
   const incomingMap = new Map();
   playersArr.forEach(p => {
-    if (!p || p.charId === activeCharacterId) return;
+    if (!p || !p.charId || p.charId === activeCharacterId) return;
     incomingMap.set(p.charId, p);
   });
 
@@ -862,7 +953,7 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
       const shouldRemove = isDelta
         ? (validIdSet ? !validIdSet.has(oldOp.charId) : false)
         : !incomingMap.has(oldOp.charId);
-      if (shouldRemove) {
+      if (shouldRemove || !oldOp.charId || oldOp.charId === activeCharacterId) {
         cleanupOtherPlayerVisuals(oldOp);
       }
     });
@@ -874,6 +965,9 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
     window.otherPlayers.forEach(op => {
       if (op && op.charId && op.charId !== activeCharacterId) {
         if (!validIdSet || validIdSet.has(op.charId)) {
+          if (baseMap.has(op.charId) && baseMap.get(op.charId) !== op) {
+            cleanupOtherPlayerVisuals(baseMap.get(op.charId));
+          }
           baseMap.set(op.charId, op);
         }
       }
@@ -907,6 +1001,25 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
       if (typeof newP.moveX === 'number') existing.moveX = newP.moveX;
       if (typeof newP.moveY === 'number') existing.moveY = newP.moveY;
       existing.isMinimapOnly = isMiniOnly;
+      if (isMiniOnly) {
+        existing.x = newP.x;
+        existing.y = newP.y;
+        existing.isWalking = false;
+        existing.serverWalking = false;
+        if (existing.pixiSprite) existing.pixiSprite.visible = false;
+        if (existing.nameTag) existing.nameTag.visible = false;
+        if (existing.bubbleTextObj) existing.bubbleTextObj.visible = false;
+        if (existing.partyRibbonText) existing.partyRibbonText.visible = false;
+        if (existing.mercenary) {
+          existing.mercenary.x = newP.x;
+          existing.mercenary.y = newP.y;
+          existing.mercenary.serverX = newP.x;
+          existing.mercenary.serverY = newP.y;
+          existing.mercenary.isWalking = false;
+          existing.mercenary.serverWalking = false;
+          if (existing.mercenary.nameTag) existing.mercenary.nameTag.visible = false;
+        }
+      }
       if (!isMiniOnly) {
         existing.serverDir = newP.dir || existing.serverDir || existing.dir;
         const isCurrentlyAttacking = (nowTs - (existing.lastAttackTime || 0)) < 520;
@@ -984,10 +1097,10 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
               nameTag: null
             };
           }
-        } else if (newP.mercenary === null && !newP._delta) {
-          if (existing.mercenary?.nameTag?.parent) {
-            existing.mercenary.nameTag.parent.removeChild(existing.mercenary.nameTag);
-            existing.mercenary.nameTag.destroy();
+        } else if ((!newP.mercenary || newP.mercenary.hired === false) && (!newP._delta || newP.mercenary === null || newP.mercenary?.hired === false)) {
+          if (existing.mercenary?.nameTag) {
+            if (existing.mercenary.nameTag.parent) existing.mercenary.nameTag.parent.removeChild(existing.mercenary.nameTag);
+            try { existing.mercenary.nameTag.destroy(); } catch (e) {}
           }
           existing.mercenary = null;
         }
@@ -995,8 +1108,22 @@ function syncAuthoritativePlayersList(playersArr, isDelta = false, allCharIds = 
       baseMap.set(cId, existing);
     } else {
       const initSpd = newP.speed || CLASS_STATS[newP.class]?.baseSpeed || 1.90;
+      const initMerc = (newP.mercenary && newP.mercenary.hired !== false)
+        ? {
+            hired: true,
+            ...newP.mercenary,
+            serverX: newP.mercenary.x ?? newP.x,
+            serverY: newP.mercenary.y ?? newP.y,
+            speed: newP.mercenary.speed || (initSpd * 1.02),
+            _interpSpeed: newP.mercenary.speed || (initSpd * 1.02),
+            serverWalking: Boolean(newP.mercenary.isWalking),
+            lastMoveVisualTime: newP.mercenary.isWalking ? nowTs : 0,
+            nameTag: null
+          }
+        : null;
       baseMap.set(cId, {
         ...newP,
+        mercenary: initMerc,
         speed: initSpd,
         _interpSpeed: initSpd,
         serverDir: newP.dir || 'down',
@@ -1149,13 +1276,11 @@ function handleCentralServerPacket(msg) {
 
   if (msg.type === 'PLAYER_LEFT_MAP' && msg.charId) {
     if (Array.isArray(window.otherPlayers)) {
-      const rem = window.otherPlayers.find(o => o && o.charId === msg.charId);
-      if (rem) {
-        if (rem.nameTag?.parent) rem.nameTag.parent.removeChild(rem.nameTag);
-        if (rem.bubbleTextObj?.parent) rem.bubbleTextObj.parent.removeChild(rem.bubbleTextObj);
-        if (rem.partyRibbonText?.parent) rem.partyRibbonText.parent.removeChild(rem.partyRibbonText);
-        destroyOtherPlayerSprite(rem);
-      }
+      window.otherPlayers.forEach(o => {
+        if (o && o.charId === msg.charId) {
+          cleanupOtherPlayerVisuals(o);
+        }
+      });
       window.otherPlayers = window.otherPlayers.filter(o => o && o.charId !== msg.charId);
       window.updateMercHUD?.();
     }
@@ -1558,10 +1683,12 @@ function handleCentralServerPacket(msg) {
       if (player.savedBossTarget === ent) player.savedBossTarget = null;
 
       if (msg.isGmSpawned) {
-        if (ent.nameTag && ent.nameTag.parent) {
-          ent.nameTag.parent.removeChild(ent.nameTag);
-          ent.nameTag.destroy();
+        if (ent.nameTag) {
+          if (ent.nameTag.parent) ent.nameTag.parent.removeChild(ent.nameTag);
+          try { ent.nameTag.destroy(); } catch (e) {}
+          ent.nameTag = null;
         }
+        window._monsterIdMap?.delete(ent.id);
         const mIdx = monsterList.indexOf(ent);
         if (mIdx > -1) monsterList.splice(mIdx, 1);
       }

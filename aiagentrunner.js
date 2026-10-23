@@ -1577,8 +1577,10 @@ class AIAgentClient {
         let tx = Math.max(bounds.minX, Math.min(bounds.maxX, leaderLive.x + Math.cos(formAngle) * formDist));
         let ty = Math.max(bounds.minY, Math.min(bounds.maxY, leaderLive.y + Math.sin(formAngle) * formDist));
         if (isInTownSafeZone(this.mapKey, tx, ty)) {
-          tx = leaderLive.x;
-          ty = leaderLive.y;
+          const rCfg = getRegionCfg(this.regionKey);
+          const outAng = Math.atan2(leaderLive.y - (rCfg.townY || 14250), leaderLive.x - (rCfg.townX || 2000)) + (((this.slotIndex % 5) - 2) * 0.28);
+          tx = Math.max(bounds.minX, Math.min(bounds.maxX, leaderLive.x + Math.cos(outAng) * 65));
+          ty = Math.max(bounds.minY, Math.min(bounds.maxY, leaderLive.y + Math.sin(outAng) * 65));
         }
         this.moveX = tx;
         this.moveY = ty;
@@ -1781,6 +1783,17 @@ class AIAgentClient {
           if (!isInTownSafeZone(this.mapKey, nx, ny)) {
             this.moveX = nx;
             this.moveY = ny;
+            this.isWalking = true;
+          } else {
+            const regCfg = getRegionCfg(this.regionKey);
+            const fallbackX = (holdAnchor && !isInTownSafeZone(this.mapKey, holdAnchor.x, holdAnchor.y))
+              ? holdAnchor.x
+              : (bounds.isDungeon ? bounds.centerX : (regCfg.fieldX || bounds.centerX));
+            const fallbackY = (holdAnchor && !isInTownSafeZone(this.mapKey, holdAnchor.x, holdAnchor.y))
+              ? holdAnchor.y
+              : (bounds.isDungeon ? bounds.centerY : (regCfg.fieldY || bounds.centerY));
+            this.moveX = Math.max(bounds.minX, Math.min(bounds.maxX, fallbackX + (Math.random() * 240 - 120)));
+            this.moveY = Math.max(bounds.minY, Math.min(bounds.maxY, fallbackY + (Math.random() * 240 - 120)));
             this.isWalking = true;
           }
         }
@@ -2346,7 +2359,12 @@ class AIAgentClient {
 
     const regCfg = getRegionCfg(this.regionKey);
     const townMapKey = `${this.regionKey}_sub1`;
-    this.teleportToMap(this.regionKey, townMapKey, regCfg.townX + (Math.random() * 80 - 40), regCfg.townY + (Math.random() * 80 - 40));
+    // 마을 중앙 스폰 지점(플레이어 위치)과 겹치지 않도록 상점 NPC 주변 원형 궤도(반경 95~165px)로 분산 배치
+    const shopAng = ((this.slotIndex % 12) / 12) * Math.PI * 2 + (Math.random() * 0.35 - 0.175);
+    const shopRad = 95 + (this.slotIndex % 4) * 22 + Math.random() * 18;
+    const shopX = (regCfg.townX || 2000) + Math.cos(shopAng) * shopRad;
+    const shopY = (regCfg.townY || 14250) + Math.sin(shopAng) * shopRad;
+    this.teleportToMap(this.regionKey, townMapKey, shopX, shopY);
 
     setTimeout(() => {
       if (this.isLoggingOut) return;
@@ -2399,7 +2417,7 @@ class AIAgentClient {
             return;
           }
         }
-        if (this.preShopReturnSpot && this.preShopReturnSpot.mapKey) {
+        if (this.preShopReturnSpot && this.preShopReturnSpot.mapKey && !isInTownSafeZone(this.preShopReturnSpot.mapKey, this.preShopReturnSpot.x, this.preShopReturnSpot.y)) {
           const ret = this.preShopReturnSpot;
           this.teleportToMap(ret.regionKey || this.regionKey, ret.mapKey, ret.x, ret.y);
           if (isLeader && (this.partyData.members || []).length > 1) {
@@ -2416,7 +2434,10 @@ class AIAgentClient {
         }
       }
 
-      const nextSpot = this.preShopReturnSpot || pickBalancedMapPlacement(this.level, this.slotIndex, this.charId, this.regionKey);
+      const validPreSpot = (this.preShopReturnSpot && this.preShopReturnSpot.mapKey && !isInTownSafeZone(this.preShopReturnSpot.mapKey, this.preShopReturnSpot.x, this.preShopReturnSpot.y))
+        ? this.preShopReturnSpot
+        : null;
+      const nextSpot = validPreSpot || pickBalancedMapPlacement(this.level, this.slotIndex, this.charId, this.regionKey);
       this.teleportToMap(nextSpot.regionKey, nextSpot.mapKey, nextSpot.x, nextSpot.y);
     }, 3500);
   }
@@ -2819,8 +2840,9 @@ class AIAgentClient {
     this.targetMobId = null;
     this.isWalking = false;
     if (this.mercenary && this.mercenary.hired) {
-      this.mercenary.x = this.x + 40;
-      this.mercenary.y = this.y + 30;
+      const mAng = ((this.slotIndex % 8) / 8) * Math.PI * 2 + 0.4;
+      this.mercenary.x = Math.round(this.x + Math.cos(mAng) * 42);
+      this.mercenary.y = Math.round(this.y + Math.sin(mAng) * 32);
       this.mercenary.isWalking = false;
     }
     this.worldMonsters.clear();

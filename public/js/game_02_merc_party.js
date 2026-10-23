@@ -1720,7 +1720,7 @@ window.renderPartyControlModal = function() {
   const myZone = window.resolveClientZoneInfo(currentRegionKey, currentMapKey, player?.x, player?.y);
   const candidates = window.getMergedRegionCandidates();
   const classKor = { knight: '전사', ranger: '궁수', wizard: '마법사' };
-  const escName = (s) => String(s || '').replace(/'/g, "\'");
+  const escName = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
   const candidatesHtml = candidates.length > 0
     ? candidates.map(op => {

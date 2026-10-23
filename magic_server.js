@@ -168,8 +168,13 @@ function encodePasswordHash(email, password) {
   h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   const hex = (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
-  const b64 = Buffer.from(String(password || ''), 'utf8').toString('base64');
-  return `${hex}_${b64}`;
+  let h3 = 0x811c9dc5;
+  for (let i = 0; i < raw.length; i++) {
+    h3 ^= raw.charCodeAt(i);
+    h3 = Math.imul(h3, 0x01000193);
+  }
+  const hex2 = (h3 >>> 0).toString(16).padStart(8, '0');
+  return `${hex}_${hex2}`;
 }
 
 function buildAccountTokenString(pwHash, sessionToken = '') {
@@ -3651,6 +3656,8 @@ function handleClientWsPacket(conn, msg) {
       if (oldMap && oldMap !== incomingMap) {
         if (entry._knownMobs) entry._knownMobs.clear();
         if (entry._knownPlayers) entry._knownPlayers.clear();
+        entry._lastSentOtherCount = -1;
+        broadcastToMap(oldMap, { type: 'PLAYER_LEFT_MAP', charId: entry.charId });
         sendWsMessage(conn, buildMapInitStatePacket(incomingMap, entry));
         if (myParty) broadcastPartyUpdate(myParty);
       } else if (leaderTargetChanged && myParty) {
@@ -5618,8 +5625,13 @@ const server = http.createServer(async (req, res) => {
 
     const r = remoteRows[0];
     const parsed = parseAccountTokenString(r.active_session_token);
-    if (parsed.pwHash && parsed.pwHash !== pwHash) {
-      return sendJson(res, 200, { ok: false, error: '비밀번호가 일치하지 않습니다.' });
+    if (parsed.pwHash) {
+      const storedPrefix = String(parsed.pwHash).split('_')[0];
+      const inputPrefix = String(pwHash).split('_')[0];
+      const isMatch = parsed.pwHash === pwHash || (storedPrefix && storedPrefix.length >= 16 && storedPrefix === inputPrefix);
+      if (!isMatch) {
+        return sendJson(res, 200, { ok: false, error: '비밀번호가 일치하지 않습니다.' });
+      }
     }
     return sendJson(res, 200, { ok: true, user: { id: r.user_id, email: r.email.toLowerCase() } });
   }

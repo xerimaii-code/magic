@@ -417,7 +417,9 @@ window.handleAuthSubmit = async function() {
       const row = accRows[0];
       const parsedTok = parseAccountTokenString(row.active_session_token);
       if (parsedTok.pwHash) {
-        if (parsedTok.pwHash === pwHash || parsedTok.pwHash === legacyB64) {
+        const storedPrefix = String(parsedTok.pwHash).split('_')[0];
+        const inputPrefix = String(pwHash).split('_')[0];
+        if (parsedTok.pwHash === pwHash || parsedTok.pwHash === legacyB64 || (storedPrefix && storedPrefix.length >= 16 && storedPrefix === inputPrefix)) {
           loggedUser = { id: row.user_id, email: emailRaw };
         } else {
           if (statusMsg) {
@@ -1207,6 +1209,9 @@ function handleForceDisconnectByOtherBrowser() {
     document.getElementById(id)?.classList.add('hidden');
   });
 
+  window.partyState = null;
+  window.clearAllOtherPlayersVisuals?.();
+  window.sweepOrphanPixiVisuals?.();
   document.getElementById('game-wrapper').style.display = 'none';
   document.getElementById('auth-overlay-ui').style.display = 'flex';
   document.getElementById('auth-box').style.display = 'none';
@@ -1537,7 +1542,9 @@ window.returnToCharacterSelect = async function() {
   document.getElementById('slot-box').style.display = 'block';
 
   window.partyState = null;
+  window.clearAllOtherPlayersVisuals?.();
   window.otherPlayers = [];
+  window.sweepOrphanPixiVisuals?.();
   purgeBrowserLocalGameCache();
   await loadAccountSharedStorage(true);
   await loadAccountCharacterSlots(true);
@@ -1566,6 +1573,10 @@ window.logoutAccount = async function() {
     try { await supabaseClient.auth.signOut({ scope: 'local' }); } catch (e) {}
   }
 
+  window.partyState = null;
+  window.clearAllOtherPlayersVisuals?.();
+  window.otherPlayers = [];
+  window.sweepOrphanPixiVisuals?.();
   currentAccountUser = null;
   activeSlotIndex = null;
   activeCharacterId = null;
@@ -1711,7 +1722,9 @@ window.executeMobileBgLogoutToCharSelect = function() {
   document.getElementById('slot-box').style.display = 'block';
 
   window.partyState = null;
+  window.clearAllOtherPlayersVisuals?.();
   window.otherPlayers = [];
+  window.sweepOrphanPixiVisuals?.();
   if (Array.isArray(accountCharacters)) {
     accountCharacters.forEach(c => {
       if (c && c.id === leavingCharId) c.isOnline = false;

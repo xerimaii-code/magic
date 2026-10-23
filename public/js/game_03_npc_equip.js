@@ -2983,6 +2983,36 @@ function resolveClientEntitySeparation(delta = 1) {
           }
         }
       }
+
+      // 타 플레이어끼리 & 타 플레이어와 자신의 용병 간 화면상 완전 포개짐 완화
+      if (op.mercenary && op.mercenary.hired && !op.mercenary.isDead && op.mercenary.x !== undefined) {
+        const om = op.mercenary;
+        const dxSelfOm = om.x - op.x;
+        const dySelfOm = om.y - op.y;
+        const dSelfOm = Math.hypot(dxSelfOm, dySelfOm);
+        if (dSelfOm < 24) {
+          const pushOm = (24 - Math.max(0.1, dSelfOm)) * 0.35 * Math.min(1.2, delta);
+          const angOm = dSelfOm > 0.1 ? Math.atan2(dySelfOm, dxSelfOm) : (i + 0.7);
+          om.x += Math.cos(angOm) * pushOm;
+          om.y += Math.sin(angOm) * pushOm;
+        }
+      }
+      for (let j = i + 1; j < window.otherPlayers.length; j++) {
+        const op2 = window.otherPlayers[j];
+        if (!op2 || op2.gmInvisible || op2.x === undefined || op2.isMinimapOnly) continue;
+        const dxOO = op2.x - op.x;
+        const dyOO = op2.y - op.y;
+        if (Math.abs(dxOO) > 26 || Math.abs(dyOO) > 26) continue;
+        const dOO = Math.hypot(dxOO, dyOO);
+        if (dOO < 22) {
+          const pushOO = (22 - Math.max(0.1, dOO)) * 0.22 * Math.min(1.2, delta);
+          const angOO = dOO > 0.1 ? Math.atan2(dyOO, dxOO) : ((i + j) * 1.1);
+          op.x -= Math.cos(angOO) * pushOO;
+          op.y -= Math.sin(angOO) * pushOO;
+          op2.x += Math.cos(angOO) * pushOO;
+          op2.y += Math.sin(angOO) * pushOO;
+        }
+      }
     }
   }
 

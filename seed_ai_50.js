@@ -555,9 +555,12 @@ function generateAICharacterRecord(slotIndex, userId) {
   const posX = isDungeonSpawn
     ? Math.round(950 + ((idx * 193) % 1150))
     : Math.max(400, Math.min(3600, Math.round(fAnchor.x + (((idx * 173) % 720) - 360))));
-  const posY = isDungeonSpawn
+  let posY = isDungeonSpawn
     ? Math.round(950 + ((idx * 257) % 1150))
     : Math.max(1300, Math.min(13500, Math.round(fAnchor.y + (((idx * 257) % 720) - 360))));
+  if (!isDungeonSpawn && Math.hypot(posX - (regCfg.townX || 2000), posY - (regCfg.townY || 14250)) <= 820) {
+    posY = Math.max(1300, (regCfg.townY || 14250) - 920);
+  }
 
   let nameHash = idx * 31;
   for (let i = 0; i < rawName.length; i++) nameHash += rawName.charCodeAt(i);
