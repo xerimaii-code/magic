@@ -691,12 +691,14 @@ window.openCharacterCreateScreen = async function(slotIdx) {
     msgEl.innerText = '이름 입력 후 중복체크를 진행해주세요.';
   }
 
+  window.enterPreGamePortraitView?.();
   window.selectClassForCreate('knight');
   document.getElementById('auth-overlay-ui').style.display = 'none';
   document.getElementById('char-select-ui').style.display = 'flex';
 };
 
 window.cancelCharacterCreate = async function() {
+  window.enterPreGamePortraitView?.();
   document.getElementById('char-select-ui').style.display = 'none';
   document.getElementById('auth-overlay-ui').style.display = 'flex';
   await loadAccountCharacterSlots(true);
@@ -912,6 +914,7 @@ window.confirmCreateCharacter = async function() {
   document.getElementById('auth-overlay-ui').style.display = 'none';
   document.getElementById('char-select-ui').style.display = 'none';
   document.getElementById('game-wrapper').style.display = 'flex';
+  window.applyInGameScreenMode?.(null);
   window.forceResizePixiApp?.();
   requestAnimationFrame(() => window.forceResizePixiApp?.());
   setTimeout(() => window.forceResizePixiApp?.(), 80);
@@ -1212,6 +1215,10 @@ function handleForceDisconnectByOtherBrowser() {
   window.partyState = null;
   window.clearAllOtherPlayersVisuals?.();
   window.sweepOrphanPixiVisuals?.();
+  ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui', 'party-control-modal', 'game-tip-modal', 'trade-modal-ui', 'immersive-20-modal', 'stat-alloc-modal'].forEach(id => {
+    document.getElementById(id)?.classList.add('hidden');
+  });
+  window.enterPreGamePortraitView?.();
   document.getElementById('game-wrapper').style.display = 'none';
   document.getElementById('auth-overlay-ui').style.display = 'flex';
   document.getElementById('auth-box').style.display = 'none';
@@ -1367,10 +1374,10 @@ window.applySavedCharacterRecordToState = function(record) {
   player.mp = Math.min(player.maxMp, Math.max(0, Number(cd.mp) ?? player.maxMp));
 };
 
-// 옵션 변경 시 수파베이스(캐릭터 레코드)에 즉시 디바운스 저장
+// 옵션 변경 시 수파베이스(캐릭터 레코드)에 즉시 저장
 window.saveOptionsToSupabase = function() {
   if (!isGameSessionActive || !currentAccountUser || !activeCharacterId) return;
-  window.triggerAutoSave?.('option_change', false);
+  window.triggerAutoSave?.('option_change', true);
 };
 
 let _lastSavedCharSignature = '';
@@ -1385,6 +1392,7 @@ async function saveCurrentCharacterAndStorageNow(reason = 'auto', useKeepaliveFe
 
   const isCriticalReason = (
     useKeepaliveFetch ||
+    reason === 'option_change' ||
     reason === 'bank_update' ||
     reason === 'logout' ||
     reason === 'switch_character' ||
@@ -1407,6 +1415,7 @@ async function saveCurrentCharacterAndStorageNow(reason = 'auto', useKeepaliveFe
     inv: charPayload.char_data?.inventory,
     sk: charPayload.char_data?.learnedSkills,
     q: charPayload.char_data?.quests,
+    opt: charPayload.char_data?.options,
     mc: charPayload.char_data?.mercenary ? {
       h: charPayload.char_data.mercenary.hired,
       lv: charPayload.char_data.mercenary.level,
@@ -1531,9 +1540,13 @@ window.returnToCharacterSelect = async function() {
   disableAutoAttack();
   window.SoundSystem?.stopBgm?.();
 
-  ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui'].forEach(id => {
+  ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui', 'party-control-modal', 'game-tip-modal', 'trade-modal-ui', 'immersive-20-modal', 'stat-alloc-modal'].forEach(id => {
     document.getElementById(id)?.classList.add('hidden');
   });
+  window.closeWorldMapUI?.(true);
+  window.closeShireMapUI?.(true);
+  // 캐릭터 선택창으로 복귀 시 저장된 인게임 모드 설정은 유지한 채 화면만 즉시 세로모드로 전환!
+  window.enterPreGamePortraitView?.();
 
   document.getElementById('game-wrapper').style.display = 'none';
   document.getElementById('char-select-ui').style.display = 'none';
@@ -1583,9 +1596,13 @@ window.logoutAccount = async function() {
   currentSessionToken = null;
   try { localStorage.removeItem('MAGIC_ACTIVE_USER'); } catch (e) {}
 
-  ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui'].forEach(id => {
+  ['equip-ui', 'inventory-ui', 'skill-ui', 'quest-ui', 'npc-modal-ui', 'option-ui', 'merc-ui', 'party-control-modal', 'game-tip-modal', 'trade-modal-ui', 'immersive-20-modal', 'stat-alloc-modal'].forEach(id => {
     document.getElementById(id)?.classList.add('hidden');
   });
+  window.closeWorldMapUI?.(true);
+  window.closeShireMapUI?.(true);
+  // 로그아웃 시 로그인 화면을 즉시 세로모드로 전환!
+  window.enterPreGamePortraitView?.();
 
   document.getElementById('game-wrapper').style.display = 'none';
   document.getElementById('char-select-ui').style.display = 'none';

@@ -706,8 +706,8 @@ function updateClosedChatHudFeed() {
   const win = document.getElementById('chat-window-ui');
   if (!feedEl) return;
   const isChatClosed = !win || win.classList.contains('hidden');
-  // 가로모드에서는 좌측 상단 체력바 바로 아래에 기본 채팅 2줄을 상시 표시 (단, 대화창이 열려 있을 때도 겹침 없이 표시 가능)
-  if (!window.isLandscapeMode && !isChatClosed) {
+  // 대화창이 열려 있으면 상단 2줄 채팅은 숨기고, 대화창이 닫혔을 때만 상단에 2줄 표시
+  if (!isChatClosed) {
     feedEl.classList.add('hidden');
     return;
   }
@@ -1302,7 +1302,7 @@ window.showHelpModal = function(topicKey, ev) {
   if (!pop) {
     pop = document.createElement('div');
     pop.id = 'global-help-popover';
-    pop.style.cssText = 'position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:999999; display:none; width:min(94vw, 355px); max-height:78dvh; background:transparent; pointer-events:auto;';
+    pop.style.cssText = 'position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:999999; display:none; width:min(88%, 355px); max-height:82%; background:transparent; pointer-events:auto;';
     document.body.appendChild(pop);
     document.addEventListener('pointerdown', (e) => {
       if (pop.style.display !== 'none' && !pop.contains(e.target) && !e.target.classList?.contains('help-q-btn')) {
@@ -1310,6 +1310,13 @@ window.showHelpModal = function(topicKey, ev) {
       }
     });
   }
+  const gw = document.getElementById('game-wrapper');
+  const inGameActive = Boolean(gw && gw.style.display !== 'none');
+  const hostParent = inGameActive ? gw : document.body;
+  if (pop.parentElement !== hostParent) {
+    hostParent.appendChild(pop);
+  }
+  pop.style.position = inGameActive ? 'absolute' : 'fixed';
   if (pop.style.display === 'block' && pop.getAttribute('data-topic') === topicKey) {
     pop.style.display = 'none';
     return;
@@ -1328,7 +1335,7 @@ window.showHelpModal = function(topicKey, ev) {
   pop.style.display = 'block';
 };
 
-let modalsInitialized = false;
+var modalsInitialized = false;
 function ensureAllGameModals() {
   if (modalsInitialized) return;
   modalsInitialized = true;
@@ -1342,9 +1349,9 @@ function ensureAllGameModals() {
         70% { transform: translate(-50%, -50%) scale(1.2); box-shadow: 0 0 0 8px rgba(74, 222, 128, 0); }
         100% { transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
       }
-      .rpg-overlay-modal { position:fixed !important; inset:0 !important; width:100vw !important; height:100dvh !important; background:rgba(0,0,0,0.45) !important; backdrop-filter:none !important; z-index:25000 !important; display:none; align-items:center !important; justify-content:center !important; padding:8px !important; pointer-events:auto !important; }
+      .rpg-overlay-modal { position:absolute !important; inset:0 !important; width:100% !important; height:100% !important; background:rgba(0,0,0,0.52) !important; backdrop-filter:none !important; z-index:25000 !important; display:none; align-items:center !important; justify-content:center !important; padding:6px !important; pointer-events:auto !important; }
       .rpg-overlay-modal.active-modal { display:flex !important; }
-      .rpg-modal-box { position:relative; width:min(92vw, 460px); height:min(86dvh, 820px); flex:0 0 auto; background:#141210; border:2px solid #b45309; border-radius:10px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 0 35px #000; color:#fff; }
+      .rpg-modal-box { position:relative; aspect-ratio: 768 / 1376; width:min(92vw, 460px); height:min(86dvh, 820px); flex:0 0 auto; background:#141210; border:2px solid #b45309; border-radius:10px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 0 35px #000; color:#fff; }
       .rpg-close-floating { position:absolute; top:8px; right:8px; background:rgba(153,27,27,0.9); color:#fff; border:1px solid #f87171; border-radius:6px; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:12px; z-index:60; box-shadow:0 2px 6px #000; }
       .rpg-close-floating:hover { background:#dc2626; }
 
@@ -1402,20 +1409,20 @@ function ensureAllGameModals() {
         white-space: nowrap;
         z-index: 10;
       }
-      #item-detail, #skill-detail {
-        min-height: 104px !important;
-        padding: 8px 10px !important;
-        font-size: 12.5px !important;
-        line-height: 1.48 !important;
+      body:not(.landscape-mode) #item-detail, body:not(.landscape-mode) #skill-detail {
+        min-height: 96px !important;
+        padding: 7px 9px !important;
+        font-size: 12px !important;
+        line-height: 1.42 !important;
         background: #090b10 !important;
         border: 1.5px solid #5a462a !important;
         border-radius: 6px !important;
       }
-      #merc-item-detail {
-        min-height: 64px !important;
+      body:not(.landscape-mode) #merc-item-detail {
+        min-height: 60px !important;
         padding: 6px 8px !important;
-        font-size: 12px !important;
-        line-height: 1.45 !important;
+        font-size: 11.5px !important;
+        line-height: 1.4 !important;
       }
       .help-q-btn {
         display: inline-flex;
@@ -1452,7 +1459,7 @@ function ensureAllGameModals() {
       }
 
       .detail-me-marker { position:absolute; transform:translate(-50%,-50%); pointer-events:none; z-index:45; }
-      .shop-list { display:flex; flex-direction:column; gap:5px; max-height:42vh; overflow-y:auto; padding-right:2px; }
+      .shop-list { display:flex; flex-direction:column; gap:5px; flex:1 1 auto; min-height:0; max-height:240px; overflow-y:auto !important; -webkit-overflow-scrolling:touch !important; touch-action:pan-y !important; padding-right:2px; }
       .shop-row { display:flex; justify-content:space-between; align-items:center; background:#1f1c18; border:1px solid #3d3020; border-radius:6px; padding:5px 7px; gap:6px; }
       .shop-buy-btn { background:#b45309; color:#fff; border:1px solid #facc15; border-radius:4px; padding:4px 8px; font-size:10.5px; font-weight:bold; cursor:pointer; white-space:nowrap; }
       .shop-buy-btn:hover { background:#d97706; }
@@ -1593,7 +1600,10 @@ function ensureAllGameModals() {
         e.preventDefault();
         e.stopPropagation();
         clearTimeout(mercPressTimer);
-        window.toggleMercUI();
+        if (!mercLongPressed) {
+          mercLongPressed = true;
+          window.openMercUI?.();
+        }
       });
 
 
@@ -1652,7 +1662,7 @@ function ensureAllGameModals() {
     const mercModal = document.createElement('div');
     mercModal.id = 'merc-ui';
     mercModal.className = 'modal-panel hidden';
-    mercModal.style.cssText = 'width:min(94vw, 375px); max-height:76vh; display:flex; flex-direction:column;';
+    mercModal.style.cssText = 'width:min(92%, 375px); display:flex; flex-direction:column;';
     mercModal.innerHTML = `
       <div class="modal-header drag-handle" id="merc-modal-header">⚔️ 용병 상태·가방 <button class="help-q-btn" onclick="showHelpModal('merc', event)" title="용병 도움말">?</button></div>
       <button class="close-x-btn" onclick="toggleMercUI()">✖</button>
@@ -1669,11 +1679,14 @@ function ensureAllGameModals() {
   }
   wm.className = 'rpg-overlay-modal';
   wm.innerHTML = `
-    <div class="rpg-modal-box" style="width:min(92vw, 460px); height:min(86dvh, 820px); flex:0 0 auto;" onclick="event.stopPropagation()">
+    <div class="rpg-modal-box" onclick="event.stopPropagation()">
+      <button type="button" id="world-map-zoom-btn" class="rpg-zoom-floating" onclick="event.stopPropagation(); window.cycleMapModalZoom('world')">🔍 확대 1x</button>
       <button class="rpg-close-floating" onclick="event.stopPropagation(); closeWorldMapUI(true)">✕ 닫기</button>
-      <div id="world-map-bg-box" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden; touch-action:manipulation;">
-        <img src="./map/worldmap.jpg" style="width:100%; height:100%; object-fit:fill; display:block; pointer-events:none; user-select:none;" />
-        <div id="world-map-hotspots" style="position:absolute; inset:0; z-index:20; touch-action:manipulation;"></div>
+      <div id="world-map-scroll-viewport" style="position:relative; width:100%; height:100%; overflow:auto; background:#090d16; touch-action:pan-x pan-y;">
+        <div id="world-map-bg-box" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden; touch-action:pan-x pan-y;">
+          <img id="world-map-img-el" src="./map/worldmap.jpg" style="width:100%; height:100%; object-fit:fill; display:block; pointer-events:none; user-select:none;" />
+          <div id="world-map-hotspots" style="position:absolute; inset:0; z-index:20; touch-action:pan-x pan-y;"></div>
+        </div>
       </div>
     </div>
   `;
@@ -1690,13 +1703,16 @@ function ensureAllGameModals() {
   }
   sm.className = 'rpg-overlay-modal';
   sm.innerHTML = `
-    <div class="rpg-modal-box" style="width:min(92vw, 460px); height:min(86dvh, 820px); flex:0 0 auto;" onclick="event.stopPropagation()">
-      <div id="detail-map-title-badge" style="position:absolute; top:8px; left:10px; z-index:60; background:rgba(15,23,42,0.88); border:1px solid #facc15; border-radius:6px; padding:4px 10px; font-size:12px; font-weight:bold; color:#fde047; pointer-events:none; box-shadow:0 2px 6px rgba(0,0,0,0.85);">🗺️ 지역 상세 지도</div>
+    <div class="rpg-modal-box" onclick="event.stopPropagation()">
+      <div id="detail-map-title-badge" style="position:absolute; top:5px; left:6px; z-index:60; background:rgba(15,23,42,0.92); border:1px solid #facc15; border-radius:5px; padding:2.5px 6px; font-size:9.5px; font-weight:bold; color:#fde047; pointer-events:none; box-shadow:0 2px 6px rgba(0,0,0,0.85); max-width:calc(100% - 118px); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🗺️ 상세 지도</div>
+      <button type="button" id="detail-map-zoom-btn" class="rpg-zoom-floating" onclick="event.stopPropagation(); window.cycleMapModalZoom('detail')">🔍 확대 1x</button>
       <button class="rpg-close-floating" onclick="event.stopPropagation(); closeShireMapUI(true)">✕ 닫기</button>
-      <div id="detail-map-canvas-wrap" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden; touch-action:manipulation;">
-        <canvas id="detail-map-fallback-canvas" width="400" height="720" style="position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none;"></canvas>
-        <img id="detail-map-img-el" src="./map/altria.jpg" onerror="this.style.opacity='0'" onload="this.style.opacity='1'" style="position:relative; z-index:5; width:100%; height:100%; object-fit:fill; display:block; pointer-events:none; user-select:none; transition:opacity 0.15s;" />
-        <div id="region-detail-overlay" style="position:absolute; inset:0; z-index:20; touch-action:manipulation;"></div>
+      <div id="detail-map-scroll-viewport" style="position:relative; width:100%; height:100%; overflow:auto; background:#090d16; touch-action:pan-x pan-y;">
+        <div id="detail-map-canvas-wrap" style="position:relative; width:100%; height:100%; background:#090d16; overflow:hidden; touch-action:pan-x pan-y;">
+          <canvas id="detail-map-fallback-canvas" width="384" height="688" style="position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none;"></canvas>
+          <img id="detail-map-img-el" src="./map/altria.jpg" onerror="this.style.opacity='0'" onload="this.style.opacity='1'" style="position:relative; z-index:5; width:100%; height:100%; object-fit:fill; display:block; pointer-events:none; user-select:none; transition:opacity 0.15s;" />
+          <div id="region-detail-overlay" style="position:absolute; inset:0; z-index:20; touch-action:pan-x pan-y;"></div>
+        </div>
       </div>
     </div>
   `;
@@ -1736,7 +1752,7 @@ function ensureAllGameModals() {
     const gt = document.createElement('div');
     gt.id = 'game-tip-modal';
     gt.className = 'modal-panel hidden';
-    gt.style.cssText = 'width:min(94vw, 360px); max-height:76dvh; z-index:9300; background:rgba(15, 18, 26, 0.97); border:2px solid #facc15; display:flex; flex-direction:column;';
+    gt.style.cssText = 'width:min(92%, 360px); z-index:9300; background:rgba(15, 18, 26, 0.97); border:2px solid #facc15; display:flex; flex-direction:column;';
     gt.innerHTML = `
       <div class="modal-header drag-handle" style="background:linear-gradient(90deg, #78350f, #1e293b, #78350f); border-bottom-color:#facc15;">
         💡 초보자 가이드 · 게임팁 <button class="help-q-btn" onclick="showHelpModal('guide', event)" title="가이드 도움말">?</button>
@@ -1752,7 +1768,7 @@ function ensureAllGameModals() {
     const tm = document.createElement('div');
     tm.id = 'trade-modal-ui';
     tm.className = 'modal-panel hidden';
-    tm.style.cssText = 'width:min(95vw, 370px); max-height:80dvh; z-index:9450; background:rgba(13, 17, 25, 0.98); border:2px solid #facc15; display:flex; flex-direction:column;';
+    tm.style.cssText = 'width:min(92%, 370px); z-index:9450; background:rgba(13, 17, 25, 0.98); border:2px solid #facc15; display:flex; flex-direction:column;';
     tm.innerHTML = `
       <div class="modal-header drag-handle" id="trade-modal-header" style="background:linear-gradient(90deg, #713f12, #1e293b, #065f46); border-bottom-color:#facc15;">
         🤝 모험가 안전 거래창
@@ -1901,23 +1917,38 @@ function resolveDetailMapWarpTarget(regionId, leftPct, topPct, widthPct, heightP
 
   const presetZones = ALL_REGION_TMJ_PORTALS[regionId];
   if (presetZones && presetZones.length > 0) {
-    let bestZone = presetZones[0];
-    let bestDist = Infinity;
-    presetZones.forEach(z => {
-      const zcx = z.leftPct + z.widthPct / 2;
-      const zcy = z.topPct + z.heightPct / 2;
-      const d = Math.hypot(cxPct - zcx, cyPct - zcy);
-      if (d < bestDist) {
-        bestDist = d;
-        bestZone = z;
-      }
-    });
-    if (bestDist <= 28 || widthPct > 0) {
+    // 1) TMJ 오브젝트 파싱(widthPct > 0)일 때는 가장 가까운 거점 데이터와 매칭
+    if (widthPct > 0) {
+      let bestZone = presetZones[0];
+      let bestDist = Infinity;
+      presetZones.forEach(z => {
+        const zcx = z.leftPct + z.widthPct / 2;
+        const zcy = z.topPct + z.heightPct / 2;
+        const d = Math.hypot(cxPct - zcx, cyPct - zcy);
+        if (d < bestDist) {
+          bestDist = d;
+          bestZone = z;
+        }
+      });
       return {
         worldX: bestZone.worldX,
         worldY: bestZone.worldY,
         zoneType: bestZone.zoneType,
         label: bestZone.label
+      };
+    }
+    // 2) 유저가 지도를 직접 터치(widthPct === 0)했을 때는 정확히 해당 거점 사각형 내부를 터치한 경우에만 거점으로 스냅하고,
+    // 그 외 지점은 터치한 실제 좌표(cxPct, cyPct) 그대로 이동하여 확대/일반 터치 시 좌표 오차를 0%로 보정!
+    const insideZone = presetZones.find(z =>
+      cxPct >= z.leftPct && cxPct <= (z.leftPct + z.widthPct) &&
+      cyPct >= z.topPct  && cyPct <= (z.topPct + z.heightPct)
+    );
+    if (insideZone) {
+      return {
+        worldX: insideZone.worldX,
+        worldY: insideZone.worldY,
+        zoneType: insideZone.zoneType,
+        label: insideZone.label
       };
     }
   }
@@ -2122,11 +2153,12 @@ window.openWorldMapUI = async function() {
   const modal = document.getElementById('world-map-ui');
   if (!modal) return;
 
-  const hostParent = document.fullscreenElement || document.webkitFullscreenElement || document.getElementById('game-wrapper') || document.body;
+  const hostParent = document.getElementById('game-wrapper') || document.body;
   if (modal.parentElement !== hostParent) {
     hostParent.appendChild(modal);
   }
 
+  window.syncMapModalBoxSize?.();
   window._mapModalOpenedAt = Date.now();
   renderWorldMapHotspots();
   modal.classList.remove('hidden');
@@ -2162,7 +2194,7 @@ function bindMapTapAction(el, callback) {
     if (Date.now() - (window._mapModalOpenedAt || 0) < 220) return;
     if (e && e.type === 'pointerup' && downX && downY) {
       const moved = Math.hypot((e.clientX || 0) - downX, (e.clientY || 0) - downY);
-      if (moved > 22) return;
+      if (moved > 12) return;
     }
     callback(e);
   };
@@ -2236,6 +2268,36 @@ function renderWorldMapHotspots() {
       container.appendChild(zoneEl);
     });
   }
+
+  let wmDownX = 0, wmDownY = 0;
+  container.onpointerdown = (e) => {
+    wmDownX = e.clientX || 0;
+    wmDownY = e.clientY || 0;
+  };
+  const handleWorldMapBgTap = (e) => {
+    if (e.target && e.target !== container) return;
+    if (Date.now() - (window._mapModalOpenedAt || 0) < 220) return;
+    if (e.type === 'pointerup' && wmDownX && wmDownY && Math.hypot((e.clientX || 0) - wmDownX, (e.clientY || 0) - wmDownY) > 22) return;
+    const pctPt = window.getElementTouchPctCoords ? window.getElementTouchPctCoords(container, e) : null;
+    if (!pctPt) return;
+    let bestReg = null, bestDist = Infinity;
+    if (window.worldMapTmjZones && window.worldMapTmjZones.length > 0) {
+      window.worldMapTmjZones.forEach(z => {
+        const cx = z.leftPct + z.widthPct / 2;
+        const cy = z.topPct + z.heightPct / 2;
+        const d = Math.hypot(pctPt.pctX - cx, pctPt.pctY - cy);
+        if (d < bestDist) { bestDist = d; bestReg = z; }
+      });
+      if (bestReg && bestDist <= 14) {
+        if (window.isUiTouchDebounced?.('worldMapWarp', 360)) return;
+        window._mapModalOpenedAt = 0;
+        window.closeWorldMapUI(true);
+        loadMapData(`${bestReg.regionId}_sub1`);
+        window.addChat(`✈️ [월드맵 이동] '${bestReg.regionName}' - ${bestReg.subName} 안전지대로 이동했습니다!`, 'log-sys');
+      }
+    }
+  };
+  container.onpointerup = handleWorldMapBgTap;
 }
 
 window.openRegionDetailMap = async function() {
@@ -2253,10 +2315,11 @@ window.openRegionDetailMap = async function() {
   const ui = document.getElementById('shire-map-ui');
   if (!ui) return;
 
-  const hostParent = document.fullscreenElement || document.webkitFullscreenElement || document.getElementById('game-wrapper') || document.body;
+  const hostParent = document.getElementById('game-wrapper') || document.body;
   if (ui.parentElement !== hostParent) {
     hostParent.appendChild(ui);
   }
+  window.syncMapModalBoxSize?.();
 
   const { reg, jpgUrls } = getRegionMapAssets(currentRegionKey);
   const titleBadge = document.getElementById('detail-map-title-badge');
@@ -2359,17 +2422,11 @@ function renderRegionDetailOverlay() {
       if (Math.hypot((e.clientX || 0) - ovDownX, (e.clientY || 0) - ovDownY) > 22) return;
     }
     if (window.isUiTouchDebounced?.('detailMapMove', 340)) return;
-    const rect = overlay.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    const clientX = e.clientX ?? (e.changedTouches && e.changedTouches[0]?.clientX) ?? 0;
-    const clientY = e.clientY ?? (e.changedTouches && e.changedTouches[0]?.clientY) ?? 0;
-    const clickX = clientX - rect.left;
-    const clickY = clientY - rect.top;
-    const pctX = (clickX / rect.width) * 100;
-    const pctY = (clickY / rect.height) * 100;
+    const pctPt = window.getElementTouchPctCoords ? window.getElementTouchPctCoords(overlay, e) : null;
+    if (!pctPt) return;
 
     window._mapModalOpenedAt = 0;
-    const resolved = resolveDetailMapWarpTarget(currentRegionKey, pctX, pctY, 0, 0, '', mapData);
+    const resolved = resolveDetailMapWarpTarget(currentRegionKey, pctPt.pctX, pctPt.pctY, 0, 0, '', mapData);
     movePlayerViaDetailMap(resolved.worldX, resolved.worldY, resolved.zoneType, resolved.label);
   };
   overlay.onpointerup = handleOverlayTap;
@@ -2498,31 +2555,225 @@ window.getGameClientCoords = function(clientX, clientY) {
   };
 };
 
+window.getElementTouchPctCoords = function(el, e) {
+  if (!el || !e) return null;
+  const rect = el.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const pt = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
+  const clientX = pt?.clientX ?? e.clientX ?? 0;
+  const clientY = pt?.clientY ?? e.clientY ?? 0;
+  let pctX, pctY;
+  if (window.isForceLandscapeRotated && window.isForceLandscapeRotated()) {
+    // 90도 시계방향 회전 상태: 화면 Y방향이 맵의 가로(X: 0->100%), 화면 X 역방향이 맵의 세로(Y: 0->100%)
+    pctX = ((clientY - rect.top) / rect.height) * 100;
+    pctY = ((rect.right - clientX) / rect.width) * 100;
+  } else {
+    pctX = ((clientX - rect.left) / rect.width) * 100;
+    pctY = ((clientY - rect.top) / rect.height) * 100;
+  }
+  return {
+    pctX: Math.max(0, Math.min(100, pctX)),
+    pctY: Math.max(0, Math.min(100, pctY))
+  };
+};
+
+window._mapZoomState = { world: 1, detail: 1 };
+
+window.applyMapInnerZoomLayout = function(kind = 'detail') {
+  const scale = window._mapZoomState?.[kind] || 1;
+  const modalId = kind === 'world' ? 'world-map-ui' : 'shire-map-ui';
+  const innerId = kind === 'world' ? 'world-map-bg-box' : 'detail-map-canvas-wrap';
+  const scrollId = kind === 'world' ? 'world-map-scroll-viewport' : 'detail-map-scroll-viewport';
+  const btnId = kind === 'world' ? 'world-map-zoom-btn' : 'detail-map-zoom-btn';
+
+  const box = document.querySelector(`#${modalId} .rpg-modal-box`);
+  const inner = document.getElementById(innerId);
+  const scrollVp = document.getElementById(scrollId);
+  const btn = document.getElementById(btnId);
+  if (btn) {
+    btn.innerText = scale > 1 ? `🔎 ${scale}x (축소)` : `🔍 확대 ${scale}x`;
+  }
+  if (!box || !inner) return;
+
+  const baseW = parseFloat(box.dataset.baseW) || box.clientWidth || 220;
+  const baseH = parseFloat(box.dataset.baseH) || box.clientHeight || 394;
+
+  // 확대 시 모달 박스 자체도 화면 가로 여유 범위 내에서 함께 넓혀 시야를 키우고, 내부 맵은 항상 정확한 768:1376 원본 비율(baseW*scale x baseH*scale) 유지!
+  const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth || 360, height: window.innerHeight || 640 };
+  const boxDisplayW = scale > 1
+    ? Math.min(Math.round(vp.width * 0.88), Math.round(baseW * scale))
+    : baseW;
+  box.style.width = `${boxDisplayW}px`;
+  box.style.height = `${baseH}px`;
+
+  const targetInnerW = Math.round(baseW * scale);
+  const targetInnerH = Math.round(baseH * scale);
+  inner.style.width = `${targetInnerW}px`;
+  inner.style.height = `${targetInnerH}px`;
+
+  if (scrollVp && scale > 1) {
+    requestAnimationFrame(() => {
+      // 상세지도의 경우 내 캐릭터 위치(player.x, player.y)가 중앙에 오도록 자동 스크롤 포커스!
+      if (kind === 'detail' && typeof player !== 'undefined' && player && HardcodedMapDB?.[currentMapKey]) {
+        const md = HardcodedMapDB[currentMapKey];
+        const pxRatio = Math.max(0, Math.min(1, (player.x || 0) / Math.max(1, md.width)));
+        const pyRatio = Math.max(0, Math.min(1, (player.y || 0) / Math.max(1, md.height)));
+        scrollVp.scrollLeft = Math.max(0, Math.round(targetInnerW * pxRatio - scrollVp.clientWidth / 2));
+        scrollVp.scrollTop  = Math.max(0, Math.round(targetInnerH * pyRatio - scrollVp.clientHeight / 2));
+      } else {
+        scrollVp.scrollLeft = Math.max(0, Math.round((targetInnerW - scrollVp.clientWidth) / 2));
+        scrollVp.scrollTop  = Math.max(0, Math.round((targetInnerH - scrollVp.clientHeight) / 2));
+      }
+    });
+  } else if (scrollVp) {
+    scrollVp.scrollLeft = 0;
+    scrollVp.scrollTop = 0;
+  }
+};
+
+window.cycleMapModalZoom = function(kind = 'detail') {
+  if (!window._mapZoomState) window._mapZoomState = { world: 1, detail: 1 };
+  const cur = window._mapZoomState[kind] || 1;
+  const next = cur === 1 ? 1.8 : (cur === 1.8 ? 2.5 : 1);
+  window._mapZoomState[kind] = next;
+  window.SoundSystem?.playUiClick?.();
+  window.applyMapInnerZoomLayout(kind);
+};
+
+window.syncMapModalBoxSize = function() {
+  const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth || 360, height: window.innerHeight || 640 };
+  const aspect = 768 / 1376; // 원본 세로형 맵 비율 (768x1376) 엄격 유지
+  const maxH = window.isLandscapeMode
+    ? Math.max(180, Math.min(vp.height - 10, Math.floor(vp.height * 0.96)))
+    : Math.max(260, Math.min(820, Math.floor(vp.height * 0.86)));
+  const maxW = window.isLandscapeMode
+    ? Math.max(110, Math.floor(vp.width * 0.86))
+    : Math.max(180, Math.min(460, Math.floor(vp.width * 0.92)));
+  let boxH = maxH;
+  let boxW = Math.round(boxH * aspect);
+  if (boxW > maxW) {
+    boxW = maxW;
+    boxH = Math.round(boxW / aspect);
+  }
+  document.querySelectorAll('#world-map-ui .rpg-modal-box, #shire-map-ui .rpg-modal-box').forEach(box => {
+    box.dataset.baseW = String(boxW);
+    box.dataset.baseH = String(boxH);
+  });
+  window.applyMapInnerZoomLayout('world');
+  window.applyMapInnerZoomLayout('detail');
+};
+
 window.syncPartyHudPlacement = function() {
   const pHud = document.getElementById('party-hud');
-  if (!pHud) return;
-  if (window.isLandscapeMode) {
-    const leftSlot = document.getElementById('left-party-hud-slot');
-    if (leftSlot && pHud.parentElement !== leftSlot) {
-      leftSlot.appendChild(pHud);
+  if (pHud) {
+    if (window.isLandscapeMode) {
+      const leftSlot = document.getElementById('left-party-hud-slot');
+      if (leftSlot && pHud.parentElement !== leftSlot) {
+        leftSlot.appendChild(pHud);
+      }
+    } else {
+      const rightHud = document.querySelector('#top-hud .right-hud');
+      if (rightHud && pHud.parentElement !== rightHud) {
+        const safeBadge = document.getElementById('safe-zone-badge');
+        if (safeBadge && safeBadge.parentElement === rightHud) {
+          rightHud.insertBefore(pHud, safeBadge);
+        } else {
+          rightHud.appendChild(pHud);
+        }
+      }
     }
-  } else {
-    const rightHud = document.querySelector('#top-hud .right-hud');
-    if (rightHud && pHud.parentElement !== rightHud) {
-      const safeBadge = document.getElementById('safe-zone-badge');
-      if (safeBadge && safeBadge.parentElement === rightHud) {
-        rightHud.insertBefore(pHud, safeBadge);
-      } else {
-        rightHud.appendChild(pHud);
+  }
+
+  // 상단 2줄 채팅(#hud-closed-chat-feed) 위치 동기화:
+  // - 가로모드: 최상단 우측(몬스터 타겟바 우측 · 옵션 등 메뉴 아이콘 바로 좌측)에 1열로 배치
+  // - 세로모드: 좌측 상단 플레이어 체력바 바로 아래에 배치
+  const chatFeed = document.getElementById('hud-closed-chat-feed');
+  if (chatFeed) {
+    if (window.isLandscapeMode) {
+      const rightGroup = document.getElementById('top-right-hud-group') || document.querySelector('#top-hud .top-right-hud-group');
+      const topMenu = document.getElementById('landscape-top-menu');
+      if (rightGroup && chatFeed.parentElement !== rightGroup) {
+        if (topMenu && topMenu.parentElement === rightGroup) {
+          rightGroup.insertBefore(chatFeed, topMenu);
+        } else {
+          rightGroup.insertBefore(chatFeed, rightGroup.firstChild);
+        }
+      }
+    } else {
+      const leftWrap = document.getElementById('top-left-hud-wrap');
+      const leftPartySlot = document.getElementById('left-party-hud-slot');
+      if (leftWrap && chatFeed.parentElement !== leftWrap) {
+        if (leftPartySlot && leftPartySlot.parentElement === leftWrap) {
+          leftWrap.insertBefore(chatFeed, leftPartySlot);
+        } else {
+          leftWrap.appendChild(chatFeed);
+        }
       }
     }
   }
 };
 
-window.setLandscapeMode = function(enable) {
+// 🌟 로그인 / 로그아웃 / 캐릭터 선택창 / 캐릭터 생성창 진입 시:
+// 저장된 인게임 옵션(OptionState.screenMode)은 그대로 보존하면서 화면만 즉시 세로모드로 전환!
+window.enterPreGamePortraitView = function() {
+  window.isLandscapeMode = false;
+  document.body.classList.remove('landscape-mode', 'force-landscape-rotate');
+  try {
+    if (screen.orientation && typeof screen.orientation.unlock === 'function') {
+      screen.orientation.unlock();
+    }
+  } catch (e) {}
+  ['mode-switch-confirm-modal', 'party-invite-popup', 'trade-invite-popup', 'player-target-action-bar', 'global-help-popover'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (id === 'mode-switch-confirm-modal') el.classList.add('hidden');
+    else el.style.display = 'none';
+  });
+  window.syncPartyHudPlacement?.();
+  window.forceResizePixiApp?.();
+};
+
+// 🌟 캐릭터 접속 / 생성 완료 후 인게임 진입 시:
+// 옵션에 저장된 모드(기본값: 'landscape' 가로모드)로 즉시 작동!
+window.applyInGameScreenMode = function(savedCharRecord = null) {
+  const charMode = savedCharRecord?.char_data?.options?.screenMode || savedCharRecord?.options?.screenMode || null;
+  let localMode = null;
+  try {
+    localMode = localStorage.getItem('MAGIC_SAVED_SCREEN_MODE');
+  } catch (e) {}
+  let targetMode = 'landscape';
+  if (charMode === 'portrait' || charMode === 'landscape') {
+    targetMode = charMode;
+  } else if (localMode === 'portrait' || localMode === 'landscape') {
+    targetMode = localMode;
+  } else if (window.OptionState?.screenMode === 'portrait' || window.OptionState?.screenMode === 'landscape') {
+    targetMode = window.OptionState.screenMode;
+  }
+  window.setLandscapeMode(targetMode === 'landscape', true);
+};
+
+window.setLandscapeMode = function(enable, silentOptionSync = false) {
   window.isLandscapeMode = Boolean(enable);
   document.body.classList.toggle('landscape-mode', window.isLandscapeMode);
   window.syncLandscapeViewportRotation();
+
+  const modeKey = window.isLandscapeMode ? 'landscape' : 'portrait';
+  if (window.OptionState) {
+    window.OptionState.screenMode = modeKey;
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('MAGIC_SAVED_SCREEN_MODE', modeKey);
+    }
+  } catch (e) {}
+  if (!silentOptionSync && typeof window.setScreenOrientationModeOption === 'function') {
+    window.setScreenOrientationModeOption(modeKey, true);
+  } else {
+    const optUi = document.getElementById('option-ui');
+    if (optUi && !optUi.classList.contains('hidden') && typeof window.renderOptionUI === 'function') {
+      window.renderOptionUI();
+    }
+  }
 
   const modeBtn = document.getElementById('mode-toggle-fab');
   const modeIcon = document.getElementById('mode-toggle-icon');
@@ -2595,6 +2846,8 @@ window.setLandscapeMode = function(enable) {
   }
 
   window.syncPartyHudPlacement();
+  window.syncMapModalBoxSize?.();
+  window.renderHotbarSlots?.();
   window.updateMercHUD?.();
   window.updateStatusHUD?.();
   window.updateBuffUI?.();
@@ -2624,8 +2877,65 @@ window.setLandscapeMode = function(enable) {
   }, 220);
 };
 
+window._pendingTargetLandscapeMode = null;
+
+window.requestToggleLandscapeMode = function(explicitTarget = null) {
+  const nextIsLandscape = typeof explicitTarget === 'boolean'
+    ? explicitTarget
+    : (explicitTarget === 'landscape' ? true : (explicitTarget === 'portrait' ? false : !window.isLandscapeMode));
+
+  if (nextIsLandscape === Boolean(window.isLandscapeMode)) {
+    return;
+  }
+
+  window._pendingTargetLandscapeMode = nextIsLandscape;
+  let modal = document.getElementById('mode-switch-confirm-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'mode-switch-confirm-modal';
+    modal.className = 'mode-confirm-overlay hidden';
+    modal.onclick = (e) => { if (e.target === modal) window.confirmModeSwitch(false); };
+    modal.innerHTML = `
+      <div class="mode-confirm-card" onclick="event.stopPropagation()">
+        <div class="mode-confirm-title" id="mode-confirm-title">🌄 가로모드 전환</div>
+        <div class="mode-confirm-desc" id="mode-confirm-desc">화면을 가로모드로 전환하시겠습니까?</div>
+        <div class="mode-confirm-btns">
+          <button type="button" class="mode-confirm-btn ok" id="mode-confirm-ok-btn" onclick="window.confirmModeSwitch(true)">확인</button>
+          <button type="button" class="mode-confirm-btn cancel" id="mode-confirm-cancel-btn" onclick="window.confirmModeSwitch(false)">취소</button>
+        </div>
+      </div>
+    `;
+    (document.getElementById('game-wrapper') || document.body).appendChild(modal);
+  }
+
+  const titleEl = document.getElementById('mode-confirm-title');
+  const descEl = document.getElementById('mode-confirm-desc');
+  if (titleEl) {
+    titleEl.innerText = nextIsLandscape ? '🌄 가로모드 전환 확인' : '📱 세로모드 전환 확인';
+  }
+  if (descEl) {
+    descEl.innerText = nextIsLandscape
+      ? '화면을 가로모드(와이드 인터페이스)로 전환하시겠습니까?'
+      : '화면을 세로모드(기본 인터페이스)로 전환하시겠습니까?';
+  }
+  modal.classList.remove('hidden');
+};
+
+window.confirmModeSwitch = function(confirmed) {
+  const modal = document.getElementById('mode-switch-confirm-modal');
+  if (modal) modal.classList.add('hidden');
+  window.SoundSystem?.playUiClick?.();
+  if (confirmed && typeof window._pendingTargetLandscapeMode === 'boolean') {
+    const target = window._pendingTargetLandscapeMode;
+    window._pendingTargetLandscapeMode = null;
+    window.setLandscapeMode(target);
+  } else {
+    window._pendingTargetLandscapeMode = null;
+  }
+};
+
 window.toggleLandscapeMode = function() {
-  window.setLandscapeMode(!window.isLandscapeMode);
+  window.requestToggleLandscapeMode(!window.isLandscapeMode);
 };
 
 window.setupModeToggleFab = function() {
@@ -2637,6 +2947,19 @@ window.setupModeToggleFab = function() {
   let moved = false;
   let startX = 0, startY = 0;
   let origLeft = 0, origTop = 0;
+  let lastTriggerTs = 0;
+
+  const triggerModeConfirm = (e) => {
+    if (e) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }
+    const now = Date.now();
+    if (now - lastTriggerTs < 300) return;
+    lastTriggerTs = now;
+    window.SoundSystem?.playUiClick?.();
+    window.toggleLandscapeMode();
+  };
 
   btn.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
@@ -2648,7 +2971,9 @@ window.setupModeToggleFab = function() {
     startY = gp.y;
     origLeft = btn.offsetLeft;
     origTop = btn.offsetTop;
-    try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+    if (!window.isLandscapeMode) {
+      try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+    }
   });
 
   btn.addEventListener('pointermove', (e) => {
@@ -2656,7 +2981,7 @@ window.setupModeToggleFab = function() {
     const gp = window.getGameClientCoords(e.clientX, e.clientY);
     const dx = gp.x - startX;
     const dy = gp.y - startY;
-    if (!moved && Math.hypot(dx, dy) >= 7) {
+    if (!moved && Math.hypot(dx, dy) >= 9) {
       moved = true;
       btn.classList.add('custom-dragged');
     }
@@ -2675,24 +3000,37 @@ window.setupModeToggleFab = function() {
     }
   });
 
-  const finishPointer = (e) => {
-    if (!dragging) return;
+  btn.addEventListener('pointerup', (e) => {
     e.stopPropagation();
     const wasMoved = moved;
     dragging = false;
     moved = false;
-    try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
-    if (!wasMoved) {
-      window.SoundSystem?.playUiClick?.();
-      window.toggleLandscapeMode();
+    if (!window.isLandscapeMode) {
+      try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
     }
-  };
+    if (!wasMoved) {
+      triggerModeConfirm(e);
+    }
+  });
 
-  btn.addEventListener('pointerup', finishPointer);
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!moved) {
+      triggerModeConfirm(e);
+    }
+  });
+
   btn.addEventListener('pointercancel', () => {
     dragging = false;
     moved = false;
   });
+
+  const chatFab = document.getElementById('chat-toggle-fab');
+  if (chatFab && !chatFab._chatFabIsolated) {
+    chatFab._chatFabIsolated = true;
+    chatFab.addEventListener('pointerdown', (e) => e.stopPropagation());
+    chatFab.addEventListener('pointerup', (e) => e.stopPropagation());
+  }
 };
 
 function movePlayerViaDetailMap(tx, ty, zoneType = 'field', label = '') {

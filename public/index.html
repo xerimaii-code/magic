@@ -184,17 +184,8 @@
         <span id="gm-notice-text"></span>
     </div>
 
-    <!-- 상단 중앙 타겟 몬스터 체력바 (#top-hud 바깥 최상위 레이어로 분리하여 대화창·투명모드·2줄고정 위에서도 항상 선명하게 표시) -->
-    <div id="top-target-ui" style="display: none;">
-        <div class="target-bar-wrap">
-            <div id="target-hp-bar"></div>
-            <span id="target-name"></span>
-        </div>
-        <button id="target-close-btn" type="button" onpointerdown="clearTarget(event)" onclick="clearTarget(event)" title="타겟 해제">✖</button>
-    </div>
-
     <div id="top-hud">
-        <!-- 좌측 상단 플레이어 체력바(플레이어 이름 표기) + 바로 아래 기본채팅 2줄 + 바로 아래 파티원 HUD -->
+        <!-- 1) 좌측 상단 플레이어 체력바(플레이어 이름 표기) + 바로 아래 파티원 HUD -->
         <div class="top-left-hud-wrap" id="top-left-hud-wrap">
             <div class="profile-section compact" onclick="toggleEquipUI()" title="클릭하여 캐릭터 상태/장비창 열기">
                 <div class="portrait-ring" id="class-icon"><svg width="28" height="28" viewBox="0 0 32 32" style="display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.85));"><defs><linearGradient id="kSh" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ef4444"/><stop offset="100%" stop-color="#7f1d1d"/></linearGradient></defs><path d="M16 3 L27 7 V15 C27 22.5 21.8 27.2 16 29.5 C10.2 27.2 5 22.5 5 15 V7 Z" fill="url(#kSh)" stroke="#facc15" stroke-width="2"/><path d="M16 6 L24 9 V14.8 C24 20.5 20 24.2 16 26.2 C12 24.2 8 20.5 8 14.8 V9 Z" fill="none" stroke="#fef08a" stroke-width="0.9" stroke-opacity="0.7"/><path d="M16 7 V24 M11 13 H21" stroke="#fde047" stroke-width="2.4" stroke-linecap="round"/><circle cx="16" cy="13" r="2.2" fill="#ffffff"/></svg></div>
@@ -213,7 +204,16 @@
             <div id="left-party-hud-slot" class="left-party-hud-slot"></div>
         </div>
 
-        <div class="top-right-hud-group">
+        <!-- 2) 상단 몬스터 타겟 체력바 (가로모드 시 플레이어 체력바 우측에 1줄 깨짐 없이 컴팩트 배치) -->
+        <div id="top-target-ui" style="display: none;">
+            <div class="target-bar-wrap">
+                <div id="target-hp-bar"></div>
+                <span id="target-name"></span>
+            </div>
+            <button id="target-close-btn" type="button" onpointerdown="clearTarget(event)" onclick="clearTarget(event)" title="타겟 해제">✖</button>
+        </div>
+
+        <div class="top-right-hud-group" id="top-right-hud-group">
             <!-- 미니맵 좌측 아이콘형 메뉴 (가방 · 퀘스트 · 스킬 · 옵션 · 상태창) : 가로모드 시 게임 방해 없이 컴팩트 배치 -->
             <div id="landscape-top-menu" class="landscape-top-menu">
                 <button type="button" class="land-menu-icon-btn" onclick="toggleEquipUI()" title="캐릭터 정보 / 장비">
@@ -494,6 +494,17 @@
             <button class="menu-btn" id="bottom-quest-btn" onclick="toggleQuestUI()">📜 퀘스트</button>
             <button class="menu-btn" onclick="toggleSkillUI()">📕 스킬</button>
             <button class="menu-btn" onclick="toggleOptionUI()">⚙️ 옵션</button>
+        </div>
+    </div>
+    <!-- 🔄 가로/세로 화면 모드 전환 확인 모달 (확인 / 취소) -->
+    <div id="mode-switch-confirm-modal" class="mode-confirm-overlay hidden" onclick="if(event.target===this) window.confirmModeSwitch(false)">
+        <div class="mode-confirm-card" onclick="event.stopPropagation()">
+            <div class="mode-confirm-title" id="mode-confirm-title">🌄 가로모드 전환</div>
+            <div class="mode-confirm-desc" id="mode-confirm-desc">화면을 가로모드로 전환하시겠습니까?</div>
+            <div class="mode-confirm-btns">
+                <button type="button" class="mode-confirm-btn ok" id="mode-confirm-ok-btn" onclick="window.confirmModeSwitch(true)">확인</button>
+                <button type="button" class="mode-confirm-btn cancel" id="mode-confirm-cancel-btn" onclick="window.confirmModeSwitch(false)">취소</button>
+            </div>
         </div>
     </div>
     <!-- ⏳ 맵 로딩 화면 (단순 검은 화면 대신 진행 상태·지역명·팁 표시) -->

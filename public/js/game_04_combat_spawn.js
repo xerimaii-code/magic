@@ -4,6 +4,8 @@ window.onload = async () => {
   window._magicBootStarted = true;
   ensureAllGameModals();
   initOptionSystem();
+  // 로그인 화면 및 캐릭터 선택창은 항상 세로모드로 시작 (인게임 진입 시 저장된 가로/세로 모드 적용)
+  window.enterPreGamePortraitView?.();
   // 새로고침 즉시 저장된 이메일을 먼저 복원하고, 수파베이스 온라인 체크를 비동기로 즉시 시작 (황색 대기 지연 방지!)
   window.restoreRememberedEmailToInput?.();
   await loadEnvConfig();
@@ -40,6 +42,7 @@ window.onload = async () => {
   window.forceResizePixiApp = function() {
     if (!app || !app.renderer) return;
     window.syncLandscapeViewportRotation?.();
+    window.syncMapModalBoxSize?.();
     const cWrap = document.getElementById('canvas-wrapper') || wrapper;
     const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth || 360, height: window.innerHeight || 640 };
     const w = (cWrap && cWrap.clientWidth > 0) ? cWrap.clientWidth : vp.width;
@@ -262,6 +265,20 @@ window.startGame = function(selectedClass, customCharName = null, savedCharRecor
     player.y = Number(initSpawn.y);
     player.targetX = player.x;
     player.targetY = player.y;
+  }
+
+  // 🌟 인게임 진입 시(deferDisplay가 아닐 때) 옵션에 저장된 모드(기본값: 'landscape' 가로모드)로 즉시 자동 시작!
+  if (!deferDisplay) {
+    if (typeof window.applyInGameScreenMode === 'function') {
+      window.applyInGameScreenMode(savedCharRecord);
+    } else if (typeof window.setLandscapeMode === 'function') {
+      const savedModePref =
+        savedCharRecord?.char_data?.options?.screenMode ||
+        (() => { try { return localStorage.getItem('MAGIC_SAVED_SCREEN_MODE'); } catch (e) { return null; } })() ||
+        window.OptionState?.screenMode ||
+        'landscape';
+      window.setLandscapeMode(savedModePref !== 'portrait', true);
+    }
   }
 
   loadMapData(targetMap, targetPos);
@@ -503,20 +520,20 @@ window.buildConciseItemDetailHTML = function(item, index, mode = 'inventory', sl
     : `${sellBtnInline}<button class="shop-buy-btn" style="padding:3px 8px; font-size:10.5px; background:${isEq ? '#7f1d1d' : '#15803d'}; border-color:${isEq ? '#f87171' : '#4ade80'};" onclick="consumeInventoryItem(${index}, false)">${(isWeapon || isArmorOrAcc) ? (isEq ? '장착해제' : '장착') : '사용'}</button>`;
 
   return `
-    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:6px; border-bottom:1px solid #3d3020; padding-bottom:4px; margin-bottom:4px;">
-      <div style="display:flex; align-items:center; gap:6px; min-width:0; flex:1;">
+    <div class="concise-detail-hdr" style="display:flex; align-items:center; justify-content:space-between; gap:5px; border-bottom:1px solid #3d3020; padding-bottom:3px; margin-bottom:3px;">
+      <div style="display:flex; align-items:center; gap:5px; min-width:0; flex:1;">
         <div style="flex-shrink:0;">${window.getItemIconHTML(item.type)}</div>
-        <div style="color:${gColor}; font-size:13px; font-weight:900; line-height:1.3; white-space:normal; word-break:keep-all; overflow:visible;">
+        <div class="concise-detail-title" style="color:${gColor}; font-size:12px; font-weight:900; line-height:1.22; white-space:normal; word-break:keep-all; overflow:visible;">
           [${gName}] ${plusBadge}${iData.name}${qtyText}
-          <span style="font-size:10.5px; color:#9ca3af; font-weight:bold; margin-left:4px;">${iData.type || ''}</span>
+          <span style="font-size:9.8px; color:#9ca3af; font-weight:bold; margin-left:3px;">${iData.type || ''}</span>
         </div>
       </div>
-      <div style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
+      <div style="display:flex; align-items:center; gap:3px; flex-shrink:0;">
         ${enchantBtnInline}
         ${actionBtnHtml}
       </div>
     </div>
-    <div style="font-size:12px; font-weight:bold; line-height:1.4;">${statParts.join(' <span style="color:#4b5563;">|</span> ') || '<span style="color:#9ca3af;">특수 아이템</span>'}</div>
+    <div class="concise-detail-stats" style="font-size:11px; font-weight:bold; line-height:1.3;">${statParts.join(' <span style="color:#4b5563;">|</span> ') || '<span style="color:#9ca3af;">특수 아이템</span>'}</div>
     ${(() => {
       if (item.type && item.type.startsWith('BOOK_')) {
         const isMyClass = iData.reqClass === player.class;
@@ -2962,8 +2979,8 @@ function setupVirtualJoystickEvents() {
 
     const isRot = window.isForceLandscapeRotated && window.isForceLandscapeRotated();
     const rect = view.getBoundingClientRect();
-    const gp = isRot ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const vp = isRot ? window.getGameViewportSize() : { width: rect.width, height: rect.height };
+    const gp = isRot ? { x: e.clientY - rect.top, y: rect.right - e.clientX } : { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const vp = isRot ? { width: rect.height, height: rect.width } : { width: rect.width, height: rect.height };
     const relX = gp.x;
     const relY = gp.y;
 
@@ -2986,7 +3003,7 @@ function setupVirtualJoystickEvents() {
     if (joystickState.pointerId !== e.pointerId) return;
     const isRot = window.isForceLandscapeRotated && window.isForceLandscapeRotated();
     const rect = view.getBoundingClientRect();
-    const gp = isRot ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const gp = isRot ? { x: e.clientY - rect.top, y: rect.right - e.clientX } : { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const relX = gp.x;
     const relY = gp.y;
     const dx = relX - joystickState.startX;
@@ -3064,14 +3081,14 @@ function processCanvasTap(e) {
 
   const isRot = window.isForceLandscapeRotated && window.isForceLandscapeRotated();
   const rect = app.view.getBoundingClientRect();
-  const vp = isRot ? window.getGameViewportSize() : { width: rect.width, height: rect.height };
+  const vp = isRot ? { width: rect.height, height: rect.width } : { width: rect.width, height: rect.height };
   const scaleX = (app.renderer.width / app.renderer.resolution) / Math.max(1, vp.width);
   const scaleY = (app.renderer.height / app.renderer.resolution) / Math.max(1, vp.height);
   const zoom = camera.zoom || 1;
 
   const clientX = e.clientX !== undefined ? e.clientX : (e.touches?.[0]?.clientX || 0);
   const clientY = e.clientY !== undefined ? e.clientY : (e.touches?.[0]?.clientY || 0);
-  const localPt = isRot ? window.getGameClientCoords(clientX, clientY) : { x: clientX - rect.left, y: clientY - rect.top };
+  const localPt = isRot ? { x: clientY - rect.top, y: rect.right - clientX } : { x: clientX - rect.left, y: clientY - rect.top };
 
   const cx = (localPt.x * scaleX) / zoom + camera.x;
   const cy = (localPt.y * scaleY) / zoom + camera.y;

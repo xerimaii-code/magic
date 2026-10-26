@@ -480,7 +480,7 @@ window.renderBeginnerGuideNpcBody = function(tabKey = 'basic', targetContainerId
   const finalGuideHtml = `
     <div style="padding:2px 2px 4px 2px;">
       ${tabBarHtml}
-      <div style="max-height:46dvh; overflow-y:auto; padding-right:2px;">
+      <div class="guide-scroll-body" style="flex:1 1 auto; min-height:0; max-height:215px; overflow-y:auto !important; touch-action:pan-y; padding-right:2px;">
         ${contentHtml}
       </div>
     </div>
@@ -571,22 +571,24 @@ window.renderBankWarehouseModal = function() {
         </div>
       </div>
 
-      <!-- 계정 공유 아이템 창고 그리드 -->
-      <div style="background:#11141b; border:1px solid #b45309; border-radius:6px; padding:6px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <span style="font-size:11px; font-weight:bold; color:#fde047;">📦 계정 공유 창고 (${usedBankCount}/${maxSlots})</span>
-          <span style="font-size:9px; color:#86efac;">아이템 터치 시 가방으로 즉시 수령</span>
+      <div class="bank-warehouse-two-col" style="display:flex; flex-direction:column; gap:6px;">
+        <!-- 계정 공유 아이템 창고 그리드 -->
+        <div style="background:#11141b; border:1px solid #b45309; border-radius:6px; padding:6px; display:flex; flex-direction:column; min-width:0;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:4px;">
+            <span style="font-size:10.5px; font-weight:bold; color:#fde047;">📦 계정 공유 창고 (${usedBankCount}/${maxSlots})</span>
+            <span style="font-size:8.5px; color:#86efac;">터치 시 수령</span>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(34px, 1fr)); gap:3px; max-height:126px; overflow-y:auto; padding:3px; background:#090b10; border-radius:4px;">
+            ${bankGridHtml}
+          </div>
         </div>
-        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(36px, 1fr)); gap:3px; max-height:118px; overflow-y:auto; padding:2px; background:#090b10; border-radius:4px;">
-          ${bankGridHtml}
-        </div>
-      </div>
 
-      <!-- 내 가방에서 창고로 맡기기 -->
-      <div style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:6px;">
-        <div style="font-size:11px; font-weight:bold; color:#93c5fd; margin-bottom:4px;">🎒 내 가방 물품 창고에 맡기기</div>
-        <div style="display:flex; flex-direction:column; gap:3px; max-height:130px; overflow-y:auto;">
-          ${bagItemsHtml}
+        <!-- 내 가방에서 창고로 맡기기 -->
+        <div style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:6px; display:flex; flex-direction:column; min-width:0;">
+          <div style="font-size:10.5px; font-weight:bold; color:#93c5fd; margin-bottom:4px;">🎒 내 가방 물품 맡기기</div>
+          <div style="display:flex; flex-direction:column; gap:3px; max-height:126px; overflow-y:auto;">
+            ${bagItemsHtml}
+          </div>
         </div>
       </div>
     </div>
@@ -1444,28 +1446,36 @@ window.renderStatAllocModal = function() {
   };
 
   body.innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:center; background:#1a150e; border:1.5px solid #ca8a04; border-radius:7px; padding:7px 10px;">
-      <span style="font-size:12px; font-weight:bold; color:#fef08a;">✨ 잔여 스탯 포인트</span>
-      <span style="font-size:16px; font-weight:900; color:${remainPts > 0 ? '#4ade80' : '#9ca3af'};">${remainPts} P ${pendTotal > 0 ? `<span style="font-size:11px; color:#fde047;">(배분 대기: +${pendTotal})</span>` : ''}</span>
-    </div>
+    <div class="stat-alloc-landscape-grid">
+      <div class="stat-alloc-left-col">
+        ${rowsHtml}
+      </div>
 
-    ${rowsHtml}
+      <div class="stat-alloc-right-col">
+        <div class="stat-alloc-pts-banner" style="display:flex; justify-content:space-between; align-items:center; background:#1a150e; border:1.5px solid #ca8a04; border-radius:6px; padding:5px 8px;">
+          <span style="font-size:11px; font-weight:bold; color:#fef08a;">✨ 잔여 포인트</span>
+          <span style="font-size:14px; font-weight:900; color:${remainPts > 0 ? '#4ade80' : '#9ca3af'};">${remainPts} P ${pendTotal > 0 ? `<span style="font-size:10px; color:#fde047;">(+${pendTotal})</span>` : ''}</span>
+        </div>
 
-    <div style="background:#0c0e14; border:1px solid #3d3020; border-radius:7px; padding:8px 10px; font-size:11px; display:grid; grid-template-columns:1fr 1fr; gap:4px 10px;">
-      <div>최대 HP: ${diffFmt(cStatsNow.calcMaxHp, cStatsPreview.calcMaxHp)}</div>
-      <div>최대 MP: ${diffFmt(cStatsNow.calcMaxMp, cStatsPreview.calcMaxMp)}</div>
-      <div>물리공격: ${diffFmt(cStatsNow.totalAtk, cStatsPreview.totalAtk)}</div>
-      <div>마법공격: ${diffFmt(cStatsNow.totalMAtk, cStatsPreview.totalMAtk)}</div>
-      <div>물리방어: ${diffFmt(cStatsNow.totalDef, cStatsPreview.totalDef)}</div>
-      <div>마법방어: ${diffFmt(cStatsNow.totalMDef || 0, cStatsPreview.totalMDef || 0)}</div>
-      <div style="grid-column: span 2;">치명/회피/블록: <b style="color:#fde047;">${cStatsPreview.critRate}% / ${cStatsPreview.evadeRate}% / ${cStatsPreview.blockRate}%</b></div>
-    </div>
+        <div class="stat-alloc-preview-box" style="background:#0c0e14; border:1px solid #3d3020; border-radius:6px; padding:5px 7px; font-size:10px; display:grid; grid-template-columns:1fr 1fr; gap:2.5px 6px;">
+          <div>HP: ${diffFmt(cStatsNow.calcMaxHp, cStatsPreview.calcMaxHp)}</div>
+          <div>MP: ${diffFmt(cStatsNow.calcMaxMp, cStatsPreview.calcMaxMp)}</div>
+          <div>물공: ${diffFmt(cStatsNow.totalAtk, cStatsPreview.totalAtk)}</div>
+          <div>마공: ${diffFmt(cStatsNow.totalMAtk, cStatsPreview.totalMAtk)}</div>
+          <div>물방: ${diffFmt(cStatsNow.totalDef, cStatsPreview.totalDef)}</div>
+          <div>마방: ${diffFmt(cStatsNow.totalMDef || 0, cStatsPreview.totalMDef || 0)}</div>
+          <div style="grid-column: span 2;">치명/회피/블록: <b style="color:#fde047;">${cStatsPreview.critRate}%/${cStatsPreview.evadeRate}%/${cStatsPreview.blockRate}%</b></div>
+        </div>
 
-    <div style="display:flex; gap:6px; margin-top:2px;">
-      <button type="button" class="auth-primary-btn" style="flex:1.5; padding:10px; font-size:13px; background:${pendTotal > 0 ? 'linear-gradient(180deg, #16a34a, #14532d)' : '#374151'}; border-color:${pendTotal > 0 ? '#4ade80' : '#6b7280'};" onclick="confirmStats()">✔ 스탯 적용 확정 ${pendTotal > 0 ? `(+${pendTotal})` : ''}</button>
-      <button type="button" class="auth-sub-btn" style="flex:0.8; padding:10px; font-size:12px;" onclick="resetPendingStats()">초기화</button>
+        <div class="stat-alloc-action-col" style="display:flex; flex-direction:column; gap:3.5px; justify-content:center;">
+          <div style="display:flex; gap:4px;">
+            <button type="button" class="auth-primary-btn" style="flex:1.4; padding:5.5px 6px; font-size:10.5px; background:${pendTotal > 0 ? 'linear-gradient(180deg, #16a34a, #14532d)' : '#374151'}; border-color:${pendTotal > 0 ? '#4ade80' : '#6b7280'};" onclick="confirmStats()">✔ 스탯 확정 ${pendTotal > 0 ? `(+${pendTotal})` : ''}</button>
+            <button type="button" class="auth-sub-btn" style="flex:0.7; padding:5.5px 6px; font-size:10px;" onclick="resetPendingStats()">취소</button>
+          </div>
+          <button type="button" onclick="resetAllocatedStats()" style="width:100%; background:${resetCount > 0 ? '#1e3a8a' : '#1f2937'}; color:${resetCount > 0 ? '#93c5fd' : '#6b7280'}; border:1px solid ${resetCount > 0 ? '#60a5fa' : '#374151'}; border-radius:5px; padding:4.5px 6px; font-size:9.5px; font-weight:bold; cursor:pointer;">🔄 투자 스탯 회수 (${resetCount > 0 ? `가능 ${resetCount}회` : `Lv.${nextMilestone} 해금`})</button>
+        </div>
+      </div>
     </div>
-    <button type="button" onclick="resetAllocatedStats()" style="width:100%; background:${resetCount > 0 ? '#1e3a8a' : '#1f2937'}; color:${resetCount > 0 ? '#93c5fd' : '#6b7280'}; border:1px solid ${resetCount > 0 ? '#60a5fa' : '#374151'}; border-radius:6px; padding:6px 0; font-size:10.5px; font-weight:bold; cursor:pointer;">🔄 투자 스탯 전체 회수 (${resetCount > 0 ? `가능 ${resetCount}회` : `Lv.${nextMilestone} 해금`})</button>
   `;
 };
 
@@ -2085,12 +2095,15 @@ window.renderHotbarSlots = function() {
 
     const data = window.skillSlots[i];
     if (!data) {
-      if (i === 10) {
+      if (i === 10 && !window.isLandscapeMode) {
         iconEl.innerHTML = `<span>ATK</span><span style="font-size:7.5px;">(AUTO)</span>`;
       } else {
         iconEl.innerHTML = '';
       }
       slotEl.classList.remove('auto-active');
+      if (window.isLandscapeMode && i === 10) {
+        slotEl.classList.remove('slot-10-auto');
+      }
       window.autoSlots.delete(i);
       continue;
     }
@@ -2130,30 +2143,35 @@ function bindQuickSlotEvents() {
 
     let pressTimer = null;
     let longPressTriggered = false;
+    let lastLongPressTs = 0;
     let lastTap = 0;
 
     slotEl.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
       if (e.button && e.button !== 0) return;
       longPressTriggered = false;
       clearTimeout(pressTimer);
       pressTimer = setTimeout(() => {
         if (window.skillSlots[i]) {
           longPressTriggered = true;
+          lastLongPressTs = Date.now();
           window.clearQuickSlot(i);
-        } else if (i === 10) {
+        } else if (i === 10 && !window.isLandscapeMode) {
           longPressTriggered = true;
+          lastLongPressTs = Date.now();
           window.toggleAutoAttack();
         }
-      }, 520);
+      }, 480);
     });
 
     slotEl.addEventListener('pointerup', (e) => {
+      e.stopPropagation();
       if (e.button && e.button !== 0) return;
       clearTimeout(pressTimer);
-      if (longPressTriggered) return;
+      if (longPressTriggered || (Date.now() - lastLongPressTs < 500)) return;
 
       const now = Date.now();
-      if (!window.skillSlots[i] && i === 10 && !window.selectedSkillForSlot) {
+      if (!window.skillSlots[i] && i === 10 && !window.isLandscapeMode && !window.selectedSkillForSlot && !window.selectedItemForSlot) {
         if (now - lastTap < 300) {
           lastTap = 0;
           window.toggleAutoAttack();
@@ -2173,50 +2191,92 @@ function bindQuickSlotEvents() {
       }
     });
 
-    slotEl.addEventListener('pointerleave', () => clearTimeout(pressTimer));
     slotEl.addEventListener('pointercancel', () => clearTimeout(pressTimer));
     slotEl.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      if (!window.skillSlots[i] && i === 10) window.toggleAutoAttack();
-      else window.toggleAutoUse(i);
+      e.stopPropagation();
+      if (longPressTriggered || (Date.now() - lastLongPressTs < 650)) return;
+      if (!window.skillSlots[i] && i === 10 && !window.isLandscapeMode) window.toggleAutoAttack();
+      else if (window.skillSlots[i]) window.toggleAutoUse(i);
     });
   }
 
-  // ⚔️ 가로모드 우측 메인 칼(공격) 버튼 바인딩: 한번 터치 시 기본 공격(ATK), 길게 누르면 오토사냥(AUTO) 토글!
+  // ⚔️ 가로모드 우측 메인 칼(공격) 버튼 바인딩:
+  // - 한번 터치: 기본 공격(ATK)
+  // - 길게 누르기(340ms) 또는 빠른 두번 터치(더블탭): 오토사냥(AUTO) 토글! (모바일 contextmenu 중복 토글 완벽 차단)
   const landAtkBtn = document.getElementById('landscape-atk-btn');
   if (landAtkBtn && !landAtkBtn._atkBound) {
     landAtkBtn._atkBound = true;
     let atkPressTimer = null;
     let atkLongPressed = false;
+    let lastAutoToggleTs = 0;
+    let lastSingleTapTs = 0;
+    let downX = 0, downY = 0;
+
+    const triggerSafeAutoToggle = () => {
+      const now = Date.now();
+      if (now - lastAutoToggleTs < 550) return;
+      lastAutoToggleTs = now;
+      atkLongPressed = true;
+      window.SoundSystem?.playUiClick?.();
+      window.toggleAutoAttack();
+    };
 
     landAtkBtn.addEventListener('pointerdown', (e) => {
+      if (e.cancelable) e.preventDefault();
       e.stopPropagation();
       if (e.button && e.button !== 0) return;
       atkLongPressed = false;
+      downX = e.clientX || 0;
+      downY = e.clientY || 0;
       clearTimeout(atkPressTimer);
       atkPressTimer = setTimeout(() => {
-        atkLongPressed = true;
-        window.SoundSystem?.playUiClick?.();
-        window.toggleAutoAttack();
-      }, 400);
+        triggerSafeAutoToggle();
+      }, 340);
     });
 
-    landAtkBtn.addEventListener('pointerup', (e) => {
-      e.stopPropagation();
-      if (e.button && e.button !== 0) return;
-      clearTimeout(atkPressTimer);
-      if (!atkLongPressed) {
-        window.handleBasicAttack();
+    landAtkBtn.addEventListener('pointermove', (e) => {
+      if (!atkPressTimer) return;
+      if (Math.hypot((e.clientX || 0) - downX, (e.clientY || 0) - downY) > 28) {
+        clearTimeout(atkPressTimer);
+        atkPressTimer = null;
       }
     });
 
-    landAtkBtn.addEventListener('pointerleave', () => clearTimeout(atkPressTimer));
-    landAtkBtn.addEventListener('pointercancel', () => clearTimeout(atkPressTimer));
+    landAtkBtn.addEventListener('pointerup', (e) => {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+      if (e.button && e.button !== 0) return;
+      clearTimeout(atkPressTimer);
+      atkPressTimer = null;
+      const now = Date.now();
+      if (atkLongPressed || (now - lastAutoToggleTs < 500)) {
+        atkLongPressed = false;
+        return;
+      }
+      // 빠른 두 번 터치(더블탭) 시에도 자동사냥 토글 지원!
+      if (now - lastSingleTapTs < 280) {
+        lastSingleTapTs = 0;
+        triggerSafeAutoToggle();
+        return;
+      }
+      lastSingleTapTs = now;
+      window.handleBasicAttack();
+    });
+
+    landAtkBtn.addEventListener('pointercancel', () => {
+      clearTimeout(atkPressTimer);
+      atkPressTimer = null;
+    });
+
     landAtkBtn.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      // 모바일 롱프레스 시 pointerdown 타이머(340ms)와 contextmenu가 연달아 발생해 오토사냥이 켜졌다 바로 꺼지는 현상 원천 차단!
+      if (atkLongPressed || (Date.now() - lastAutoToggleTs < 700)) return;
       clearTimeout(atkPressTimer);
-      window.toggleAutoAttack();
+      atkPressTimer = null;
+      triggerSafeAutoToggle();
     });
   }
 }
@@ -2406,7 +2466,11 @@ window.toggleAutoUse = function(num) {
 
 window.toggleAutoAttack = function() {
   if (!window.isAutoAttack && isInsideSafeZone(player.x, player.y)) {
-    window.addChat(`🛡️ [안전지대] 마을(S) 및 야영지(S1) 안전지대 내부에서는 자동사냥을 켤 수 없습니다!`, 'log-hit');
+    window.addChat(`🛡️ [안전지대] 마을(S) 및 야영지(S1) 안전지대 밖 사냥터로 나가면 자동사냥(AUTO)이 작동합니다!`, 'log-hit');
+    if (typeof floatingTexts !== 'undefined' && Array.isArray(floatingTexts) && player) {
+      floatingTexts.push({ x: player.x, y: player.y - 52, text: '🛡️ 안전지대 밖에서 자동사냥 가능!', color: 0xfde047, life: 45 });
+    }
+    window.updateClosedChatHudFeed?.();
     return;
   }
   window.isAutoAttack = !window.isAutoAttack;
@@ -2414,7 +2478,7 @@ window.toggleAutoAttack = function() {
   let landBtn = document.getElementById('landscape-atk-btn');
   let landTag = document.getElementById('landscape-atk-auto-tag');
   if (window.isAutoAttack) {
-    if (el) el.classList.add('slot-10-auto');
+    if (el && !window.isLandscapeMode) el.classList.add('slot-10-auto');
     if (landBtn) landBtn.classList.add('slot-10-auto');
     if (landTag) landTag.innerText = 'AUTO';
     player.manualMoving = false;
@@ -2470,32 +2534,38 @@ function renderEquipUI() {
   const nextMilestone = (Math.floor((player.level || 1) / 50) + 1) * 50;
 
   statLeft.innerHTML = `
-    <div style="text-align:center; color:#facc15; font-size:11.5px; font-weight:bold; line-height:1.15;">${CLASS_STATS[player.class].name} <span style="color:#fff;">Lv.${player.level}</span></div>
-    <div style="line-height:1.2;">HP <span class="stat-val" style="color:#fca5a5;">${Math.ceil(player.hp)} / ${cStats.calcMaxHp}</span></div>
-    <div style="line-height:1.2;">MP <span class="stat-val" style="color:#93c5fd;">${Math.ceil(player.mp)} / ${cStats.calcMaxMp}</span></div>
-    <hr style="border-color:#3d3020; margin:1px 0;">
-    <div style="line-height:1.2;">물리공격 <span class="stat-val">${cStats.totalAtk} (${cStats.weaponSpeedSec}s)</span></div>
-    <div style="line-height:1.2;">마법공격 <span class="stat-val">${cStats.totalMAtk}</span></div>
-    <div style="line-height:1.2;">물리방어 <span class="stat-val" style="color:#4ade80;">${cStats.totalDef} (감쇄+${cStats.dmgReducePct || 0}%)</span></div>
-    <div style="line-height:1.2;">마법방어 <span class="stat-val" style="color:#c084fc;">${cStats.totalMDef || 0}</span></div>
-    <div style="line-height:1.2;">명중/치명 <span class="stat-val">+${cStats.hitBonus}% / ${cStats.critRate}%</span></div>
-    <div style="line-height:1.2;">회피/블록 <span class="stat-val">${cStats.evadeRate}% / ${cStats.blockRate}%</span></div>
-    <div style="line-height:1.2;">관통/쿨/보스 <span class="stat-val" style="color:#fde047;">${cStats.armorPenPct || 0}%/-${cStats.coolReducePct || 0}%/+${cStats.bossDmgPct || 0}%</span></div>
-    <hr style="border-color:#3d3020; margin:1px 0;">
-    <div style="display:flex; justify-content:space-between; align-items:center; background:#1c160d; border:1px solid #a16207; border-radius:4px; padding:1.5px 4px; margin:0.5px 0; flex-shrink:0;">
-      <span style="color:#facc15; font-weight:bold; font-size:10px;">잔여: <b style="color:${remainPts > 0 ? '#4ade80' : '#fff'};">${remainPts}P</b></span>
-      <button type="button" onclick="openStatAllocModal(event)" style="background:linear-gradient(180deg,#b45309,#78350f); color:#fef08a; border:1px solid #facc15; border-radius:4px; padding:1.5px 5px; font-size:9px; font-weight:bold; cursor:pointer;">📊 스탯창 확대</button>
+    <div class="equip-stat-summary-col">
+      <div class="equip-col-head">${CLASS_STATS[player.class].name} <span style="color:#fff;">Lv.${player.level}</span></div>
+      <div class="equip-stat-line"><span>HP</span><span class="stat-val" style="color:#fca5a5;">${Math.ceil(player.hp)}/${cStats.calcMaxHp}</span></div>
+      <div class="equip-stat-line"><span>MP</span><span class="stat-val" style="color:#93c5fd;">${Math.ceil(player.mp)}/${cStats.calcMaxMp}</span></div>
+      <hr style="border-color:#3d3020; margin:1.5px 0;">
+      <div class="equip-stat-line"><span>물리공격</span><span class="stat-val">${cStats.totalAtk} (${cStats.weaponSpeedSec}s)</span></div>
+      <div class="equip-stat-line"><span>마법공격</span><span class="stat-val">${cStats.totalMAtk}</span></div>
+      <div class="equip-stat-line"><span>물리방어</span><span class="stat-val" style="color:#4ade80;">${cStats.totalDef} (+${cStats.dmgReducePct || 0}%)</span></div>
+      <div class="equip-stat-line"><span>마법방어</span><span class="stat-val" style="color:#c084fc;">${cStats.totalMDef || 0}</span></div>
+      <div class="equip-stat-line"><span>명중/치명</span><span class="stat-val">+${cStats.hitBonus}%/${cStats.critRate}%</span></div>
+      <div class="equip-stat-line"><span>회피/블록</span><span class="stat-val">${cStats.evadeRate}%/${cStats.blockRate}%</span></div>
+      <div class="equip-stat-line"><span>관통/쿨/보스</span><span class="stat-val" style="color:#fde047;">${cStats.armorPenPct || 0}%/-${cStats.coolReducePct || 0}%/+${cStats.bossDmgPct || 0}%</span></div>
     </div>
-    ${statRowHTML('STR', cStats.effSTR)}
-    ${statRowHTML('DEX', cStats.effDEX)}
-    ${statRowHTML('INT', cStats.effINT)}
-    ${statRowHTML('CON', cStats.effCON)}
-    <div style="margin-top:2px; padding-top:2px; display:flex; flex-direction:column; gap:2.5px; flex-shrink:0;">
-      <div style="display:flex; gap:3px;">
-        <button type="button" onclick="confirmStats()" style="flex:1.4; background:${pendTotal > 0 ? '#16a34a' : '#374151'}; color:#fff; border:1px solid ${pendTotal > 0 ? '#4ade80' : '#6b7280'}; border-radius:4px; padding:3px 0; font-size:10px; font-weight:bold; cursor:pointer; line-height:1.15;">✔ 확인${pendTotal > 0 ? `(+${pendTotal})` : ''}</button>
-        ${pendTotal > 0 ? `<button type="button" onclick="resetPendingStats()" style="flex:0.8; background:#7f1d1d; color:#fff; border:1px solid #f87171; border-radius:4px; padding:3px 0; font-size:9.5px; cursor:pointer; line-height:1.15;">취소</button>` : ''}
+    <hr class="equip-portrait-divider" style="border-color:#3d3020; margin:1px 0;">
+    <div class="equip-stat-alloc-col">
+      <div style="display:flex; justify-content:space-between; align-items:center; background:#1c160d; border:1px solid #a16207; border-radius:4px; padding:2px 5px; margin:0.5px 0; flex-shrink:0;">
+        <span style="color:#facc15; font-weight:bold; font-size:10px;">잔여: <b style="color:${remainPts > 0 ? '#4ade80' : '#fff'};">${remainPts}P</b></span>
+        <button type="button" onclick="openStatAllocModal(event)" style="background:linear-gradient(180deg,#b45309,#78350f); color:#fef08a; border:1px solid #facc15; border-radius:4px; padding:1.5px 5px; font-size:9px; font-weight:bold; cursor:pointer;">📊 상세분배</button>
       </div>
-      <button type="button" onclick="resetAllocatedStats()" style="width:100%; background:${resetCount > 0 ? '#1e3a8a' : '#1f2937'}; color:${resetCount > 0 ? '#93c5fd' : '#6b7280'}; border:1px solid ${resetCount > 0 ? '#60a5fa' : '#374151'}; border-radius:4px; padding:3px 0; font-size:9px; font-weight:bold; cursor:pointer; line-height:1.15;">🔄 스탯 초기화 (${resetCount > 0 ? `가능 ${resetCount}회` : `Lv.${nextMilestone} 해금`})</button>
+      <div class="equip-stat-rows-box">
+        ${statRowHTML('STR', cStats.effSTR)}
+        ${statRowHTML('DEX', cStats.effDEX)}
+        ${statRowHTML('INT', cStats.effINT)}
+        ${statRowHTML('CON', cStats.effCON)}
+      </div>
+      <div class="equip-stat-btn-footer" style="margin-top:auto; padding-top:2px; display:flex; flex-direction:column; gap:2.5px; flex-shrink:0;">
+        <div style="display:grid; grid-template-columns:${pendTotal > 0 ? '1.15fr 0.75fr 1fr' : '1fr 1fr'}; gap:3px;">
+          <button type="button" onclick="confirmStats()" style="background:${pendTotal > 0 ? '#16a34a' : '#374151'}; color:#fff; border:1px solid ${pendTotal > 0 ? '#4ade80' : '#6b7280'}; border-radius:4px; padding:3.5px 2px; font-size:9.5px; font-weight:bold; cursor:pointer; line-height:1.15; white-space:nowrap;">✔ 확인${pendTotal > 0 ? `(+${pendTotal})` : ''}</button>
+          ${pendTotal > 0 ? `<button type="button" onclick="resetPendingStats()" style="background:#7f1d1d; color:#fff; border:1px solid #f87171; border-radius:4px; padding:3.5px 2px; font-size:9px; cursor:pointer; line-height:1.15; white-space:nowrap;">취소</button>` : ''}
+          <button type="button" onclick="resetAllocatedStats()" style="background:${resetCount > 0 ? '#1e3a8a' : '#1f2937'}; color:${resetCount > 0 ? '#93c5fd' : '#6b7280'}; border:1px solid ${resetCount > 0 ? '#60a5fa' : '#374151'}; border-radius:4px; padding:3.5px 2px; font-size:9px; font-weight:bold; cursor:pointer; line-height:1.15; white-space:nowrap;">🔄초기화(${resetCount > 0 ? `${resetCount}` : `Lv.${nextMilestone}`})</button>
+        </div>
+      </div>
     </div>
   `;
 
@@ -2539,8 +2609,9 @@ function renderEquipUI() {
   gridCells.forEach(s => {
     if (s.key === '_summary') {
       const badgeDiv = document.createElement('div');
-      badgeDiv.style.cssText = 'width:42px; height:36px; margin-bottom:10px; background:rgba(15,23,42,0.85); border:1px dashed #60a5fa; border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:8.5px; color:#93c5fd; line-height:1.25; text-align:center; pointer-events:none;';
-      badgeDiv.innerHTML = `<span style="color:#fde047; font-weight:bold;">${equippedCount}/14</span><span>강화+${totalPlusSum}</span>`;
+      badgeDiv.className = 'pd-slot-summary-badge';
+      badgeDiv.style.cssText = 'width:42px; height:36px; margin-bottom:10px; background:rgba(15,23,42,0.85); border:1px dashed #60a5fa; border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:8px; color:#93c5fd; line-height:1.15; text-align:center; pointer-events:none;';
+      badgeDiv.innerHTML = `<span style="color:#fde047; font-weight:bold;">${equippedCount}/14</span><span>+${totalPlusSum}</span>`;
       paperdoll.appendChild(badgeDiv);
       return;
     }
@@ -2692,11 +2763,11 @@ window.centerModalOnScreen = function(modalElOrId) {
   const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth, height: window.innerHeight };
   const pw = vp.width;
   const ph = vp.height;
-  const bottomPanelH = window.isLandscapeMode ? 22 : (document.getElementById('bottom-panel')?.offsetHeight || 142);
+  const bottomPanelH = window.isLandscapeMode ? 20 : (document.getElementById('bottom-panel')?.offsetHeight || 142);
   const isEquipOrStat = modal.id === 'equip-ui' || modal.id === 'stat-alloc-modal';
-  const safeTop = window.isLandscapeMode ? 26 : (isEquipOrStat ? 28 : 40);
+  const safeTop = window.isLandscapeMode ? 30 : (isEquipOrStat ? 28 : 40);
   const maxAllowedH = window.isLandscapeMode
-    ? Math.max(200, ph - safeTop - bottomPanelH - 4)
+    ? Math.max(210, ph - safeTop - bottomPanelH - 2)
     : (isEquipOrStat ? Math.max(340, ph - safeTop - 16) : Math.max(230, ph - bottomPanelH - safeTop - 4));
 
   modal.style.maxHeight = `${maxAllowedH}px`;
@@ -3286,11 +3357,14 @@ window.isTradeLockedOrActive = function(silent = false) {
 window.showPlayerTargetActionBar = function(op) {
   if (!op || !op.charId || op.charId === activeCharacterId) return;
   let bar = document.getElementById('player-target-action-bar');
+  const hostWrap = document.getElementById('game-wrapper') || document.body;
   if (!bar) {
     bar = document.createElement('div');
     bar.id = 'player-target-action-bar';
-    bar.style.cssText = 'position:fixed; top:50px; left:50%; transform:translateX(-50%); z-index:9150; background:rgba(15, 23, 42, 0.95); border:1.5px solid #38bdf8; border-radius:999px; padding:4px 10px; display:flex; align-items:center; gap:6px; box-shadow:0 4px 16px rgba(0,0,0,0.85); color:#fff; pointer-events:auto; white-space:nowrap;';
-    document.body.appendChild(bar);
+    bar.style.cssText = 'position:absolute; top:42px; left:50%; transform:translateX(-50%); z-index:9150; background:rgba(15, 23, 42, 0.95); border:1.5px solid #38bdf8; border-radius:999px; padding:4px 10px; display:flex; align-items:center; gap:6px; box-shadow:0 4px 16px rgba(0,0,0,0.85); color:#fff; pointer-events:auto; white-space:nowrap;';
+    hostWrap.appendChild(bar);
+  } else if (bar.parentElement !== hostWrap) {
+    hostWrap.appendChild(bar);
   }
   const escName = String(op.name || '모험가').replace(/'/g, "\'");
   const hasPty = Boolean(op.partyId);
@@ -3372,11 +3446,14 @@ function normalizeClientTradeItemEntry(entry, idxFallback = 0) {
 window.showTradeInvitePopup = function(msg) {
   clearTradeInviteTimers();
   let pop = document.getElementById('trade-invite-popup');
+  const hostWrap = document.getElementById('game-wrapper') || document.body;
   if (!pop) {
     pop = document.createElement('div');
     pop.id = 'trade-invite-popup';
-    pop.style.cssText = 'position:fixed; top:112px; left:50%; transform:translateX(-50%); z-index:9650; width:min(88vw, 295px); background:rgba(15, 23, 42, 0.97); border:2px solid #facc15; border-radius:8px; padding:10px; box-shadow:0 8px 25px rgba(0,0,0,0.9); color:#fff; pointer-events:auto;';
-    document.body.appendChild(pop);
+    pop.style.cssText = 'position:absolute; top:86px; left:50%; transform:translateX(-50%); z-index:9650; width:min(84%, 290px); background:rgba(15, 23, 42, 0.97); border:2px solid #facc15; border-radius:8px; padding:9px 11px; box-shadow:0 8px 25px rgba(0,0,0,0.9); color:#fff; pointer-events:auto;';
+    hostWrap.appendChild(pop);
+  } else if (pop.parentElement !== hostWrap) {
+    hostWrap.appendChild(pop);
   }
   const inviterName = msg.inviterName || msg.requesterName || '모험가';
   const inviterLevel = msg.inviterLevel || msg.requesterLevel || 1;
@@ -3920,70 +3997,76 @@ window.renderTradeModal = function() {
   const bothLocked = Boolean(st.myOffer.locked && st.partnerOffer.locked);
 
   body.innerHTML = `
-    <!-- 1. 상대방 제시 영역 -->
-    <div style="background:#111827; border:1.5px solid ${st.partnerOffer.locked ? '#22c55e' : '#374151'}; border-radius:6px; padding:5px 7px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-        <span style="font-size:10.5px; font-weight:bold; color:#93c5fd;">👤 ${st.partner.name}님의 제시 물품</span>
-        <span style="font-size:9px; font-weight:bold; padding:1px 6px; border-radius:999px; background:${st.partnerOffer.confirmed ? '#15803d' : (st.partnerOffer.locked ? '#065f46' : '#1f2937')}; color:${st.partnerOffer.locked ? '#86efac' : '#9ca3af'};">
-          ${st.partnerOffer.confirmed ? '✅ 거래확정 완료' : (st.partnerOffer.locked ? '🔒 등록완료' : '✏️ 물품 선택중')}
-        </span>
-      </div>
-      <div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:3px; margin-bottom:4px;">
-        ${partnerSlotsHtml}
-      </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; font-size:9.5px; color:#d1d5db;">
-        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:62%;">${partnerItemNames}</span>
-        <b style="color:#fde047; font-size:10.5px;">💰 ${st.partnerOffer.gold.toLocaleString()} G</b>
-      </div>
-    </div>
+    <div class="trade-modal-grid">
+      <div class="trade-col-offers" style="display:flex; flex-direction:column; gap:5px; min-width:0;">
+        <!-- 1. 상대방 제시 영역 -->
+        <div style="background:#111827; border:1.5px solid ${st.partnerOffer.locked ? '#22c55e' : '#374151'}; border-radius:6px; padding:5px 7px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; gap:4px;">
+            <span style="font-size:10px; font-weight:bold; color:#93c5fd; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">👤 ${st.partner.name}님 제시</span>
+            <span style="font-size:8.5px; font-weight:bold; padding:1px 6px; border-radius:999px; white-space:nowrap; background:${st.partnerOffer.confirmed ? '#15803d' : (st.partnerOffer.locked ? '#065f46' : '#1f2937')}; color:${st.partnerOffer.locked ? '#86efac' : '#9ca3af'};">
+              ${st.partnerOffer.confirmed ? '✅ 확정완료' : (st.partnerOffer.locked ? '🔒 등록완료' : '✏️ 선택중')}
+            </span>
+          </div>
+          <div class="trade-slot-row-6" style="display:grid; grid-template-columns:repeat(6, 1fr); gap:3px; margin-bottom:4px;">
+            ${partnerSlotsHtml}
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:9px; color:#d1d5db;">
+            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%;">${partnerItemNames}</span>
+            <b style="color:#fde047; font-size:10px;">💰 ${st.partnerOffer.gold.toLocaleString()} G</b>
+          </div>
+        </div>
 
-    <!-- 2. 내 제시 영역 (아이템 VS 아이템 / 아이템 VS 골드 / 그냥 주기) -->
-    <div style="background:#111827; border:1.5px solid ${st.myOffer.locked ? '#facc15' : '#4b5563'}; border-radius:6px; padding:5px 7px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-        <span style="font-size:10.5px; font-weight:bold; color:#fde047;">🙋 내 제시 물품 (보유: ${Math.floor(player.gold || 0).toLocaleString()} G)</span>
-        <span style="font-size:9px; font-weight:bold; padding:1px 6px; border-radius:999px; background:${st.myOffer.confirmed ? '#15803d' : (st.myOffer.locked ? '#78350f' : '#1f2937')}; color:${st.myOffer.locked ? '#fde047' : '#9ca3af'};">
-          ${st.myOffer.confirmed ? '✅ 최종확정 대기중' : (st.myOffer.locked ? '🔒 등록완료' : '✏️ 물품 선택중')}
-        </span>
+        <!-- 2. 내 제시 영역 (아이템 VS 아이템 / 아이템 VS 골드 / 그냥 주기) -->
+        <div style="background:#111827; border:1.5px solid ${st.myOffer.locked ? '#facc15' : '#4b5563'}; border-radius:6px; padding:5px 7px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; gap:4px;">
+            <span style="font-size:10px; font-weight:bold; color:#fde047; white-space:nowrap;">🙋 내 제시 (보유: ${Math.floor(player.gold || 0).toLocaleString()}G)</span>
+            <span style="font-size:8.5px; font-weight:bold; padding:1px 6px; border-radius:999px; white-space:nowrap; background:${st.myOffer.confirmed ? '#15803d' : (st.myOffer.locked ? '#78350f' : '#1f2937')}; color:${st.myOffer.locked ? '#fde047' : '#9ca3af'};">
+              ${st.myOffer.confirmed ? '✅ 대기중' : (st.myOffer.locked ? '🔒 등록완료' : '✏️ 선택중')}
+            </span>
+          </div>
+          <div class="trade-slot-row-6" style="display:grid; grid-template-columns:repeat(6, 1fr); gap:3px; margin-bottom:4px;">
+            ${mySlotsHtml}
+          </div>
+          <div style="font-size:8.8px; color:#9ca3af; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${myItemNames}</div>
+          <div style="display:flex; align-items:center; gap:3px; flex-wrap:wrap;">
+            <span style="font-size:9.5px; color:#fde047; font-weight:bold;">💰</span>
+            <input type="number" min="0" max="${Math.floor(player.gold || 0)}" value="${st.myOffer.gold}" ${st.myOffer.locked ? 'disabled' : ''}
+                   onchange="adjustTradeGoldOffer('set', this.value)"
+                   style="width:68px; background:#090b10; color:#fde047; border:1px solid #6b5535; border-radius:4px; padding:2px 4px; font-size:10px; font-weight:bold; text-align:right;">
+            <button type="button" class="shop-buy-btn trade-gold-btn" style="padding:2px 5px; font-size:8.8px;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('add', 1000)">+1천</button>
+            <button type="button" class="shop-buy-btn trade-gold-btn" style="padding:2px 5px; font-size:8.8px;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('add', 10000)">+1만</button>
+            <button type="button" class="shop-buy-btn trade-gold-btn" style="padding:2px 5px; font-size:8.8px; background:#1e3a8a; border-color:#60a5fa;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('max')">전액</button>
+            <button type="button" class="shop-buy-btn trade-gold-btn" style="padding:2px 5px; font-size:8.8px; background:#374151; border-color:#6b7280;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('clear')">0G</button>
+          </div>
+        </div>
       </div>
-      <div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:3px; margin-bottom:4px;">
-        ${mySlotsHtml}
-      </div>
-      <div style="font-size:9px; color:#9ca3af; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${myItemNames}</div>
-      <div style="display:flex; align-items:center; gap:3px; flex-wrap:wrap;">
-        <span style="font-size:10px; color:#fde047; font-weight:bold;">💰골드:</span>
-        <input type="number" min="0" max="${Math.floor(player.gold || 0)}" value="${st.myOffer.gold}" ${st.myOffer.locked ? 'disabled' : ''}
-               onchange="adjustTradeGoldOffer('set', this.value)"
-               style="width:76px; background:#090b10; color:#fde047; border:1px solid #6b5535; border-radius:4px; padding:2px 4px; font-size:10.5px; font-weight:bold; text-align:right;">
-        <button type="button" class="shop-buy-btn" style="padding:2px 5px; font-size:9px;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('add', 1000)">+1천</button>
-        <button type="button" class="shop-buy-btn" style="padding:2px 5px; font-size:9px;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('add', 10000)">+1만</button>
-        <button type="button" class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#1e3a8a; border-color:#60a5fa;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('max')">전액</button>
-        <button type="button" class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#374151; border-color:#6b7280;" ${st.myOffer.locked ? 'disabled' : ''} onclick="adjustTradeGoldOffer('clear')">0G</button>
-      </div>
-    </div>
 
-    ${pendingQtyBarHtml}
+      <div class="trade-col-bag" style="display:flex; flex-direction:column; gap:5px; min-width:0; justify-content:space-between;">
+        ${pendingQtyBarHtml}
 
-    <!-- 3. 내 가방 아이템 선택 그리드 -->
-    <div style="background:#0f131c; border:1px solid #3d3020; border-radius:6px; padding:5px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-        <span style="font-size:10px; font-weight:bold; color:#e5e7eb;">🎒 내 가방 물품 터치하여 등록/제외</span>
-        <span style="font-size:8.5px; color:#86efac;">※ 대가 없이 그냥 주기도 가능</span>
-      </div>
-      <div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:3px; max-height:116px; overflow-y:auto; padding:2px;">
-        ${bagGridHtml}
-      </div>
-    </div>
+        <!-- 3. 내 가방 아이템 선택 그리드 -->
+        <div style="background:#0f131c; border:1px solid #3d3020; border-radius:6px; padding:5px; flex:1; display:flex; flex-direction:column;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; gap:4px;">
+            <span style="font-size:9.8px; font-weight:bold; color:#e5e7eb;">🎒 내 가방 물품 터치 등록/제외</span>
+            <span style="font-size:8px; color:#86efac;">무상 증여 가능</span>
+          </div>
+          <div class="trade-bag-grid-6" style="display:grid; grid-template-columns:repeat(6, 1fr); gap:3px; max-height:132px; overflow-y:auto; padding:2px;">
+            ${bagGridHtml}
+          </div>
+        </div>
 
-    <!-- 4. 하단 2단계 안전 잠금 & 거래 확정 버튼 -->
-    <div style="display:flex; gap:5px;">
-      <button type="button" class="auth-sub-btn" style="flex:0.8; padding:6px; font-size:10.5px;" onclick="cancelActiveTrade('거래를 취소했습니다.')">취소</button>
-      <button type="button" class="shop-buy-btn" style="flex:1.1; padding:6px; font-size:10.5px; background:${st.myOffer.locked ? '#374151' : '#b45309'}; border-color:${st.myOffer.locked ? '#9ca3af' : '#facc15'};" onclick="toggleTradeLockState()">
-        ${st.myOffer.locked ? '🔓 물품 수정하기' : '🔒 물품 등록완료'}
-      </button>
-      <button type="button" class="auth-primary-btn" style="flex:1.2; padding:6px; font-size:10.5px; opacity:${bothLocked && !st.myOffer.confirmed ? '1' : '0.5'}; background:${bothLocked ? 'linear-gradient(180deg,#16a34a,#14532d)' : '#1f2937'}; border-color:${bothLocked ? '#4ade80' : '#4b5563'};"
-              ${(!bothLocked || st.myOffer.confirmed) ? 'disabled' : ''} onclick="confirmActiveTradeFinal()">
-        ${st.myOffer.confirmed ? '⏳ 상대 확정 대기' : '✅ 최종 거래확정'}
-      </button>
+        <!-- 4. 하단 2단계 안전 잠금 & 거래 확정 버튼 -->
+        <div class="trade-action-footer" style="display:grid; grid-template-columns:0.75fr 1.1fr 1.15fr; gap:4px;">
+          <button type="button" class="auth-sub-btn" style="padding:5.5px 4px; font-size:10px; white-space:nowrap;" onclick="cancelActiveTrade('거래를 취소했습니다.')">취소</button>
+          <button type="button" class="shop-buy-btn" style="padding:5.5px 4px; font-size:10px; text-align:center; white-space:nowrap; background:${st.myOffer.locked ? '#374151' : '#b45309'}; border-color:${st.myOffer.locked ? '#9ca3af' : '#facc15'};" onclick="toggleTradeLockState()">
+            ${st.myOffer.locked ? '🔓 물품 수정' : '🔒 등록완료'}
+          </button>
+          <button type="button" class="auth-primary-btn" style="padding:5.5px 4px; font-size:10px; white-space:nowrap; opacity:${bothLocked && !st.myOffer.confirmed ? '1' : '0.5'}; background:${bothLocked ? 'linear-gradient(180deg,#16a34a,#14532d)' : '#1f2937'}; border-color:${bothLocked ? '#4ade80' : '#4b5563'};"
+                  ${(!bothLocked || st.myOffer.confirmed) ? 'disabled' : ''} onclick="confirmActiveTradeFinal()">
+            ${st.myOffer.confirmed ? '⏳ 상대 대기' : '✅ 거래확정'}
+          </button>
+        </div>
+      </div>
     </div>
   `;
 };

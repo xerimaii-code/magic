@@ -1295,8 +1295,9 @@ function handleCentralServerPacket(msg) {
   if (msg.type === 'REGION_PLAYERS_RESP') {
     window.regionPlayersCache = Array.isArray(msg.players) ? msg.players : [];
     const pModal = document.getElementById('party-control-modal');
-    if (pModal && !pModal.classList.contains('hidden')) {
-      window.renderPartyControlModal?.();
+    if (pModal && !pModal.classList.contains('hidden') && window._allowPartyModalNextRespRender) {
+      window._allowPartyModalNextRespRender = false;
+      window.renderPartyControlModal?.(true);
     }
     return;
   }
@@ -1340,7 +1341,9 @@ function handleCentralServerPacket(msg) {
       pHud.style.display = 'flex';
     }
     const pModal = document.getElementById('party-control-modal');
-    if (pModal && !pModal.classList.contains('hidden')) {
+    const nextPtyMemberSig = (window.partyState?.members || []).map(m => `${m.charId}:${m.charId === window.partyState?.leaderCharId ? 1 : 0}`).join('|');
+    if (pModal && !pModal.classList.contains('hidden') && window._lastRenderedPartyMemberSig !== nextPtyMemberSig) {
+      window._lastRenderedPartyMemberSig = nextPtyMemberSig;
       window.renderPartyControlModal?.();
     }
     return;

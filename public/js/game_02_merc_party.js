@@ -1404,55 +1404,103 @@ window.selectFriendlyOtherPlayer = function(opOrCharId) {
 
 let _partyHudPressTimer = null;
 let _partyHudLongPressed = false;
+let _partyHudPressing = false;
 let _mercHudCardPressTimer = null;
 let _mercHudCardLongPressed = false;
+let _mercHudCardPressing = false;
+let _lastMercLongPressAt = 0;
+let _lastMercTapUpAt = 0;
 
 window.onMercHudCardPointerDown = function(ev) {
-  if (ev) ev.stopPropagation();
+  if (ev) {
+    ev.stopPropagation();
+  }
   if (ev && ev.button && ev.button !== 0) return;
+  _mercHudCardPressing = true;
   _mercHudCardLongPressed = false;
+  const mercModal = document.getElementById('merc-ui');
+  const wasHiddenOnDown = !mercModal || mercModal.classList.contains('hidden');
   clearTimeout(_mercHudCardPressTimer);
   _mercHudCardPressTimer = setTimeout(() => {
     _mercHudCardLongPressed = true;
-    window.toggleMercUI?.();
-  }, 420);
+    _mercHudCardPressing = false;
+    _lastMercLongPressAt = Date.now();
+    window.SoundSystem?.playUiClick?.();
+    // 길게 누를 때 창이 열렸다 바로 닫히는 중복 토글 원천 차단: 눌렀을 때 닫혀 있었으면 무조건 열기만 수행!
+    if (wasHiddenOnDown) {
+      window.openMercUI?.();
+    } else {
+      window.closeMercUI?.();
+    }
+  }, 360);
 };
 
 window.onMercHudCardPointerUp = function(ev) {
-  if (ev) ev.stopPropagation();
+  if (ev) {
+    if (ev.cancelable) ev.preventDefault();
+    ev.stopPropagation();
+  }
   if (ev && ev.button && ev.button !== 0) return;
   clearTimeout(_mercHudCardPressTimer);
-  if (!_mercHudCardLongPressed) {
-    window.toggleFriendlyMercTarget?.();
-  }
+  const wasLong = _mercHudCardLongPressed;
+  _mercHudCardPressing = false;
+  _mercHudCardLongPressed = false;
+  if (wasLong || (Date.now() - _lastMercLongPressAt < 550)) return;
+  if (Date.now() - _lastMercTapUpAt < 220) return;
+  _lastMercTapUpAt = Date.now();
+  window.toggleFriendlyMercTarget?.();
 };
 
 window.onMercHudCardCancel = function() {
   clearTimeout(_mercHudCardPressTimer);
+  _mercHudCardPressing = false;
+};
+
+window.onMercHudCardContextMenu = function(ev) {
+  if (ev) {
+    if (ev.cancelable) ev.preventDefault();
+    ev.stopPropagation();
+  }
+  // 모바일에서 길게 누를 때 pointerdown 타이머와 contextmenu가 중복 발동하여 창이 닫히는 현상 완벽 차단!
+  if (_mercHudCardLongPressed || (Date.now() - _lastMercLongPressAt < 750)) return;
+  clearTimeout(_mercHudCardPressTimer);
+  _mercHudCardLongPressed = true;
+  _mercHudCardPressing = false;
+  _lastMercLongPressAt = Date.now();
+  window.openMercUI?.();
 };
 
 window.onPartyHudPointerDown = function(ev, charId, isLeaderCard) {
   if (ev) ev.stopPropagation();
   if (ev && ev.button && ev.button !== 0) return;
+  _partyHudPressing = true;
   _partyHudLongPressed = false;
   clearTimeout(_partyHudPressTimer);
   _partyHudPressTimer = setTimeout(() => {
     _partyHudLongPressed = true;
+    _partyHudPressing = false;
     window.openPartyControlModal();
-  }, 420);
+  }, 380);
 };
 
 window.onPartyHudPointerUp = function(ev, charId, isLeaderCard) {
-  if (ev) ev.stopPropagation();
+  if (ev) {
+    if (ev.cancelable) ev.preventDefault();
+    ev.stopPropagation();
+  }
   if (ev && ev.button && ev.button !== 0) return;
   clearTimeout(_partyHudPressTimer);
-  if (!_partyHudLongPressed) {
+  const wasLong = _partyHudLongPressed;
+  _partyHudPressing = false;
+  _partyHudLongPressed = false;
+  if (!wasLong) {
     window.selectFriendlyOtherPlayer(charId);
   }
 };
 
 window.onPartyHudCancel = function() {
   clearTimeout(_partyHudPressTimer);
+  _partyHudPressing = false;
 };
 
 window.regionPlayersCache = [];
@@ -1506,7 +1554,14 @@ window.resolveClientZoneInfo = function(rawRegionKey, rawMapKey, x, y) {
   };
 };
 
-window.requestRegionPlayersRefresh = function() {
+window._allowPartyModalNextRespRender = false;
+window._frozenPartyCandidates = null;
+
+window.requestRegionPlayersRefresh = function(allowModalRender = false) {
+  if (allowModalRender) {
+    window._allowPartyModalNextRespRender = true;
+    window._frozenPartyCandidates = null;
+  }
   if (typeof sendCentralWsPacket === 'function' && activeCharacterId) {
     sendCentralWsPacket({
       type: 'REGION_PLAYERS_REQ',
@@ -1516,6 +1571,9 @@ window.requestRegionPlayersRefresh = function() {
       x: Math.round(player?.x || 2000),
       y: Math.round(player?.y || 14250)
     });
+  }
+  if (allowModalRender) {
+    window.renderPartyControlModal?.(true);
   }
 };
 
@@ -1535,13 +1593,14 @@ window.openPartyControlModal = function() {
     modal = document.createElement('div');
     modal.id = 'party-control-modal';
     modal.className = 'modal-panel hidden';
-    modal.style.cssText = 'width:min(94vw, 350px); max-height:78dvh; z-index:9200; background:rgba(15, 18, 26, 0.97); border:2px solid #38bdf8; display:flex; flex-direction:column;';
+    modal.style.cssText = 'width:min(92%, 350px); z-index:9200; background:rgba(15, 18, 26, 0.97); border:2px solid #38bdf8; display:flex; flex-direction:column;';
     document.getElementById('game-wrapper')?.appendChild(modal);
     makeDraggable('party-control-modal');
   }
   const wasHidden = modal.classList.contains('hidden');
-  window.requestRegionPlayersRefresh();
-  window.renderPartyControlModal();
+  window._frozenPartyCandidates = window.getMergedRegionCandidates();
+  window.requestRegionPlayersRefresh(false);
+  window.renderPartyControlModal(false);
   modal.classList.remove('hidden');
   window.bringModalToFront?.(modal);
   if (wasHidden && !modal._hasCustomDragPos) {
@@ -1553,14 +1612,42 @@ window.closePartyControlModal = function() {
   document.getElementById('party-control-modal')?.classList.add('hidden');
 };
 
+// 🌟 파티원 또는 모험가 터치 시 전체 리스트를 재렌더링(새로고침 피드 점프)하지 않고,
+// 클릭한 행의 서브메뉴만 제자리(In-Place DOM)에서 즉시 열거나 닫아 스크롤과 목록 순서를 100% 고정 유지!
 window.togglePartyWindowCharSelect = function(charId, ev) {
-  if (ev) ev.stopPropagation();
-  if (window._selectedPartyWindowCharId === charId) {
-    window._selectedPartyWindowCharId = null;
-  } else {
-    window._selectedPartyWindowCharId = charId;
+  if (ev) {
+    if (ev.cancelable) ev.preventDefault();
+    ev.stopPropagation();
   }
-  window.renderPartyControlModal();
+  const nextId = (window._selectedPartyWindowCharId === charId) ? null : charId;
+  window._selectedPartyWindowCharId = nextId;
+
+  const modal = document.getElementById('party-control-modal');
+  if (!modal) return;
+
+  const allCards = modal.querySelectorAll('[data-pty-card]');
+  if (allCards.length === 0) {
+    window.renderPartyControlModal(false);
+    return;
+  }
+
+  allCards.forEach(card => {
+    const cid = card.getAttribute('data-pty-card');
+    const isLeader = card.getAttribute('data-pty-leader') === '1';
+    const isSel = (cid === nextId);
+    card.style.background = isSel ? '#172554' : '#18181b';
+    card.style.borderColor = isLeader ? '#facc15' : (isSel ? '#38bdf8' : '#374151');
+
+    const menuEl = card.querySelector('[data-pty-menu]');
+    if (menuEl) {
+      menuEl.style.display = isSel ? 'flex' : 'none';
+    }
+    const arrowEl = card.querySelector('[data-pty-arrow]');
+    if (arrowEl) {
+      const isCand = card.getAttribute('data-pty-kind') === 'cand';
+      arrowEl.innerText = isCand ? (isSel ? '▲ 닫기' : '▼ 메뉴') : (isSel ? '▲' : '▼');
+    }
+  });
 };
 
 window.requestQuickPartyWith = function(targetName, targetCharId = null) {
@@ -1712,13 +1799,21 @@ window.getMergedRegionCandidates = function() {
     });
 };
 
-window.renderPartyControlModal = function() {
+window.renderPartyControlModal = function(forceRefreshCandidates = false) {
   const modal = document.getElementById('party-control-modal');
   if (!modal) return;
 
+  // 기존 스크롤 위치 보존 (모드 변경이나 파티원 상태 갱신 시에도 피드처럼 위로 튀지 않도록 보장)
+  const prevOuterScroll = modal.querySelector('.party-modal-scroll-body')?.scrollTop || 0;
+  const prevCandScroll = modal.querySelector('.party-candidates-scroll-list')?.scrollTop || 0;
+
   const regObj = (GameDB.Regions || []).find(r => r.id === currentRegionKey) || GameDB.Regions[0];
   const myZone = window.resolveClientZoneInfo(currentRegionKey, currentMapKey, player?.x, player?.y);
-  const candidates = window.getMergedRegionCandidates();
+  if (forceRefreshCandidates || !Array.isArray(window._frozenPartyCandidates)) {
+    window._frozenPartyCandidates = window.getMergedRegionCandidates();
+  }
+  const myPartyIds = new Set((window.partyState?.members || []).map(m => m.charId));
+  const candidates = (window._frozenPartyCandidates || []).filter(c => c && c.name && !myPartyIds.has(c.charId));
   const classKor = { knight: '전사', ranger: '궁수', wizard: '마법사' };
   const escName = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
@@ -1736,8 +1831,9 @@ window.renderPartyControlModal = function() {
           : `<span style="color:#9ca3af; font-size:8.5px;">[솔로]</span>`;
 
         return `
-          <div style="background:${isSelected ? '#172554' : '#18181b'}; border:1px solid ${isSelected ? '#38bdf8' : '#374151'}; border-radius:6px; padding:5px 7px; display:flex; flex-direction:column; gap:4px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:4px; cursor:pointer;" onclick="togglePartyWindowCharSelect('${op.charId}', event)">
+          <div data-pty-card="${op.charId}" data-pty-kind="cand" data-pty-leader="0"
+               style="background:${isSelected ? '#172554' : '#18181b'}; border:1px solid ${isSelected ? '#38bdf8' : '#374151'}; border-radius:6px; padding:5px 7px; display:flex; flex-direction:column; gap:4px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:4px; cursor:pointer; user-select:none;" onclick="togglePartyWindowCharSelect('${op.charId}', event)">
               <div style="font-size:10.5px; color:#f3f4f6; display:flex; align-items:center; gap:4px; flex-wrap:wrap; min-width:0;">
                 ${aiTag}
                 <b style="color:#fef08a; text-decoration:underline; text-underline-offset:2px;">${op.name}</b>
@@ -1745,30 +1841,30 @@ window.renderPartyControlModal = function() {
                 ${ptyBadge}
                 ${safeTag}
               </div>
-              <span style="font-size:9px; color:#38bdf8; font-weight:bold; white-space:nowrap;">${isSelected ? '▲ 닫기' : '▼ 메뉴'}</span>
+              <span data-pty-arrow="${op.charId}" style="font-size:9px; color:#38bdf8; font-weight:bold; white-space:nowrap;">${isSelected ? '▲ 닫기' : '▼ 메뉴'}</span>
             </div>
-            ${isSelected ? `
-              <div style="display:flex; flex-wrap:wrap; gap:4px; padding-top:4px; border-top:1px dashed #334155;">
-                ${hasPty && !isFull ? `
-                  <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#065f46; border-color:#34d399;" onclick="requestJoinExistingParty('${op.charId}', '${op.partyId}', '${escName(op.name)}')">🎗️ 이 파티에 합류</button>
-                ` : ''}
-                <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#0284c7; border-color:#38bdf8;" onclick="requestQuickPartyWith('${escName(op.name)}', '${op.charId}')">📩 ${hasPty ? '파티요청/합류' : '파티요청(초대)'}</button>
-                <button type="button" class="shop-buy-btn" style="flex:1; padding:4px 6px; font-size:9.5px; background:#b45309; border-color:#facc15;" onclick="requestTradeWithPlayer('${op.charId}', '${escName(op.name)}')">🤝 아이템/골드 거래</button>
-                <button type="button" class="shop-buy-btn" style="padding:4px 6px; font-size:9.5px; background:#4c1d95; border-color:#c084fc;" onclick="startQuickWhisperTo('${escName(op.name)}')">💌 귓속말</button>
-              </div>
-            ` : ''}
+            <div data-pty-menu="${op.charId}" class="pty-submenu-bar" style="display:${isSelected ? 'flex' : 'none'}; flex-wrap:wrap; align-items:center; gap:4px; padding-top:4px; border-top:1px dashed #334155;">
+              ${hasPty && !isFull ? `
+                <button type="button" class="shop-buy-btn pty-action-btn" style="background:#065f46; border-color:#34d399;" onclick="requestJoinExistingParty('${op.charId}', '${op.partyId}', '${escName(op.name)}')">🎗️ 파티합류</button>
+              ` : ''}
+              <button type="button" class="shop-buy-btn pty-action-btn" style="background:#0284c7; border-color:#38bdf8;" onclick="requestQuickPartyWith('${escName(op.name)}', '${op.charId}')">📩 ${hasPty ? '파티요청' : '파티초대'}</button>
+              <button type="button" class="shop-buy-btn pty-action-btn" style="background:#b45309; border-color:#facc15;" onclick="requestTradeWithPlayer('${op.charId}', '${escName(op.name)}')">🤝 1:1거래</button>
+              <button type="button" class="shop-buy-btn pty-action-btn" style="background:#4c1d95; border-color:#c084fc;" onclick="startQuickWhisperTo('${escName(op.name)}')">💌 귓속말</button>
+            </div>
           </div>
         `;
       }).join('')
     : `<div style="color:#9ca3af; font-size:10px; text-align:center; padding:10px;">현재 존(${myZone.zoneName})에 파티 가능한 다른 모험가가 없습니다.</div>`;
 
   const p = window.partyState;
+  const hasMyParty = Boolean(p && Array.isArray(p.members) && p.members.length > 0);
   const isMeLeader = Boolean(p && p.leaderCharId === activeCharacterId);
   const curMode = window.partyAutoHuntMode || p?.partyMode || 'FREE';
   const leaderInTown = Boolean(p && p.leaderInSafeZone);
+  modal.classList.toggle('party-modal-has-party', hasMyParty);
 
   let myPartySectionHtml = '';
-  if (p && Array.isArray(p.members) && p.members.length > 0) {
+  if (hasMyParty) {
     const membersHtml = p.members.map((m, idx) => {
       const isLdr = m.charId === p.leaderCharId;
       const isMe = m.charId === activeCharacterId;
@@ -1777,8 +1873,9 @@ window.renderPartyControlModal = function() {
         ? `<span style="color:#86efac; font-size:8.5px;">[🏡마을정비중]</span>`
         : `<span style="color:#fca5a5; font-size:8.5px;">[⚔️사냥터]</span>`;
       return `
-        <div style="background:${isSelected ? '#172554' : '#18181b'}; border:1px solid ${isLdr ? '#facc15' : (isSelected ? '#38bdf8' : '#374151')}; border-radius:6px; padding:4px 6px; display:flex; flex-direction:column; gap:3px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; cursor:${isMe ? 'default' : 'pointer'};" ${isMe ? '' : `onclick="togglePartyWindowCharSelect('${m.charId}', event)"`}>
+        <div data-pty-card="${m.charId}" data-pty-kind="member" data-pty-leader="${isLdr ? '1' : '0'}"
+             style="background:${isSelected ? '#172554' : '#18181b'}; border:1px solid ${isLdr ? '#facc15' : (isSelected ? '#38bdf8' : '#374151')}; border-radius:6px; padding:4px 6px; display:flex; flex-direction:column; gap:3px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; cursor:${isMe ? 'default' : 'pointer'}; user-select:none;" ${isMe ? '' : `onclick="togglePartyWindowCharSelect('${m.charId}', event)"`}>
             <div style="font-size:10.5px; color:#e5e7eb; display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
               <b>${isLdr ? '👑' : `${idx + 1}.`} <span style="color:${isLdr ? '#fde047' : '#fff'}; ${!isMe ? 'text-decoration:underline;' : ''}">${m.name}</span></b>
               <span style="color:#93c5fd; font-size:9.5px;">Lv.${m.level || 1}</span>
@@ -1786,14 +1883,14 @@ window.renderPartyControlModal = function() {
             </div>
             <div>
               ${isLdr ? `<span style="font-size:9px; color:#fde047; font-weight:bold;">파티장</span>` : `<span style="font-size:9px; color:#9ca3af;">파티원</span>`}
-              ${!isMe ? `<span style="font-size:8.5px; color:#38bdf8; margin-left:4px;">${isSelected ? '▲' : '▼'}</span>` : ''}
+              ${!isMe ? `<span data-pty-arrow="${m.charId}" style="font-size:8.5px; color:#38bdf8; margin-left:4px;">${isSelected ? '▲' : '▼'}</span>` : ''}
             </div>
           </div>
-          ${(!isMe && isSelected) ? `
-            <div style="display:flex; flex-wrap:wrap; gap:4px; padding-top:3px; border-top:1px dashed #334155;">
-              <button type="button" class="shop-buy-btn" style="flex:1; padding:3px 5px; font-size:9px; background:#065f46; border-color:#34d399;" onclick="selectFriendlyOtherPlayer('${m.charId}')">💚 힐/버프 대상</button>
-              <button type="button" class="shop-buy-btn" style="flex:1; padding:3px 5px; font-size:9px; background:#1e3a8a; border-color:#60a5fa;" onclick="requestTradeWithPlayer('${m.charId}', '${escName(m.name)}')">🤝 거래신청</button>
-              ${isMeLeader ? `<button type="button" class="shop-buy-btn" style="flex:1; padding:3px 5px; font-size:9px; background:#b45309; border-color:#facc15;" onclick="requestPartyDelegate('${m.charId}')">👑 파티장위임</button>` : ''}
+          ${!isMe ? `
+            <div data-pty-menu="${m.charId}" class="pty-submenu-bar" style="display:${isSelected ? 'flex' : 'none'}; flex-wrap:wrap; align-items:center; gap:4px; padding-top:3px; border-top:1px dashed #334155;">
+              <button type="button" class="shop-buy-btn pty-action-btn" style="background:#065f46; border-color:#34d399;" onclick="selectFriendlyOtherPlayer('${m.charId}')">💚 힐/버프 대상</button>
+              <button type="button" class="shop-buy-btn pty-action-btn" style="background:#1e3a8a; border-color:#60a5fa;" onclick="requestTradeWithPlayer('${m.charId}', '${escName(m.name)}')">🤝 1:1거래</button>
+              ${isMeLeader ? `<button type="button" class="shop-buy-btn pty-action-btn" style="background:#b45309; border-color:#facc15;" onclick="requestPartyDelegate('${m.charId}')">👑 파티장위임</button>` : ''}
             </div>
           ` : ''}
         </div>
@@ -1801,34 +1898,35 @@ window.renderPartyControlModal = function() {
     }).join('');
 
     myPartySectionHtml = `
-      <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <span style="color:#38bdf8; font-weight:bold;">⚔️ 파티 사냥 전술 모드</span>
-          ${(curMode === 'FOCUS' && leaderInTown)
-            ? `<span style="font-size:9px; color:#fde047; background:#78350f; border:1px solid #facc15; padding:1px 5px; border-radius:4px;">🏡 리더 마을정비 · 임시 자유사냥중</span>`
-            : ''}
-        </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
-          <button class="shop-buy-btn" style="padding:5px 4px; font-size:10px; ${curMode === 'FREE' ? 'background:#065f46; border-color:#34d399; color:#ecfdf5;' : 'background:#1f2937; border-color:#4b5563; color:#9ca3af;'}" onclick="setPartyAutoHuntMode('FREE')">
-            🏃 자유사냥 (사냥터유지)
-          </button>
-          <button class="shop-buy-btn" style="padding:5px 4px; font-size:10px; ${curMode === 'FOCUS' ? 'background:#991b1b; border-color:#f87171; color:#fef2f2;' : 'background:#1f2937; border-color:#4b5563; color:#9ca3af;'}" onclick="setPartyAutoHuntMode('FOCUS')">
-            🎯 점사모드 (리더타겟집중)
-          </button>
-        </div>
-        <div style="font-size:8.5px; color:#9ca3af; margin-top:3px;">※ 파티장이 물약 구매하러 마을(안전지대)에 가면 파티원은 현재 사냥터에서 자유사냥을 유지하며, 복귀 즉시 점사모드로 자동 전환됩니다.</div>
-      </div>
-
-      <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <span style="color:#fde047; font-weight:bold;">👥 내 파티원 (${p.members.length}/5) <span style="font-size:8.5px; color:#93c5fd; font-weight:normal;">(이름 터치 시 메뉴)</span></span>
-          <div style="display:flex; gap:3px;">
-            ${!isMeLeader ? `<button class="shop-buy-btn" style="padding:2px 6px; font-size:9px; background:#b45309; border-color:#facc15;" onclick="requestClaimPartyLeader()">👑 파티장 요구</button>` : ''}
-            <button class="shop-buy-btn" style="padding:2px 6px; font-size:9px; background:#7f1d1d; border-color:#f87171;" onclick="requestPartyLeave()">🚪 탈퇴</button>
+      <div class="party-modal-col-left" style="display:flex; flex-direction:column; gap:5px; min-width:0;">
+        <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:4px; flex-wrap:wrap;">
+            <span style="color:#38bdf8; font-weight:bold; font-size:10px;">⚔️ 파티 전술 모드</span>
+            ${(curMode === 'FOCUS' && leaderInTown)
+              ? `<span style="font-size:8.5px; color:#fde047; background:#78350f; border:1px solid #facc15; padding:1px 5px; border-radius:4px;">🏡 리더 정비·임시자유</span>`
+              : ''}
+          </div>
+          <div class="pty-tactic-btn-row" style="display:flex; gap:5px; justify-content:flex-start;">
+            <button type="button" class="shop-buy-btn pty-mode-btn" style="${curMode === 'FREE' ? 'background:#065f46; border-color:#34d399; color:#ecfdf5;' : 'background:#1f2937; border-color:#4b5563; color:#9ca3af;'}" onclick="setPartyAutoHuntMode('FREE')">
+              🏃 자유사냥 (사냥터유지)
+            </button>
+            <button type="button" class="shop-buy-btn pty-mode-btn" style="${curMode === 'FOCUS' ? 'background:#991b1b; border-color:#f87171; color:#fef2f2;' : 'background:#1f2937; border-color:#4b5563; color:#9ca3af;'}" onclick="setPartyAutoHuntMode('FOCUS')">
+              🎯 점사모드 (리더타겟)
+            </button>
           </div>
         </div>
-        <div style="display:flex; flex-direction:column; gap:3px;">
-          ${membersHtml}
+
+        <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px; flex:1; display:flex; flex-direction:column;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:4px;">
+            <span style="color:#fde047; font-weight:bold; font-size:10px;">👥 내 파티원 (${p.members.length}/5) <span style="font-size:8.5px; color:#93c5fd; font-weight:normal;">(터치 시 메뉴)</span></span>
+            <div style="display:flex; gap:3px; flex-shrink:0;">
+              ${!isMeLeader ? `<button type="button" class="shop-buy-btn pty-mini-btn" style="background:#b45309; border-color:#facc15;" onclick="requestClaimPartyLeader()">👑 파티장요구</button>` : ''}
+              <button type="button" class="shop-buy-btn pty-mini-btn" style="background:#7f1d1d; border-color:#f87171;" onclick="requestPartyLeave()">🚪 탈퇴</button>
+            </div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:3px; max-height:150px; overflow-y:auto;">
+            ${membersHtml}
+          </div>
         </div>
       </div>
     `;
@@ -1839,20 +1937,25 @@ window.renderPartyControlModal = function() {
       🎗️ ${regObj.name} [${myZone.zoneName}] 파티 관리 <button class="help-q-btn" onclick="showHelpModal('party', event)">?</button>
     </div>
     <button class="close-x-btn" onclick="closePartyControlModal()">✖</button>
-    <div style="display:flex; flex-direction:column; gap:6px; padding:4px; font-size:10.5px; overflow-y:auto; max-height:68dvh;">
+    <div class="party-modal-scroll-body ${hasMyParty ? 'has-party-grid' : 'solo-party-grid'}" style="display:flex; flex-direction:column; flex:1 1 auto; min-height:0; gap:5px; padding:4px; font-size:10.5px; overflow-y:auto !important; touch-action:pan-y;">
       ${myPartySectionHtml}
-      <div style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-          <span style="color:#fde047; font-weight:bold;">📍 현재 존(${myZone.zoneName}) 파티 가능 모험가 (${candidates.length}명)</span>
-          <button type="button" class="shop-buy-btn" style="padding:2px 6px; font-size:9px; background:#1e293b; border-color:#64748b;" onclick="requestRegionPlayersRefresh()">🔄 새로고침</button>
+      <div class="party-modal-col-right" style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px; display:flex; flex-direction:column; min-width:0;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; gap:4px;">
+          <span style="color:#fde047; font-weight:bold; font-size:10px;">📍 현재 존(${myZone.zoneName}) 모험가 (${candidates.length}명)</span>
+          <button type="button" class="shop-buy-btn pty-mini-btn" style="background:#1e293b; border-color:#64748b;" onclick="requestRegionPlayersRefresh(true)">🔄 새로고침</button>
         </div>
-        <div style="color:#93c5fd; font-size:9px; margin-bottom:4px;">💡 <b>이름을 터치</b>하면 <b>[파티요청]</b>, <b>[기존 파티 합류]</b>, <b>[아이템/골드 거래]</b>를 바로 진행할 수 있습니다!</div>
-        <div style="display:flex; flex-direction:column; gap:4px; max-height:210px; overflow-y:auto; padding-right:2px;">
+        <div style="color:#93c5fd; font-size:8.8px; margin-bottom:4px;">💡 <b>이름 터치</b> 시 새로고침 없이 바로 <b>[파티합류/초대 · 거래 · 귓속말]</b> 메뉴가 열립니다.</div>
+        <div class="party-candidates-scroll-list" style="display:flex; flex-direction:column; gap:4px; max-height:195px; overflow-y:auto; padding-right:2px;">
           ${candidatesHtml}
         </div>
       </div>
     </div>
   `;
+
+  const nextOuter = modal.querySelector('.party-modal-scroll-body');
+  if (nextOuter && prevOuterScroll > 0) nextOuter.scrollTop = prevOuterScroll;
+  const nextCand = modal.querySelector('.party-candidates-scroll-list');
+  if (nextCand && prevCandScroll > 0) nextCand.scrollTop = prevCandScroll;
 };
 
 let _partyInviteExpireTimer = null;
@@ -1878,11 +1981,14 @@ window.showPartyInvitePopup = function(msg) {
   }
 
   let pop = document.getElementById('party-invite-popup');
+  const hostWrap = document.getElementById('game-wrapper') || document.body;
   if (!pop) {
     pop = document.createElement('div');
     pop.id = 'party-invite-popup';
-    pop.style.cssText = 'position:fixed; top:56px; left:50%; transform:translateX(-50%); z-index:9600; width:min(88vw, 290px); background:rgba(15, 23, 42, 0.96); border:2px solid #38bdf8; border-radius:8px; padding:10px; box-shadow:0 8px 25px rgba(0,0,0,0.9); color:#fff; pointer-events:auto;';
-    document.body.appendChild(pop);
+    pop.style.cssText = 'position:absolute; top:48px; left:50%; transform:translateX(-50%); z-index:9600; width:min(84%, 285px); background:rgba(15, 23, 42, 0.97); border:2px solid #38bdf8; border-radius:8px; padding:9px 11px; box-shadow:0 8px 25px rgba(0,0,0,0.9); color:#fff; pointer-events:auto;';
+    hostWrap.appendChild(pop);
+  } else if (pop.parentElement !== hostWrap) {
+    hostWrap.appendChild(pop);
   }
 
   let remainSec = 10;
@@ -1951,10 +2057,10 @@ window.updateMercHUD = function() {
   if (curZone && window._lastClientZoneKey !== curZone.zoneKey) {
     window._lastClientZoneKey = curZone.zoneKey;
     window.regionPlayersCache = (window.regionPlayersCache || []).filter(p => p && p.zoneKey === curZone.zoneKey);
-    window.requestRegionPlayersRefresh?.();
+    // 파티창이 열려 있을 때는 실시간 자동 새로고침(화면 깜빡임)을 하지 않고 현재 열린 화면을 그대로 유지
     const pModal = document.getElementById('party-control-modal');
-    if (pModal && !pModal.classList.contains('hidden')) {
-      window.renderPartyControlModal?.();
+    if (!pModal || pModal.classList.contains('hidden')) {
+      window.requestRegionPlayersRefresh?.(false);
     }
   }
 
@@ -1996,14 +2102,19 @@ window.updateMercHUD = function() {
   if (pHud.style.display !== 'flex') pHud.style.display = 'flex';
   const cardsHtml = [];
 
-  // 1) 항상 첫 번째 슬롯: 고용된 용병 HUD (파티원 HUD와 100% 동일한 카드 레이아웃)
+  // 사용자가 용병/파티원 HUD를 길게 누르고 있는 도중에는 DOM 교체를 보류하여 터치 취소(창 닫힘) 현상 원천 차단!
+  if (_mercHudCardPressing || _partyHudPressing) {
+    return;
+  }
+
+  // 1) 항상 첫 번째 슬롯: 고용된 용병 HUD (일반 파티원 HUD보다 한층 크고 선명한 전용 카드 디자인)
   if (hasMerc) {
     const isMercSel = Boolean(player.friendlyTarget && player.friendlyTarget.type === 'MERC');
     const meta = MERC_CLASS_META[mercenary.class] || MERC_CLASS_META.knight;
     const shortMercName = normalizeMercenaryDisplayName(mercenary.name, mercenary.class).split(' ').pop();
     const mHpPct = mercenary.isDead ? 0 : Math.round(Math.max(0, Math.min(100, (mercenary.hp / Math.max(1, mercenary.maxHp)) * 100)));
     const mMpPct = mercenary.isDead ? 0 : Math.round(Math.max(0, Math.min(100, (mercenary.mp / Math.max(1, mercenary.maxMp)) * 100)));
-    const mBorderCol = isMercSel ? '#4ade80' : (mercenary.isDead ? '#ef4444' : '#60a5fa');
+    const mBorderCol = isMercSel ? '#4ade80' : (mercenary.isDead ? '#ef4444' : '#fbbf24');
     let mRightBadge = '';
     if (isMercSel) {
       mRightBadge = '🎯지원';
@@ -2018,24 +2129,24 @@ window.updateMercHUD = function() {
     } else {
       mRightBadge = '💚보조';
     }
-    const mRightCol = isMercSel ? '#4ade80' : (mercenary.isDead ? '#fca5a5' : '#6ee7b7');
+    const mRightCol = isMercSel ? '#4ade80' : (mercenary.isDead ? '#fca5a5' : '#fde047');
 
     cardsHtml.push(`
-      <div onpointerdown="onMercHudCardPointerDown(event)"
+      <div class="merc-primary-hud-card"
+           onpointerdown="onMercHudCardPointerDown(event)"
            onpointerup="onMercHudCardPointerUp(event)"
-           onpointerleave="onMercHudCardCancel()"
            onpointercancel="onMercHudCardCancel()"
-           oncontextmenu="event.preventDefault(); toggleMercUI();"
+           oncontextmenu="onMercHudCardContextMenu(event)"
            title="터치: 용병 힐/버프 대상 선택 | 길게 누르기: 용병 상태·가방 창 열기"
-           style="background:rgba(15,20,28,0.93); border:1.5px solid ${mBorderCol}; box-shadow:${isMercSel ? '0 0 8px rgba(74,222,128,0.85)' : '0 2px 6px rgba(0,0,0,0.8)'}; border-radius:5px; padding:3px 4px; cursor:pointer; font-size:8.5px; color:#e5e7eb; user-select:none;">
-        <div style="display:flex; justify-content:space-between; align-items:center; font-weight:bold;">
-          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:58px; color:#bae6fd;">${meta.icon}${shortMercName}</span>
-          <span style="font-size:7.5px; color:${mRightCol};">${mRightBadge}</span>
+           style="background:linear-gradient(180deg, rgba(20,26,38,0.94), rgba(12,16,24,0.94)); border:1.5px solid ${mBorderCol}; box-shadow:${isMercSel ? '0 0 9px rgba(74,222,128,0.85)' : '0 2px 6px rgba(0,0,0,0.85)'}; border-radius:5px; padding:2.5px 4.5px; font-size:8.4px; line-height:1.15; cursor:pointer; color:#f3f4f6; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; touch-action:none;">
+        <div class="merc-primary-top" style="display:flex; justify-content:space-between; align-items:center; font-weight:bold; gap:2px;">
+          <span class="merc-primary-name" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#fef08a;">${meta.icon}${shortMercName} <small style="color:#93c5fd; font-weight:bold; font-size:7.6px;">Lv.${mercenary.level || 1}</small></span>
+          <span class="merc-primary-badge" style="color:${mRightCol}; font-size:7.6px; flex-shrink:0;">${mRightBadge}</span>
         </div>
-        <div class="merc-bar-bg" style="height:5px; margin-top:2px;">
+        <div class="merc-bar-bg merc-primary-hp-bg" style="height:4.5px; margin-top:1.5px;">
           <div class="merc-bar-fill-hp" style="width:${mHpPct}%;"></div>
         </div>
-        <div class="merc-bar-bg" style="height:4px; margin-top:1px;">
+        <div class="merc-bar-bg merc-primary-mp-bg" style="height:3.2px; margin-top:1px;">
           <div class="merc-bar-fill-mp" style="width:${mMpPct}%;"></div>
         </div>
       </div>
@@ -2062,21 +2173,21 @@ window.updateMercHUD = function() {
       const mpPct = Math.round(Math.max(0, Math.min(100, (mpVal / maxMpVal) * 100)));
       const borderCol = isSel ? '#4ade80' : (isLeader ? '#facc15' : '#38bdf8');
       cardsHtml.push(`
-        <div onpointerdown="onPartyHudPointerDown(event, '${pm.charId}', ${isLeader})"
+        <div class="party-member-hud-card"
+             onpointerdown="onPartyHudPointerDown(event, '${pm.charId}', ${isLeader})"
              onpointerup="onPartyHudPointerUp(event, '${pm.charId}', ${isLeader})"
-             onpointerleave="onPartyHudCancel()"
              onpointercancel="onPartyHudCancel()"
-             oncontextmenu="event.preventDefault(); openPartyControlModal();"
+             oncontextmenu="event.preventDefault(); event.stopPropagation();"
              title="터치: 힐/버프 대상 선택 | 길게 누르기: 파티 설정창 열기"
-             style="background:rgba(15,20,28,0.93); border:1.5px solid ${borderCol}; box-shadow:${isSel ? '0 0 8px rgba(74,222,128,0.85)' : '0 2px 6px rgba(0,0,0,0.8)'}; border-radius:5px; padding:3px 4px; cursor:pointer; font-size:8.5px; color:#e5e7eb; user-select:none;">
+             style="background:rgba(15,20,28,0.9); border:1.2px solid ${borderCol}; box-shadow:${isSel ? '0 0 8px rgba(74,222,128,0.85)' : '0 2px 6px rgba(0,0,0,0.8)'}; border-radius:5px; padding:2.5px 4px; cursor:pointer; font-size:8px; color:#e5e7eb; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; touch-action:none;">
           <div style="display:flex; justify-content:space-between; align-items:center; font-weight:bold;">
             <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:58px; color:${isLeader ? '#fde047' : '#e5e7eb'};">${isLeader ? '👑' : '🎗️'}${pm.name}</span>
-            <span style="font-size:7.5px; color:${isSel ? '#4ade80' : '#93c5fd'};">${isSel ? '🎯지원' : (isLeader ? modeBadge : `Lv.${liveOp.level || pm.level || 1}`)}</span>
+            <span style="font-size:7.2px; color:${isSel ? '#4ade80' : '#93c5fd'};">${isSel ? '🎯지원' : (isLeader ? modeBadge : `Lv.${liveOp.level || pm.level || 1}`)}</span>
           </div>
-          <div class="merc-bar-bg" style="height:5px; margin-top:2px;">
+          <div class="merc-bar-bg party-member-hp-bg" style="height:4px; margin-top:1.5px;">
             <div class="merc-bar-fill-hp" style="width:${hpPct}%;"></div>
           </div>
-          <div class="merc-bar-bg" style="height:4px; margin-top:1px;">
+          <div class="merc-bar-bg party-member-mp-bg" style="height:3px; margin-top:1px;">
             <div class="merc-bar-fill-mp" style="width:${mpPct}%;"></div>
           </div>
         </div>
@@ -2116,7 +2227,7 @@ window.onMercEquipSlotTap = function(eqIdx) {
 
 
 
-window.toggleMercUI = function() {
+window.openMercUI = function() {
   ensureAllGameModals();
   const ui = document.getElementById('merc-ui');
   if (!ui) return;
@@ -2124,11 +2235,28 @@ window.toggleMercUI = function() {
     window.addChat(`💡 [용병 안내] 마을(S) 또는 야영지(S1)의 '용병단장 카셀'에게서 용병을 고용할 수 있습니다!`, 'log-sys');
     return;
   }
-  ui.classList.toggle('hidden');
-  if (!ui.classList.contains('hidden')) {
-    window.bringModalToFront?.(ui);
-    window.renderMercUI();
+  const wasHidden = ui.classList.contains('hidden');
+  ui.classList.remove('hidden');
+  window.bringModalToFront?.(ui);
+  window.renderMercUI();
+  if (wasHidden && !ui._hasCustomDragPos) {
     window.centerModalOnScreen?.(ui);
+  }
+};
+
+window.closeMercUI = function() {
+  const ui = document.getElementById('merc-ui');
+  if (ui) ui.classList.add('hidden');
+};
+
+window.toggleMercUI = function() {
+  ensureAllGameModals();
+  const ui = document.getElementById('merc-ui');
+  if (!ui) return;
+  if (ui.classList.contains('hidden')) {
+    window.openMercUI();
+  } else {
+    window.closeMercUI();
   }
 };
 
@@ -2502,7 +2630,7 @@ window.renderMercUI = function() {
     { key: 'ring1', name: '반지1' },   { key: 'ring2', name: '반지2' }
   ];
 
-  let equipGridHtml = `<div style="display:grid; grid-template-columns:repeat(7, 1fr); gap:3px;">`;
+  let equipGridHtml = `<div class="merc-equip-grid-14" style="display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:2.5px;">`;
   equipSlots.forEach(s => {
     const eqIdx = mercenary.equip[s.key];
     const inst = (eqIdx !== null && eqIdx !== undefined && mercenary.inventory[eqIdx]) ? mercenary.inventory[eqIdx] : null;
@@ -2511,7 +2639,7 @@ window.renderMercUI = function() {
     
     // 장비 슬롯도 더블 터치 시 해제되도록 연결
     equipGridHtml += `
-      <div onclick="${inst ? `onMercEquipSlotTap(${eqIdx})` : ''}" title="${inst ? (window.itemDict[inst.type]?.name || s.name) + ' (더블 터치 시 해제)' : s.name}" style="height:36px; background:#141210; border:1.5px solid ${borderCol}; border-radius:5px; display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; position:relative;">
+      <div class="merc-equip-slot-cell" onclick="${inst ? `onMercEquipSlotTap(${eqIdx})` : ''}" title="${inst ? (window.itemDict[inst.type]?.name || s.name) + ' (더블 터치 시 해제)' : s.name}" style="height:34px; background:#141210; border:1.5px solid ${borderCol}; border-radius:5px; display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; position:relative;">
         ${inst ? window.getItemIconHTML(inst.type) : `<span style="font-size:8px; color:#9ca3af; font-weight:bold;">${s.name}</span>`}
         ${plusVal > 0 ? `<span style="position:absolute; top:1px; right:1px; font-size:7.5px; font-weight:bold; color:#fde047; background:rgba(0,0,0,0.85); padding:0 2px; border-radius:2px;">+${plusVal}</span>` : ''}
       </div>
@@ -2520,7 +2648,7 @@ window.renderMercUI = function() {
   equipGridHtml += `</div>`;
 
   const mercEqSet = new Set(Object.values(mercenary.equip).filter(v => v !== null && v !== undefined).map(Number));
-  let invGridHtml = `<div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:4px; max-height:108px; overflow-y:auto; padding:3px; background:#090b10; border:1px solid #3d3020; border-radius:6px;">`;
+  let invGridHtml = `<div class="merc-bag-grid-24" style="display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:3px; max-height:112px; overflow-y:auto; padding:3px; background:#090b10; border:1px solid #3d3020; border-radius:6px;">`;
   mercenary.inventory.forEach((inst, idx) => {
     const isEq = mercEqSet.has(idx);
     const isSel = selectedMercInvIdx === idx;
@@ -2540,49 +2668,52 @@ window.renderMercUI = function() {
   invGridHtml += `</div>`;
 
   body.innerHTML = `
-    <!-- 1. 상단 용병 요약 및 장비 강화 세트 효과 배지 -->
-    <div style="background:#1c1917; border:1px solid #5a462a; border-radius:6px; padding:4px 6px; display:flex; flex-direction:column; gap:2px;">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div>
+    <div class="merc-col-left">
+      <!-- 1. 상단 용병 요약 및 전투 스탠스 제어 통합 카드 -->
+      <div style="background:#1c1917; border:1px solid #5a462a; border-radius:6px; padding:5px 7px; display:flex; flex-direction:column; gap:4px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
           <div style="font-size:11px; font-weight:bold; color:#fde047;">${meta.icon} ${mercenary.name} <span style="color:#fff;">Lv.${mercenary.level}</span></div>
-          <div style="font-size:9px; color:#d1d5db;">HP <b style="color:#4ade80;">${Math.ceil(mercenary.hp)}/${ms.maxHp}</b> · MP <b style="color:#60a5fa;">${Math.ceil(mercenary.mp)}/${ms.maxMp}</b> · 공<b>${mercenary.class === 'wizard' ? ms.totalMAtk : ms.totalAtk}</b> · 방<b>${ms.totalDef}</b>/마방<b style="color:#c084fc;">${ms.totalMDef || 0}</b></div>
+          ${mercenary.isDead ? `<button class="shop-buy-btn" style="background:#dc2626; border-color:#fca5a5; padding:2px 6px; font-size:9px;" onclick="reviveMercenary()">부활(${getMercReviveCost()}G)</button>` : `<span style="font-size:9px; color:#4ade80; font-weight:bold; background:rgba(6,95,70,0.45); border:1px solid #34d399; padding:1px 5px; border-radius:4px;">참전중</span>`}
         </div>
-        ${mercenary.isDead ? `<button class="shop-buy-btn" style="background:#dc2626; border-color:#fca5a5; padding:2px 5px;" onclick="reviveMercenary()">부활(${getMercReviveCost()}G)</button>` : `<span style="font-size:9px; color:#4ade80; font-weight:bold;">참전중</span>`}
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:2px 6px; font-size:9.5px; color:#d1d5db; background:#111318; padding:3px 6px; border-radius:4px; border:1px solid #2d261e;">
+          <div>HP <b style="color:#4ade80;">${Math.ceil(mercenary.hp)}/${ms.maxHp}</b></div>
+          <div>MP <b style="color:#60a5fa;">${Math.ceil(mercenary.mp)}/${ms.maxMp}</b></div>
+          <div>${mercenary.class === 'wizard' ? '마법공격' : '물리공격'} <b style="color:#fde047;">${mercenary.class === 'wizard' ? ms.totalMAtk : ms.totalAtk}</b></div>
+          <div>방어/마방 <b>${ms.totalDef}</b>/<b style="color:#c084fc;">${ms.totalMDef || 0}</b></div>
+        </div>
+        <div style="font-size:8.5px; color:#93c5fd; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          🔓 해금 스킬(${getMercUnlockedSkills().length}종): <span style="color:#fde047;">${getMercUnlockedSkills().slice(-4).map(s => s.name).join(' · ') || '기본공격'}</span>
+        </div>
+        <div class="merc-stance-row" style="display:flex; gap:4px; padding-top:2px; border-top:1px solid #2e261d;">
+          <button class="stance-btn ${mercenary.stance === 'ATTACK' ? 'active-attack' : ''}" onclick="setMercStance('ATTACK')">⚔️ 공격</button>
+          <button class="stance-btn ${mercenary.stance === 'STANDBY' ? 'active-standby' : ''}" onclick="setMercStance('STANDBY')">🛡️ 대기</button>
+          <button class="stance-btn ${mercenary.stance === 'SUPPORT' ? 'active-support' : ''}" onclick="setMercStance('SUPPORT')">💚 보조</button>
+        </div>
       </div>
-      <div style="font-size:8.5px; color:#93c5fd; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-        🔓 레벨 해금 스킬(${getMercUnlockedSkills().length}종): <span style="color:#fde047;">${getMercUnlockedSkills().slice(-5).map(s => s.name).join(' · ') || '기본공격'}</span>
+
+      <!-- 2. 용병 장착 장비 (14슬롯) -->
+      <div class="merc-equip-card" style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:5px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+          <span style="font-size:10px; color:#facc15; font-weight:bold;">🛡️ 착용 장비 (14부위)</span>
+          <span style="font-size:8.5px; color:#9ca3af;">더블터치 시 해제</span>
+        </div>
+        ${equipGridHtml}
       </div>
     </div>
 
-    <!-- 2. 스탠스 제어 -->
-    <div style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:4px;">
-      <div style="display:flex; gap:3px;">
-        <button class="stance-btn ${mercenary.stance === 'ATTACK' ? 'active-attack' : ''}" onclick="setMercStance('ATTACK')">⚔️ 공격</button>
-        <button class="stance-btn ${mercenary.stance === 'STANDBY' ? 'active-standby' : ''}" onclick="setMercStance('STANDBY')">🛡️ 대기</button>
-        <button class="stance-btn ${mercenary.stance === 'SUPPORT' ? 'active-support' : ''}" onclick="setMercStance('SUPPORT')">💚 보조</button>
-      </div>
-    </div>
-
-    <!-- 3. 용병 장착 장비 (14슬롯) -->
-    <div style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:4px;">
-      <div style="font-size:10px; color:#facc15; font-weight:bold; margin-bottom:2px;">🛡️ 착용 장비 (더블 터치 해제)</div>
-      ${equipGridHtml}
-    </div>
-
-    <!-- 4. 용병 가방 (24슬롯) -->
-    <div style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:4px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
-        <span style="font-size:10px; color:#facc15; font-weight:bold;">🎒 용병 가방 (터치:상세 / 더블터치:장착)</span>
-        <div style="display:flex; gap:3px;">
-          <button class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#065f46;" onclick="sortMercInventory()">정렬</button>
-          <button class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#1d4ed8; border-color:#60a5fa;" onclick="quickSupplyMercBestEquipFromPlayer()" title="플레이어 가방에서 현재 용병 장비보다 좋은 장비를 모두 가져와 자동 장착">아이템보급</button>
-          <button class="shop-buy-btn" style="padding:2px 5px; font-size:9px; background:#15803d;" onclick="quickSupplyMercPotions()" title="플레이어 가방에서 물약 보급">물약보급</button>
+    <!-- 3. 용병 가방 (24슬롯) & 상세정보 -->
+    <div class="merc-col-right" style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:5px; display:flex; flex-direction:column; gap:4px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:4px; flex-wrap:wrap;">
+        <span style="font-size:10px; color:#facc15; font-weight:bold;">🎒 용병 가방</span>
+        <div style="display:flex; gap:2.5px; flex-shrink:0;">
+          <button class="shop-buy-btn" style="padding:2px 5px; font-size:8.5px; background:#065f46;" onclick="sortMercInventory()">🧹정렬</button>
+          <button class="shop-buy-btn" style="padding:2px 5px; font-size:8.5px; background:#1d4ed8; border-color:#60a5fa;" onclick="quickSupplyMercBestEquipFromPlayer()" title="플레이어 가방에서 현재 용병 장비보다 좋은 장비를 모두 가져와 자동 장착">⚡장비보급</button>
+          <button class="shop-buy-btn" style="padding:2px 5px; font-size:8.5px; background:#15803d;" onclick="quickSupplyMercPotions()" title="플레이어 가방에서 물약 보급">🧪물약보급</button>
         </div>
       </div>
       ${invGridHtml}
-      <!-- 🌟 누락되었던 #merc-item-detail 영역 추가 -->
-      <div id="merc-item-detail" style="margin-top:3px; padding:5px 7px; background:#090b10; border:1.5px solid #5a462a; border-radius:5px; font-size:11px; color:#e5e7eb; min-height:68px;">
-        아이템을 터치하면 상세 옵션이 표시됩니다.
+      <div id="merc-item-detail" style="padding:5px 7px; background:#090b10; border:1.5px solid #5a462a; border-radius:5px; font-size:10.5px; color:#e5e7eb; min-height:58px;">
+        아이템을 터치하면 상세 옵션이 표시됩니다. (더블터치: 장착/사용)
       </div>
     </div>
   `;
@@ -2634,10 +2765,10 @@ window.selectMercInvSlot = function(rawMercIdx) {
         <b style="color:${inst.gradeColor || '#fff'}; font-size:12px;">${plusTxt}${def.name}</b>
         <span style="color:#fde047; font-size:10px;">(${def.type || '기타'})</span>
       </div>
-      <div style="display:flex; gap:3px; flex-shrink:0;">
-        <button class="shop-buy-btn" style="background:#16a34a; padding:3px 6px;" onclick="mercItemAction(${mercIdx}, 'equipOrUse')">${isEq ? '해제' : '장착'}</button>
-        <button class="shop-buy-btn" style="background:#1e3a8a; padding:3px 6px;" onclick="mercItemAction(${mercIdx}, 'returnToPlayer')">회수</button>
-        <button class="shop-buy-btn" style="background:#b45309; border-color:#f59e0b; padding:3px 6px;" onclick="mercItemQuickSell(${mercIdx})">판매</button>
+      <div style="display:flex; gap:2.5px; flex-shrink:0;">
+        <button class="shop-buy-btn" style="background:#16a34a; padding:2px 5px; font-size:9.5px;" onclick="mercItemAction(${mercIdx}, 'equipOrUse')">${isEq ? '해제' : '장착'}</button>
+        <button class="shop-buy-btn" style="background:#1e3a8a; padding:2px 5px; font-size:9.5px;" onclick="mercItemAction(${mercIdx}, 'returnToPlayer')">회수</button>
+        <button class="shop-buy-btn" style="background:#b45309; border-color:#f59e0b; padding:2px 5px; font-size:9.5px;" onclick="mercItemQuickSell(${mercIdx})">판매</button>
       </div>
     </div>
     <div style="font-size:11px; line-height:1.3;">${statHtml || '<span style="color:#9ca3af;">효과 없음</span>'}</div>

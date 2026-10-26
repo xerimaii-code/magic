@@ -1028,6 +1028,7 @@ body.chat-is-transparent #chat-toggle-fab {
     box-shadow: 0 8px 25px rgba(0,0,0,0.85); 
     backdrop-filter: blur(4px); 
 }
+.hidden { display: none !important; }
 .modal-panel.hidden { display: none !important; }
 .modal-header.drag-handle { 
     background: linear-gradient(90deg, #2a2015, #1a1510, #2a2015); border-bottom: 1px solid #5a462a; 
@@ -1685,7 +1686,118 @@ body.chat-is-transparent #mode-toggle-fab {
 }
 
 /* ============================================================================
-   🌄 가로모드 (body.landscape-mode) 전체 레이아웃 · 우측 2중 아크 10슬롯 · 전 모달 최적화
+   🔄 가로/세로 모드 전환 확인 모달 (#mode-switch-confirm-modal) 및 공통 보조 레이아웃
+   ============================================================================ */
+.mode-confirm-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.58);
+    z-index: 32000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    pointer-events: auto;
+}
+.mode-confirm-overlay.hidden {
+    display: none !important;
+}
+.mode-confirm-card {
+    width: min(86vw, 290px);
+    background: linear-gradient(180deg, #1b202c, #0f131a);
+    border: 2px solid #eab308;
+    border-radius: 10px;
+    padding: 14px 16px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.92), inset 0 1px 0 rgba(255,255,255,0.12);
+    text-align: center;
+    color: #f3f4f6;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.mode-confirm-title {
+    font-size: 13.5px;
+    font-weight: 900;
+    color: #fde047;
+    text-shadow: 0 1px 2px #000;
+}
+.mode-confirm-desc {
+    font-size: 11.5px;
+    color: #e5e7eb;
+    line-height: 1.45;
+    word-break: keep-all;
+}
+.mode-confirm-btns {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+.mode-confirm-btn {
+    flex: 0 1 108px;
+    min-width: 88px;
+    height: 32px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    transition: transform 0.08s, filter 0.15s;
+}
+.mode-confirm-btn:active {
+    transform: scale(0.95);
+}
+.mode-confirm-btn.ok {
+    background: linear-gradient(180deg, #16a34a, #14532d);
+    border: 1.5px solid #4ade80;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(22, 163, 74, 0.45);
+}
+.mode-confirm-btn.cancel {
+    background: linear-gradient(180deg, #374151, #1f2937);
+    border: 1.5px solid #9ca3af;
+    color: #e5e7eb;
+}
+
+/* 세로모드 기본: 상태창/용병창/스탯창 내부 래퍼 호환 스타일 */
+.equip-stat-summary-col,
+.equip-stat-alloc-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5px;
+}
+.equip-col-head {
+    text-align: center;
+    color: #facc15;
+    font-size: 11.5px;
+    font-weight: bold;
+    line-height: 1.2;
+    margin-bottom: 1px;
+}
+.equip-stat-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    line-height: 1.22;
+}
+.equip-stat-line .stat-val {
+    float: none;
+}
+.merc-col-left,
+.merc-col-right {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.stat-alloc-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* ============================================================================
+   🌄 가로모드 (body.landscape-mode) 전체 레이아웃 · 최상단 1열 정렬 · 우측 2중 아크 10슬롯 · 전 모달 비율 최적화
    ============================================================================ */
 
 /* 세로 화면(스마트폰 세로 파지 등)에서 가로모드 작동 시 90도 회전 컨테이너 */
@@ -1717,7 +1829,7 @@ body.landscape-mode #canvas-wrapper {
     z-index: 1;
 }
 
-/* 2. 하단 구조: 버프 아이콘(#buff-ui) -> 그 아래 얇은 경험치바(#exp-bar-container) -> 최하단 기본 정보 상태바(.status-bar: Lv, EXP%, 공격, 방어, 골드) */
+/* 2. 하단 구조: 버프 아이콘(#buff-ui) -> 그 아래 얇은 경험치바(#exp-bar-container) -> 최하단 기본 정보 상태바(.status-bar) */
 body.landscape-mode #exp-bar-container {
     position: absolute !important;
     left: 0 !important;
@@ -1751,7 +1863,6 @@ body.landscape-mode #bottom-panel .status-bar {
     pointer-events: none;
 }
 
-/* 하단 버프 아이콘 바: 경험치바/상태바 바로 위에 넓게 배치 (버프가 10~15개 이상 많이 생겨도 우측 아크 슬롯과 간섭 없이 자동 정렬/줄바꿈) */
 body.landscape-mode #buff-ui {
     position: absolute !important;
     bottom: 22px !important;
@@ -1772,104 +1883,136 @@ body.landscape-mode #buff-ui > div {
     margin: -2px -2px;
 }
 
-/* 3. 좌측 상단: 플레이어 체력바(플레이어 이름 표기) -> 바로 아래 기본채팅 2줄 -> 바로 아래 파티원 HUD */
+/* 3. 최상단 1열 정렬: [좌측 플레이어 체력바] -> [몬스터 타겟바(컴팩트)] -> [채팅 2줄(대화창 닫혔을 때만)] -> [옵션 등 아이콘] -> [미니맵] */
 body.landscape-mode #top-hud {
     top: max(4px, env(safe-area-inset-top, 4px));
-    left: max(8px, env(safe-area-inset-left, 8px));
-    right: max(8px, env(safe-area-inset-right, 8px));
+    left: max(6px, env(safe-area-inset-left, 6px));
+    right: max(6px, env(safe-area-inset-right, 6px));
     max-width: none;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: flex-start !important;
+    justify-content: space-between !important;
+    flex-wrap: nowrap !important;
+    gap: 5px !important;
     z-index: 135;
 }
 
 body.landscape-mode .top-left-hud-wrap {
-    max-width: 225px;
-    gap: 1.5px;
+    max-width: 118px;
+    flex: 0 0 auto;
+    gap: 2px;
 }
 
 body.landscape-mode .profile-section.compact {
-    padding: 2.5px 6px 2.5px 3px;
-    border-radius: 16px;
-    background: rgba(10, 14, 22, 0.78);
+    padding: 2px 5px 2px 3px;
+    border-radius: 15px;
+    background: rgba(10, 14, 22, 0.82);
     border: 1.2px solid #8a6d3b;
     box-shadow: 0 2px 7px rgba(0,0,0,0.75);
-    gap: 4px;
+    gap: 3.5px;
 }
 
 body.landscape-mode .portrait-ring {
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
 }
 
 body.landscape-mode .hud-player-name {
-    max-width: 66px;
-    font-size: 9px;
+    max-width: 56px;
+    font-size: 8.8px;
 }
 body.landscape-mode .hud-player-lv {
-    font-size: 8px;
+    font-size: 7.8px;
 }
 
 body.landscape-mode .bar-bg {
-    width: 82px;
-    height: 7px;
+    width: 74px;
+    height: 6.5px;
 }
 
 body.landscape-mode .bar-text {
-    font-size: 7.8px;
-    line-height: 8.5px;
+    font-size: 7.5px;
+    line-height: 8px;
 }
 
-/* 플레이어 체력바 바로 아래 기본채팅 2줄 */
-body.landscape-mode .hud-closed-chat-feed {
-    position: static !important;
-    margin-top: 1px;
-    padding: 1px 3px;
-    width: min(36vw, 215px);
-    max-width: min(36vw, 215px);
-    max-height: 25px;
-    font-size: 9.2px;
-    line-height: 1.25;
-    background: linear-gradient(90deg, rgba(8, 12, 18, 0.42), transparent) !important;
-    border-radius: 3px;
-    pointer-events: none !important;
-}
-
-/* 기본채팅 2줄 바로 아래 파티원/용병 HUD */
+/* 좌측 플레이어 체력바 바로 아래 파티원/용병 HUD (용병 HUD는 일반 파티원보다 한층 크고 선명하게 표시) */
 body.landscape-mode .left-party-hud-slot {
     display: flex;
-    margin-top: 1px;
+    margin-top: 3px;
 }
 body.landscape-mode #party-hud {
-    width: 96px !important;
-    gap: 1.5px !important;
+    width: auto !important;
+    gap: 3px !important;
     margin-top: 0 !important;
+    align-items: flex-start !important;
 }
-body.landscape-mode #party-hud > div {
+/* 세로모드 기본에서도 용병 HUD가 세로로 과하게 크지 않도록 슬림화 */
+body:not(.landscape-mode) #party-hud .merc-primary-hud-card {
+    width: 92px !important;
+    padding: 2px 4px !important;
+    font-size: 8.2px !important;
+    line-height: 1.12 !important;
+    border-radius: 5px !important;
+    border-width: 1.4px !important;
+}
+body:not(.landscape-mode) #party-hud .merc-primary-hud-card .merc-primary-hp-bg {
+    height: 4px !important;
+    margin-top: 1.5px !important;
+}
+body:not(.landscape-mode) #party-hud .merc-primary-hud-card .merc-primary-mp-bg {
+    height: 3px !important;
+    margin-top: 1px !important;
+}
+
+/* 가로모드 용병 HUD: 좌상단 플레이어 체력바(약 114px)보다 작고 일반 파티원(약 86px)보다는 살짝 크게 정밀 조정 */
+body.landscape-mode #party-hud .merc-primary-hud-card {
+    width: clamp(94px, 12.6%, 104px) !important;
+    padding: 2px 5px !important;
+    font-size: 8.5px !important;
+    line-height: 1.15 !important;
+    border-radius: 5px !important;
+    border-width: 1.5px !important;
+}
+body.landscape-mode #party-hud .merc-primary-hud-card .merc-primary-hp-bg {
+    height: 4.5px !important;
+    margin-top: 1.5px !important;
+}
+body.landscape-mode #party-hud .merc-primary-hud-card .merc-primary-mp-bg {
+    height: 3.2px !important;
+    margin-top: 1px !important;
+}
+body.landscape-mode #party-hud .party-member-hud-card {
+    width: clamp(82px, 11%, 90px) !important;
     padding: 1.5px 4px !important;
     font-size: 7.5px !important;
-    line-height: 1.1 !important;
-    background: rgba(12, 17, 26, 0.78) !important;
-    border-radius: 4px !important;
-    border-width: 1px !important;
+    line-height: 1.12 !important;
+    border-radius: 4.5px !important;
+    border-width: 1.1px !important;
 }
-body.landscape-mode #party-hud .merc-bar-bg {
-    height: 3.2px !important;
+body.landscape-mode #party-hud .party-member-hud-card .party-member-hp-bg {
+    height: 4px !important;
+    margin-top: 1.5px !important;
+}
+body.landscape-mode #party-hud .party-member-hud-card .party-member-mp-bg {
+    height: 3px !important;
     margin-top: 1px !important;
 }
 
 /* 4. 파티원 HUD 바로 아래(좌측 하단): 터치하면 나타나는 스마트 조이스틱 */
 body.landscape-mode #joystick-hint {
-    left: max(30px, calc(env(safe-area-inset-left, 8px) + 22px));
+    left: max(26px, calc(env(safe-area-inset-left, 8px) + 18px));
     bottom: 24px;
-    width: 52px;
-    height: 52px;
+    width: 50px;
+    height: 50px;
     opacity: 0.78;
     z-index: 132;
 }
 body.landscape-mode #joystick-base {
-    width: 88px;
-    height: 88px;
-    margin-left: -44px;
-    margin-top: -44px;
+    width: 86px;
+    height: 86px;
+    margin-left: -43px;
+    margin-top: -43px;
     background: radial-gradient(circle, rgba(40, 32, 20, 0.55) 0%, rgba(15, 12, 8, 0.82) 100%);
     border: 2px solid rgba(212, 175, 55, 0.78);
     z-index: 133;
@@ -1881,35 +2024,79 @@ body.landscape-mode #joystick-knob {
     margin-top: -17px;
 }
 
-/* 5. 상단 중앙: 타겟된 몬스터 체력바 */
+/* 5. 최상단 좌측 체력바 바로 우측: 타겟된 몬스터 체력바 (한 줄 깨지지 않도록 가로폭 컴팩트 고정) */
 body.landscape-mode #top-target-ui {
-    position: absolute !important;
-    top: max(5px, env(safe-area-inset-top, 5px)) !important;
-    left: 50% !important;
+    position: relative !important;
+    top: 2px !important;
+    left: auto !important;
     right: auto !important;
-    transform: translateX(-50%) !important;
-    width: min(30vw, 192px) !important;
-    max-width: 205px !important;
-    min-width: 118px !important;
-    height: 20px !important;
+    transform: none !important;
+    width: clamp(104px, 16vw, 138px) !important;
+    max-width: 140px !important;
+    min-width: 98px !important;
+    height: 22px !important;
     margin: 0 !important;
-    background: rgba(10, 12, 18, 0.88) !important;
+    padding: 2px 4px !important;
+    background: rgba(10, 12, 18, 0.9) !important;
+    flex: 0 0 auto !important;
+    pointer-events: auto !important;
+}
+body.landscape-mode #top-target-ui #target-name {
+    font-size: 9px !important;
+    padding: 0 2px !important;
+}
+body.landscape-mode #top-target-ui #target-close-btn {
+    width: 14px !important;
+    height: 14px !important;
+    font-size: 8.5px !important;
 }
 
-/* 6. 우측 상단 미니맵 및 미니맵 좌측 컴팩트 메뉴 아이콘들 (가방 · 퀘스트 · 스킬 · 옵션 · 정보) */
+/* 6. 최상단 우측 그룹: [채팅 2줄 (대화창 닫혔을 때만)] -> [옵션 등 아이콘 5종] -> [미니맵] 1열 정렬 */
+body.landscape-mode .top-right-hud-group {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: flex-start !important;
+    justify-content: flex-end !important;
+    flex-wrap: nowrap !important;
+    gap: 5px !important;
+    margin-left: auto !important;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+body.landscape-mode .hud-closed-chat-feed {
+    position: static !important;
+    margin-top: 0px !important;
+    padding: 1.5px 6px !important;
+    width: clamp(115px, 24vw, 210px) !important;
+    max-width: clamp(115px, 24vw, 210px) !important;
+    min-width: 95px !important;
+    height: 26px !important;
+    max-height: 26px !important;
+    font-size: 8.8px !important;
+    line-height: 1.24 !important;
+    background: rgba(10, 14, 22, 0.58) !important;
+    border: 1px solid rgba(138, 109, 59, 0.42) !important;
+    border-radius: 4px !important;
+    pointer-events: none !important;
+    flex: 0 1 auto !important;
+    overflow: hidden !important;
+}
+
 body.landscape-mode .landscape-top-menu {
     display: flex;
     align-items: center;
     gap: 3px;
     pointer-events: auto;
-    margin-top: 1px;
+    margin-top: 0px;
+    flex-shrink: 0;
 }
 .land-menu-icon-btn {
     width: 26px;
     height: 26px;
     border-radius: 5px;
-    background: rgba(14, 18, 26, 0.78);
-    border: 1px solid rgba(163, 133, 90, 0.75);
+    background: rgba(14, 18, 26, 0.82);
+    border: 1px solid rgba(163, 133, 90, 0.78);
     color: #f3f4f6;
     display: flex;
     flex-direction: column;
@@ -1966,53 +2153,61 @@ body.landscape-mode .landscape-top-menu {
 }
 
 body.landscape-mode .right-hud {
-    gap: 1.5px;
-    max-width: 96px;
+    gap: clamp(2.5px, 0.7vmin, 4.5px);
+    max-width: clamp(114px, 17vw, 148px);
+    flex-shrink: 0;
+    margin-left: 0;
 }
 body.landscape-mode #minimap-container {
-    width: 50px;
-    height: 50px;
-    border-width: 1.6px;
+    width: clamp(60px, 16vmin, 76px) !important;
+    height: clamp(60px, 16vmin, 76px) !important;
+    border-width: 2px !important;
 }
 body.landscape-mode #ether-20-hub-btn {
-    font-size: 7.6px !important;
-    padding: 1px 4px !important;
-    margin-top: 1px !important;
+    font-size: clamp(9.5px, 1.4vw, 11.5px) !important;
+    padding: clamp(3.5px, 0.9vmin, 5.5px) clamp(8px, 1.3vw, 11px) !important;
+    border-radius: 6px !important;
+    margin-top: 2px !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.82) !important;
 }
 body.landscape-mode #current-region-hud {
-    font-size: 7.5px !important;
-    padding: 1px 4px !important;
-    max-width: 92px !important;
-    margin-top: 1px !important;
+    font-size: clamp(9.2px, 1.35vw, 11px) !important;
+    padding: clamp(3.5px, 0.9vmin, 5.5px) clamp(7px, 1.2vw, 10px) !important;
+    max-width: clamp(114px, 16.8vw, 146px) !important;
+    border-radius: 6px !important;
+    margin-top: 1.5px !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.82) !important;
 }
 body.landscape-mode .safe-badge {
-    font-size: 7px;
-    padding: 0.5px 4px;
+    font-size: clamp(7.8px, 1.15vw, 9px);
+    padding: 1.5px 6px;
 }
 
-/* 7. 우측 대화창 아이콘과 세로모드 복귀 아이콘 나란히 배치 (우측 아크 위쪽 공간) */
+/* 7. 우측 대화창 아이콘과 세로모드 복귀 아이콘 간섭 없이 충분한 간격으로 분리 배치 */
 body.landscape-mode #chat-toggle-fab {
-    right: 6px !important;
-    bottom: 168px !important;
+    right: 8px !important;
+    bottom: 174px !important;
     left: auto !important;
     top: auto !important;
-    width: 26px !important;
-    height: 26px !important;
-    font-size: 11.5px !important;
-    z-index: 180 !important;
+    width: clamp(30px, 8vmin, 35px) !important;
+    height: clamp(30px, 8vmin, 35px) !important;
+    font-size: clamp(13px, 3.4vmin, 15px) !important;
+    z-index: 190 !important;
+    touch-action: manipulation !important;
 }
 body.landscape-mode #mode-toggle-fab {
-    right: 35px !important;
-    bottom: 168px !important;
+    right: clamp(48px, 12.5vmin, 56px) !important;
+    bottom: 174px !important;
     left: auto !important;
     top: auto !important;
-    width: 26px !important;
-    height: 26px !important;
-    z-index: 182 !important;
+    width: clamp(30px, 8vmin, 35px) !important;
+    height: clamp(30px, 8vmin, 35px) !important;
+    z-index: 192 !important;
     animation: none;
+    touch-action: manipulation !important;
 }
 body.landscape-mode .mode-fab-tag {
-    font-size: 6px;
+    font-size: 6.8px;
 }
 
 /* 8. 우측 하단 칼 표시 메인 공격 버튼 & 그 주위를 2중 아크(안쪽 5 + 바깥쪽 5 = 총 10개)로 감싸는 단축슬롯 */
@@ -2036,7 +2231,6 @@ body.landscape-mode #bottom-panel .middle-section {
     pointer-events: none;
 }
 
-/* 메인 칼(공격) 버튼: 한번 터치 공격 / 길게 누르면 오토사냥 */
 body.landscape-mode .landscape-atk-btn {
     display: flex;
     flex-direction: column;
@@ -2045,17 +2239,20 @@ body.landscape-mode .landscape-atk-btn {
     position: absolute;
     right: 8px;
     bottom: 24px;
-    width: 50px;
-    height: 50px;
+    width: 54px;
+    height: 54px;
     border-radius: 50%;
     background: radial-gradient(circle at 38% 35%, #3d2e1e 0%, #1c150d 68%, #0d0a06 100%);
-    border: 2px solid #d4af37;
+    border: 2.2px solid #d4af37;
     box-shadow: 0 4px 12px rgba(0,0,0,0.92), inset 0 0 10px rgba(250, 204, 21, 0.25);
     cursor: pointer;
-    pointer-events: auto;
-    z-index: 136;
+    pointer-events: auto !important;
+    z-index: 195 !important;
     overflow: hidden;
-    touch-action: manipulation;
+    touch-action: none !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -webkit-touch-callout: none !important;
     transition: transform 0.08s, border-color 0.15s, box-shadow 0.15s;
 }
 body.landscape-mode .landscape-atk-btn:active {
@@ -2099,7 +2296,6 @@ body.landscape-mode .landscape-atk-btn.slot-10-auto .atk-auto-tag {
     color: #4ade80;
 }
 
-/* 10개 단축슬롯 컨테이너 (#hotbar) - 칼 버튼 주위 2중 아크(안쪽 5 + 바깥쪽 5, 슬롯 간 여유 간격 확보) */
 body.landscape-mode #hotbar {
     position: absolute !important;
     inset: 0 !important;
@@ -2125,19 +2321,19 @@ body.landscape-mode #hotbar .slot {
     box-shadow: 0 2px 6px rgba(0,0,0,0.9), inset 0 0 5px rgba(0,0,0,0.85);
 }
 
-/* 안쪽 1열 아크 슬롯 (1~5번: R=64px, 슬롯 간 4px 이상 여유 간격) */
-body.landscape-mode #slot-1 { right: 82px; bottom: 24px; border-color: #d4af37; }
-body.landscape-mode #slot-2 { right: 79px; bottom: 55px; border-color: #d4af37; }
-body.landscape-mode #slot-3 { right: 63px; bottom: 81px; border-color: #d4af37; }
-body.landscape-mode #slot-4 { right: 37px; bottom: 97px; border-color: #d4af37; }
-body.landscape-mode #slot-5 { right: 6px;  bottom: 99px; border-color: #d4af37; }
+/* 안쪽 1열 아크 슬롯 (1~5번: 메인 칼 버튼과 충분한 이격 거리를 두어 터치 간섭 원천 차단) */
+body.landscape-mode #slot-1 { right: 86px; bottom: 24px; border-color: #d4af37; }
+body.landscape-mode #slot-2 { right: 83px; bottom: 57px; border-color: #d4af37; }
+body.landscape-mode #slot-3 { right: 66px; bottom: 85px; border-color: #d4af37; }
+body.landscape-mode #slot-4 { right: 39px; bottom: 102px; border-color: #d4af37; }
+body.landscape-mode #slot-5 { right: 6px;  bottom: 104px; border-color: #d4af37; }
 
-/* 바깥쪽 2열 아크 슬롯 (6~10번: R=98px, 안쪽 1열 아크 바깥을 감싸는 5슬롯) */
-body.landscape-mode #slot-6  { right: 116px; bottom: 24px; border-color: #85683f; }
-body.landscape-mode #slot-7  { right: 111px; bottom: 67px; border-color: #85683f; }
-body.landscape-mode #slot-8  { right: 88px;  bottom: 105px; border-color: #85683f; }
-body.landscape-mode #slot-9  { right: 50px;  bottom: 129px; border-color: #85683f; }
-body.landscape-mode #slot-10 { right: 6px;   bottom: 133px; border-color: #85683f; }
+/* 바깥쪽 2열 아크 슬롯 (6~10번) */
+body.landscape-mode #slot-6  { right: 120px; bottom: 24px; border-color: #85683f; }
+body.landscape-mode #slot-7  { right: 115px; bottom: 69px; border-color: #85683f; }
+body.landscape-mode #slot-8  { right: 92px;  bottom: 108px; border-color: #85683f; }
+body.landscape-mode #slot-9  { right: 52px;  bottom: 133px; border-color: #85683f; }
+body.landscape-mode #slot-10 { right: 6px;   bottom: 138px; border-color: #85683f; }
 
 body.landscape-mode #hotbar .slot-key {
     font-size: 6.5px;
@@ -2151,104 +2347,274 @@ body.landscape-mode #hotbar .slot-qty {
 }
 
 /* ============================================================================
-   🪟 가로모드 전용 전체 인게임 창(모달) 와이드 레이아웃 & 드래그 이동 최적화
+   🪟 가로모드 전용 인게임 창(모달) 정밀 비율 · 버튼 크기 자연스러운 배치 (상용 앱 수준 전수 최적화)
    ============================================================================ */
 
-/* 공통 모달 패널: 가로모드에서는 세로 폭 제한을 완화하고 가로 폭을 넓게 활용 */
+/* 세로 화면 강제 회전(force-landscape-rotate) 상태에서 시스템 알림창(#system-alert-modal)도 함께 회전 정렬 */
+body.landscape-mode.force-landscape-rotate #system-alert-modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100dvh !important;
+    height: 100dvw !important;
+    max-width: none !important;
+    max-height: none !important;
+    transform-origin: top left !important;
+    transform: translateX(100dvw) rotate(90deg) !important;
+}
+
+/* 사운드 볼륨 조절 슬라이더 & +/- 미세 조절 버튼 (가로/세로 공통 상용 UI 스타일) */
+.opt-vol-slider {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 108px;
+    height: 20px;
+    margin: 0;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+}
+.opt-vol-slider::-webkit-slider-runnable-track {
+    height: 8px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #1e293b, #334155);
+    border: 1px solid #475569;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.8);
+}
+.opt-vol-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    margin-top: -6px;
+    border: 2px solid #ffffff;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.9);
+    transition: transform 0.1s;
+}
+.opt-vol-slider:active::-webkit-slider-thumb {
+    transform: scale(1.12);
+}
+.opt-vol-slider.sfx-slider::-webkit-slider-thumb {
+    background: #22c55e;
+}
+.opt-vol-slider.bgm-slider::-webkit-slider-thumb {
+    background: #3b82f6;
+}
+.opt-vol-step-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    background: #1e293b;
+    border: 1px solid #475569;
+    color: #f8fafc;
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+}
+.opt-vol-step-btn:active {
+    transform: scale(0.92);
+    border-color: #facc15;
+}
+
+/* 파티창·거래창·스탯창 기본(세로모드 호환) 구조 */
+.pty-action-btn {
+    flex: 0 1 auto !important;
+    min-width: 70px;
+    max-width: 114px;
+    padding: 4px 8px !important;
+    font-size: 9.5px !important;
+    text-align: center;
+}
+.pty-mode-btn {
+    flex: 1 1 0%;
+    max-width: 168px;
+    padding: 4.5px 6px !important;
+    font-size: 9.5px !important;
+    text-align: center;
+}
+.pty-mini-btn {
+    flex: 0 0 auto !important;
+    padding: 2.5px 7px !important;
+    font-size: 9px !important;
+}
+.trade-modal-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.stat-alloc-landscape-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.stat-alloc-left-col,
+.stat-alloc-right-col {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+/* 공통 모달 패널: #game-wrapper 기준 % 단위를 사용하여 강제 회전(force-landscape-rotate) 시에도 정확한 가로/세로 크기 보장 */
 body.landscape-mode .modal-panel {
-    width: min(80vw, 490px) !important;
-    max-width: min(88vw, 540px) !important;
-    max-height: calc(100dvh - 28px) !important;
-    padding: 5px 8px !important;
-    gap: 3px !important;
+    width: min(74%, 420px) !important;
+    max-width: min(86%, 450px) !important;
+    max-height: calc(100% - 44px);
+    padding: 5px 7px !important;
+    gap: 3.5px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    touch-action: pan-y !important;
 }
 body.landscape-mode .modal-header.drag-handle {
-    margin: -5px -8px 3px -8px !important;
-    padding: 4px 30px 4px 10px !important;
-    font-size: 11.5px !important;
+    margin: -5px -7px 2px -7px !important;
+    padding: 4px 26px 4px 9px !important;
+    font-size: 11px !important;
     cursor: move !important;
+    flex-shrink: 0 !important;
 }
 body.landscape-mode .close-x-btn {
     top: 3px !important;
-    right: 6px !important;
-    width: 21px !important;
-    height: 21px !important;
-    font-size: 10.5px !important;
+    right: 5px !important;
+    width: 20px !important;
+    height: 20px !important;
+    font-size: 10px !important;
 }
 
-/* 1) ⚔ 캐릭터 정보 / 상태·장비창 (#equip-ui) 가로모드 무스크롤 와이드 레이아웃 */
+/* 1) ⚔ 캐릭터 상태·장비창 (#equip-ui): 상단 여백/슬롯 크기를 컴팩트하게 줄여 하단 아이템 정보란(#equip-item-detail)이 절대 잘리지 않게 보장 */
 body.landscape-mode #equip-ui {
-    width: min(84vw, 530px) !important;
-    max-width: min(90vw, 550px) !important;
+    width: min(82%, 466px) !important;
+    max-width: min(88%, 480px) !important;
 }
 body.landscape-mode #equip-ui .status-layout {
-    height: 238px !important;
-    min-height: 232px !important;
-    max-height: 244px !important;
-    gap: 6px !important;
+    height: auto !important;
+    min-height: 168px !important;
+    max-height: 182px !important;
+    gap: 4.5px !important;
+    align-items: stretch !important;
+    flex: 0 0 auto !important;
 }
-body.landscape-mode #equip-ui .stat-left {
-    flex: 1.18 !important;
-    font-size: 9.5px !important;
-    line-height: 1.08 !important;
-    padding: 2px 6px !important;
-    gap: 0px !important;
-}
-body.landscape-mode #equip-ui .stat-left > div {
-    min-height: 14px !important;
+body.landscape-mode #equip-ui #stat-left-panel {
+    flex: 1.94 !important;
+    display: grid !important;
+    grid-template-columns: 1.05fr 0.98fr !important;
+    gap: 4.5px !important;
     padding: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    overflow: hidden !important;
+}
+body.landscape-mode #equip-ui .equip-portrait-divider {
+    display: none !important;
+}
+body.landscape-mode #equip-ui .equip-stat-summary-col,
+body.landscape-mode #equip-ui .equip-stat-alloc-col {
+    background: #0c0d11;
+    border: 1px solid #3d3020;
+    border-radius: 5px;
+    padding: 3px 5px !important;
+    font-size: 9.1px !important;
+    line-height: 1.13 !important;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow-y: auto !important;
+}
+body.landscape-mode #equip-ui .equip-col-head {
+    font-size: 10.2px !important;
+    margin-bottom: 0 !important;
+}
+body.landscape-mode #equip-ui .equip-stat-rows-box {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5px !important;
+    margin: 1px 0 !important;
 }
 body.landscape-mode #equip-ui .stat-btn {
     width: 19px !important;
-    height: 14px !important;
+    height: 16px !important;
     font-size: 10px !important;
 }
 body.landscape-mode #equip-ui .paperdoll-right {
-    flex: 1.0 !important;
-    padding: 2px 4px 8px 4px !important;
-    gap: 2px 3px !important;
+    flex: 1 !important;
+    min-width: 126px !important;
+    max-width: 136px !important;
+    background: #0c0d11;
+    border: 1px solid #3d3020;
+    border-radius: 5px;
+    padding: 3px 3px 7px 3px !important;
+    gap: 1.5px 2.5px !important;
+    align-content: space-between !important;
+}
+body.landscape-mode #equip-ui .pd-slot-grid,
+body.landscape-mode #equip-ui .pd-slot-summary-badge {
+    width: 27px !important;
+    height: 27px !important;
+    margin-bottom: 6.5px !important;
 }
 body.landscape-mode #equip-ui .pd-slot-grid {
-    width: 30px !important;
-    height: 30px !important;
-    margin-bottom: 8px !important;
-    font-size: 15px !important;
+    font-size: 13.5px !important;
 }
 body.landscape-mode #equip-ui .pd-slot-grid::after {
-    font-size: 8px !important;
-    bottom: -10px !important;
+    font-size: 7.2px !important;
+    bottom: -8.5px !important;
 }
 body.landscape-mode #equip-item-detail {
-    min-height: 36px !important;
-    max-height: 44px !important;
-    padding: 3px 7px !important;
-    font-size: 10px !important;
-    line-height: 1.2 !important;
+    min-height: 58px !important;
+    max-height: 78px !important;
+    padding: 4px 7px !important;
+    font-size: 9.8px !important;
+    line-height: 1.24 !important;
     overflow-y: auto !important;
+    flex: 1 1 auto !important;
+    margin-top: 1px !important;
+}
+body.landscape-mode .concise-detail-title {
+    font-size: 11px !important;
+}
+body.landscape-mode .concise-detail-stats {
+    font-size: 10px !important;
 }
 
-/* 2) 📊 스탯 분배 · 능력치 성장 창 (#stat-alloc-modal) 가로모드 2열 무스크롤 그리드 레이아웃 */
+/* 2) 📊 스탯 분배 · 능력치 성장 창 (#stat-alloc-modal): 좌측(4대 스탯 분배) · 우측(잔여포인트 + 변화 프리뷰 + 확정/회수 버튼) 2단 와이드 구조로 잘림 원천 해결 */
 body.landscape-mode #stat-alloc-modal {
-    width: min(84vw, 520px) !important;
-    max-width: min(90vw, 540px) !important;
+    width: min(84%, 476px) !important;
+    max-width: min(90%, 490px) !important;
 }
 body.landscape-mode #stat-alloc-body {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    padding: 2px !important;
+}
+body.landscape-mode .stat-alloc-landscape-grid {
     display: grid !important;
-    grid-template-columns: 1fr 1fr !important;
-    gap: 3.5px 6px !important;
-    align-content: start !important;
-    padding: 1px !important;
+    grid-template-columns: 1.22fr 0.98fr !important;
+    gap: 6px !important;
+    align-items: stretch !important;
 }
-body.landscape-mode #stat-alloc-body > div:not(.stat-alloc-row),
-body.landscape-mode #stat-alloc-body > button {
-    grid-column: 1 / -1 !important;
-}
-body.landscape-mode #stat-alloc-body > div:first-child {
-    padding: 4px 8px !important;
+body.landscape-mode .stat-alloc-left-col,
+body.landscape-mode .stat-alloc-right-col {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    gap: 4px !important;
+    min-width: 0 !important;
 }
 body.landscape-mode .stat-alloc-row {
     padding: 4px 6px !important;
-    gap: 3px !important;
+    gap: 4px !important;
+    border-radius: 5px !important;
 }
 body.landscape-mode .stat-alloc-title {
     font-size: 10.5px !important;
@@ -2257,99 +2623,285 @@ body.landscape-mode .stat-alloc-desc {
     font-size: 8px !important;
 }
 body.landscape-mode .stat-big-btn {
-    min-width: 25px !important;
-    height: 22px !important;
+    min-width: 24px !important;
+    height: 21px !important;
     padding: 0 4px !important;
-    font-size: 9.5px !important;
+    font-size: 9.2px !important;
 }
-body.landscape-mode #stat-alloc-body .auth-primary-btn,
-body.landscape-mode #stat-alloc-body .auth-sub-btn {
-    padding: 5px 8px !important;
-    font-size: 11px !important;
-}
-body.landscape-mode #stat-alloc-body > button:last-child {
-    padding: 4px 0 !important;
-    font-size: 9.5px !important;
+body.landscape-mode .stat-alloc-preview-box {
+    font-size: 9.4px !important;
+    padding: 4px 6px !important;
+    line-height: 1.25 !important;
 }
 
-/* 3) 🎒 가방(#inventory-ui) & 📕 스킬북(#skill-ui): 우측 10슬롯 아크로 드래그 등록하기 편하도록 컴팩트 와이드 구성 */
+/* 3) 🎒 가방(#inventory-ui) & 📕 스킬북(#skill-ui): 8열 그리드(상하 리스팅) & 하단 상세정보란(#item-detail, #skill-detail) 공간 대폭 확장 */
 body.landscape-mode #inventory-ui,
 body.landscape-mode #skill-ui {
-    width: min(68vw, 450px) !important;
-    max-width: min(74vw, 470px) !important;
+    width: min(64%, 380px) !important;
+    max-width: min(70%, 394px) !important;
+}
+body.landscape-mode #inventory-ui .inv-actions {
+    gap: 3.5px !important;
+    flex-wrap: nowrap !important;
+    padding-bottom: 3px !important;
+    margin-bottom: 1px !important;
+}
+body.landscape-mode #inventory-ui .inv-actions button {
+    padding: 3px 6.5px !important;
+    font-size: 9.8px !important;
+    flex: 0 0 auto !important;
 }
 body.landscape-mode #inventory-ui .inventory-grid {
-    grid-template-columns: repeat(auto-fill, minmax(35px, 1fr)) !important;
-    grid-auto-rows: 35px !important;
-    max-height: 145px !important;
-    min-height: 105px !important;
+    grid-template-columns: repeat(8, 1fr) !important;
+    grid-auto-rows: 34px !important;
+    max-height: 110px !important;
+    min-height: 76px !important;
+    gap: 2.5px !important;
+    overflow-y: auto !important;
+}
+body.landscape-mode #skill-ui .skill-tabs {
+    display: flex !important;
+    gap: 5px !important;
+    justify-content: flex-start !important;
+}
+body.landscape-mode #skill-ui .skill-tabs .tab-btn {
+    flex: 0 0 84px !important;
+    padding: 3px 8px !important;
+    font-size: 10.5px !important;
 }
 body.landscape-mode #skill-ui #skill-grid {
-    max-height: 140px !important;
+    max-height: 104px !important;
+    min-height: 72px !important;
+    gap: 5px !important;
+    overflow-y: auto !important;
 }
 body.landscape-mode #item-detail,
 body.landscape-mode #skill-detail {
-    min-height: 58px !important;
-    max-height: 74px !important;
-    padding: 4px 7px !important;
-    font-size: 10.5px !important;
-    line-height: 1.3 !important;
+    min-height: 78px !important;
+    max-height: 104px !important;
+    padding: 5px 7px !important;
+    font-size: 10px !important;
+    line-height: 1.26 !important;
+    background: #090b10 !important;
+    border: 1.5px solid #5a462a !important;
+    border-radius: 5px !important;
     overflow-y: auto !important;
+    flex-shrink: 0 !important;
 }
 
-/* 4) ⚔️ 용병 상태·가방 창 (#merc-ui): 좌우 2단 와이드 배치 */
+/* 4) ⚔️ 용병 상태·가방 창 (#merc-ui): 좌측(용병정보+스탠스+착용장비14칸) / 우측(용병가방24칸+상세) 균형 2단 배치 + 상하 리스팅 보장 */
 body.landscape-mode #merc-ui {
-    width: min(86vw, 540px) !important;
-    max-width: min(92vw, 560px) !important;
+    width: min(86%, 500px) !important;
+    max-width: min(90%, 514px) !important;
 }
 body.landscape-mode #merc-ui-body {
     display: grid !important;
-    grid-template-columns: 1fr 1.15fr !important;
+    grid-template-columns: minmax(0, 0.98fr) minmax(0, 1.04fr) !important;
     gap: 5px !important;
-    align-items: start !important;
+    align-items: stretch !important;
+    padding: 2px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+}
+body.landscape-mode #merc-ui .merc-col-left,
+body.landscape-mode #merc-ui .merc-col-right {
+    min-width: 0 !important;
+    justify-content: space-between;
+}
+body.landscape-mode #merc-ui .stance-btn {
+    padding: 3px 4px !important;
+    font-size: 9.5px !important;
+    max-width: 82px;
+}
+body.landscape-mode #merc-ui .merc-equip-slot-cell {
+    height: 30px !important;
+}
+body.landscape-mode #merc-ui .merc-bag-grid-24 {
+    max-height: 98px !important;
+    overflow-y: auto !important;
+}
+body.landscape-mode #merc-item-detail {
+    min-height: 56px !important;
+    max-height: 74px !important;
+    padding: 4px 6px !important;
+    font-size: 9.8px !important;
+    line-height: 1.24 !important;
+    overflow-y: auto !important;
 }
 
-/* 5) ⚙️ 환경 설정 창 (#option-ui): 사운드 / 카메라 / 루팅 / 계정 2x2 와이드 그리드 배치 */
+/* 5) ⚙️ 환경 설정 창 (#option-ui): 널찍한 볼륨 슬라이더 + 2x2 균형 카드 배치 + 리스팅 보장 */
 body.landscape-mode #option-ui.modal-panel {
-    width: min(84vw, 520px) !important;
-    max-width: min(90vw, 540px) !important;
+    width: min(84%, 492px) !important;
+    max-width: min(90%, 508px) !important;
 }
-body.landscape-mode #option-ui > div:not(.modal-header) {
+body.landscape-mode #option-ui .opt-modal-grid {
     display: grid !important;
     grid-template-columns: 1fr 1fr !important;
     gap: 5px !important;
-    max-height: calc(100dvh - 64px) !important;
-    align-items: start !important;
+    align-items: stretch !important;
+    overflow-y: auto !important;
 }
 
-/* 6) 📖 몬스터 도감 (#immersive-20-modal), 🎗️ 파티 관리 (#party-control-modal), 📜 퀘스트 (#quest-ui), 💬 NPC 창 (#npc-modal-ui) */
-body.landscape-mode #immersive-20-modal,
-body.landscape-mode #party-control-modal,
-body.landscape-mode #quest-ui,
-body.landscape-mode #npc-modal-ui,
-body.landscape-mode #trade-modal-ui,
-body.landscape-mode #game-tip-modal {
-    width: min(82vw, 510px) !important;
-    max-width: min(90vw, 540px) !important;
+/* 6) 🎗️ 파티 관리창 (#party-control-modal): 파티 유무에 따른 최적 1단/2단 배치 & 컴팩트 버튼 비율 */
+body.landscape-mode #party-control-modal:not(.party-modal-has-party) {
+    width: min(64%, 372px) !important;
+    max-width: min(70%, 386px) !important;
 }
-body.landscape-mode #immersive-20-list {
+body.landscape-mode #party-control-modal.party-modal-has-party {
+    width: min(86%, 500px) !important;
+    max-width: min(90%, 514px) !important;
+}
+body.landscape-mode #party-control-modal .party-modal-scroll-body.has-party-grid {
     display: grid !important;
-    grid-template-columns: 1fr 1fr !important;
+    grid-template-columns: 0.98fr 1.06fr !important;
     gap: 5px !important;
+    align-items: stretch !important;
+    overflow-y: auto !important;
+}
+body.landscape-mode #party-control-modal .party-candidates-scroll-list {
+    max-height: 175px !important;
+    overflow-y: auto !important;
+}
+
+/* 7) 🤝 1:1 안전 거래창 (#trade-modal-ui): 좌측(상대방+내 제시/골드) · 우측(내 가방+확정버튼) 2단 한눈 배치 */
+body.landscape-mode #trade-modal-ui {
+    width: min(86%, 502px) !important;
+    max-width: min(92%, 516px) !important;
+}
+body.landscape-mode #trade-modal-ui .trade-modal-grid {
+    display: grid !important;
+    grid-template-columns: 1.05fr 1fr !important;
+    gap: 5px !important;
+    align-items: stretch !important;
+}
+body.landscape-mode #trade-modal-ui .trade-bag-grid-6 {
+    max-height: 126px !important;
+    overflow-y: auto !important;
+}
+
+/* 8) 📖 몬스터 · 드롭 도감 (#immersive-20-modal): 좌측(토벌요약+15개 지역 그리드) · 우측(몬스터·드롭 리스트 전체높이 스크롤) 2단 와이드 배치 */
+body.landscape-mode #immersive-20-modal {
+    width: min(86%, 500px) !important;
+    max-width: min(92%, 516px) !important;
+}
+body.landscape-mode #immersive-20-modal .codex-modal-layout {
+    display: grid !important;
+    grid-template-columns: 176px minmax(0, 1fr) !important;
+    gap: 6px !important;
+    align-items: stretch !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+body.landscape-mode #immersive-20-modal .codex-left-col {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+}
+body.landscape-mode #immersive-20-modal .codex-summary-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 3px !important;
+    padding: 4px !important;
+}
+body.landscape-mode #immersive-20-modal .codex-region-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 2.5px !important;
+    overflow-y: auto !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
     align-content: start !important;
 }
-
-/* 7) 🗺️ 월드맵 & 상세지도 모달 가로모드 와이드 비율 */
-body.landscape-mode .rpg-modal-box {
-    width: min(86vw, 600px) !important;
-    height: min(88dvh, 345px) !important;
+body.landscape-mode #immersive-20-modal .codex-right-col {
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+body.landscape-mode #immersive-20-list {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: 220px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    touch-action: pan-y !important;
 }
 
-/* 8) 💬 대화창 가로모드 최적화 */
+/* 9) 📜 퀘스트(#quest-ui: 가로폭 과확장 방지 및 아담한 폭 적용), 💬 NPC 창(#npc-modal-ui: 창고 2단 배치 포함), 💡 가이드(#game-tip-modal) */
+body.landscape-mode #quest-ui {
+    width: min(56%, 336px) !important;
+    max-width: min(62%, 348px) !important;
+}
+body.landscape-mode #quest-ui #quest-ui-body,
+body.landscape-mode #quest-ui .shop-list {
+    max-height: 195px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    touch-action: pan-y !important;
+}
+body.landscape-mode #npc-modal-ui {
+    width: min(76%, 446px) !important;
+    max-width: min(84%, 462px) !important;
+}
+body.landscape-mode #npc-modal-ui .bank-warehouse-two-col {
+    display: grid !important;
+    grid-template-columns: 1.05fr 1fr !important;
+    gap: 6px !important;
+    align-items: stretch !important;
+}
+body.landscape-mode #npc-modal-ui .shop-list {
+    max-height: 190px !important;
+    overflow-y: auto !important;
+}
+body.landscape-mode #game-tip-modal {
+    width: min(68%, 400px) !important;
+    max-width: min(76%, 416px) !important;
+}
+
+/* 10) 🗺️ 월드맵 & 상세지도 모달: 가로로 늘리지 않고 원본 세로 비율(768:1376) 엄격 유지 */
+body.landscape-mode .rpg-modal-box {
+    aspect-ratio: 768 / 1376 !important;
+}
+.rpg-zoom-floating {
+    position: absolute;
+    top: 8px;
+    right: 68px;
+    background: rgba(15, 23, 42, 0.92);
+    color: #38bdf8;
+    border: 1px solid #38bdf8;
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 11px;
+    z-index: 65;
+    box-shadow: 0 2px 6px #000;
+}
+.rpg-zoom-floating:active {
+    transform: scale(0.95);
+}
+body.landscape-mode .rpg-zoom-floating {
+    top: 5px !important;
+    right: 56px !important;
+    padding: 2px 6px !important;
+    font-size: 9.5px !important;
+}
+body.landscape-mode .rpg-close-floating {
+    top: 5px !important;
+    right: 5px !important;
+    padding: 2px 7px !important;
+    font-size: 10px !important;
+}
+
+/* 11) 💬 대화창 가로모드 최적화 */
 body.landscape-mode .chat-window-panel {
     left: 10px;
     bottom: 24px;
-    width: min(52vw, 360px);
-    height: min(62dvh, 185px);
-    max-height: calc(100% - 42px);
+    width: min(50%, 340px);
+    height: min(58%, 178px);
+    max-height: calc(100% - 46px);
 }

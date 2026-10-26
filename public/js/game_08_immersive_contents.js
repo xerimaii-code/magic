@@ -282,7 +282,7 @@ export const ImmersiveSystem = {
       m = document.createElement('div');
       m.id = 'immersive-20-modal';
       m.className = 'modal-panel hidden';
-      m.style.cssText = 'width:min(94vw, 386px); max-height:min(80dvh, calc(100dvh - 155px)); z-index:320; display:flex; flex-direction:column; padding:8px !important; overflow:hidden;';
+      m.style.cssText = 'width:min(92%, 386px); z-index:320; display:flex; flex-direction:column; padding:6px 8px; overflow:hidden;';
       m.innerHTML = `
         <div class="modal-header drag-handle" id="immersive-20-drag-header" style="padding:6px 32px 6px 10px; font-size:13.5px; flex:none; cursor:move; user-select:none;">
           📖 몬스터 · 드롭 도감 <button type="button" class="help-q-btn" onclick="showHelpModal('immersive', event)" title="몬스터 도감 도움말">?</button>
@@ -383,29 +383,35 @@ export const ImmersiveSystem = {
     }).join('');
 
     bodyEl.innerHTML = `
-      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; background:#0f172a; border:1px solid #334155; border-radius:6px; padding:5px 6px; margin-bottom:5px; text-align:center; font-size:11px; flex-shrink:0;">
-        <div><div style="color:#94a3b8; font-size:10px;">도감 발견</div><div style="color:#38bdf8; font-weight:bold;">${discoveredCount}/${allMobsCount}종</div></div>
-        <div><div style="color:#94a3b8; font-size:10px;">총 처치</div><div style="color:#4ade80; font-weight:bold;">${(s.totalKills || 0).toLocaleString()}</div></div>
-        <div><div style="color:#94a3b8; font-size:10px;">★거대 처치</div><div style="color:#facc15; font-weight:bold;">${(s.giantKills || 0).toLocaleString()}</div></div>
-        <div><div style="color:#94a3b8; font-size:10px;">👑보스 토벌</div><div style="color:#f43f5e; font-weight:bold;">${(s.bossKills || 0).toLocaleString()}</div></div>
-      </div>
+      <div class="codex-modal-layout" style="display:flex; flex-direction:column; flex:1 1 auto; min-height:0; gap:5px; overflow:hidden;">
+        <div class="codex-left-col" style="display:flex; flex-direction:column; gap:4px; flex-shrink:0; min-height:0;">
+          <div class="codex-summary-grid" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:3px; background:#0f172a; border:1px solid #334155; border-radius:6px; padding:4px 5px; text-align:center; font-size:10.5px; flex-shrink:0;">
+            <div><div style="color:#94a3b8; font-size:9px;">도감 발견</div><div style="color:#38bdf8; font-weight:bold;">${discoveredCount}/${allMobsCount}종</div></div>
+            <div><div style="color:#94a3b8; font-size:9px;">총 처치</div><div style="color:#4ade80; font-weight:bold;">${(s.totalKills || 0).toLocaleString()}</div></div>
+            <div><div style="color:#94a3b8; font-size:9px;">★거대 처치</div><div style="color:#facc15; font-weight:bold;">${(s.giantKills || 0).toLocaleString()}</div></div>
+            <div><div style="color:#94a3b8; font-size:9px;">👑보스 토벌</div><div style="color:#f43f5e; font-weight:bold;">${(s.bossKills || 0).toLocaleString()}</div></div>
+          </div>
 
-      <div style="display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:3px; margin-bottom:5px; flex-shrink:0; overflow:hidden;">
-        ${regions.map(r => {
-          const active = r.id === curRegId;
-          const isHere = r.id === (window.currentRegionKey || 'R01');
-          const shortLv = String(r.lvRange || '').replace(/^Lv\./i, '');
-          return `<button type="button" onclick="window.ImmersiveSystem.selectRegion('${r.id}')" style="padding:3px 2px; border-radius:4px; font-size:10px; font-weight:bold; cursor:pointer; line-height:1.15; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:${active ? 'linear-gradient(180deg, #92400e, #451a03)' : (isHere ? '#1e293b' : '#14171f')}; border:1px solid ${active ? '#facc15' : (isHere ? '#38bdf8' : '#334155')}; color:${active ? '#fef08a' : (isHere ? '#bae6fd' : '#cbd5e1')};" title="${r.name} (${r.lvRange})"><div>${isHere ? '📍' : ''}${r.name}</div><div style="font-size:8.5px; opacity:0.82; font-weight:normal;">Lv.${shortLv}</div></button>`;
-        }).join('')}
-      </div>
+          <div class="codex-region-grid" style="display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:3px; flex-shrink:0; overflow-y:auto; max-height:100%;">
+            ${regions.map(r => {
+              const active = r.id === curRegId;
+              const isHere = r.id === (window.currentRegionKey || 'R01');
+              const shortLv = String(r.lvRange || '').replace(/^Lv\./i, '');
+              return `<button type="button" class="codex-reg-btn" onclick="window.ImmersiveSystem.selectRegion('${r.id}')" style="padding:3px 2px; border-radius:4px; font-size:9.5px; font-weight:bold; cursor:pointer; line-height:1.12; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:${active ? 'linear-gradient(180deg, #92400e, #451a03)' : (isHere ? '#1e293b' : '#14171f')}; border:1px solid ${active ? '#facc15' : (isHere ? '#38bdf8' : '#334155')}; color:${active ? '#fef08a' : (isHere ? '#bae6fd' : '#cbd5e1')};" title="${r.name} (${r.lvRange})"><div>${isHere ? '📍' : ''}${r.name}</div><div style="font-size:8px; opacity:0.85; font-weight:normal;">Lv.${shortLv}</div></button>`;
+            }).join('')}
+          </div>
+        </div>
 
-      <div style="font-size:11px; color:#fde047; background:rgba(120,53,15,0.25); border:1px solid rgba(250,204,21,0.3); border-radius:5px; padding:4px 7px; margin-bottom:5px; display:flex; justify-content:space-between; align-items:center; gap:6px; flex-shrink:0;">
-        <span style="white-space:nowrap;">🗺️ <b>${curRegObj?.name || ''}</b> (${curRegObj?.lvRange || ''})</span>
-        <span style="color:#cbd5e1; font-size:10px; text-align:right;">필드 사냥 시 <b>★거대 몬스터(보상 2배+)</b> 출현</span>
-      </div>
+        <div class="codex-right-col" style="display:flex; flex-direction:column; flex:1 1 auto; min-height:0; gap:4px; overflow:hidden;">
+          <div style="font-size:10.5px; color:#fde047; background:rgba(120,53,15,0.25); border:1px solid rgba(250,204,21,0.3); border-radius:5px; padding:3.5px 7px; display:flex; justify-content:space-between; align-items:center; gap:6px; flex-shrink:0;">
+            <span style="white-space:nowrap;">🗺️ <b>${curRegObj?.name || ''}</b> (${curRegObj?.lvRange || ''})</span>
+            <span style="color:#cbd5e1; font-size:9.5px; text-align:right; white-space:nowrap;">★거대 몬스터(보상 2배+) 출현</span>
+          </div>
 
-      <div id="immersive-20-list" style="flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:5px; overflow-y:auto; overflow-x:hidden; padding-right:2px;">
-        ${mobCardsHtml}
+          <div id="immersive-20-list" style="flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:4px; overflow-y:auto !important; overflow-x:hidden; padding-right:2px; touch-action:pan-y;">
+            ${mobCardsHtml}
+          </div>
+        </div>
       </div>
     `;
   }

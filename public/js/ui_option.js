@@ -13,7 +13,16 @@ export const OptionState = {
   vibrationOn: false,
   powerSaveOn: false,
   keepScreenAwake: true,
-  questGuideArrow: true
+  questGuideArrow: true,
+  // 🌟 인게임 기본 화면 모드는 가로모드('landscape')로 고정 (유저가 명시적으로 'portrait'를 저장한 경우에만 세로모드)
+  screenMode: (() => {
+    try {
+      const saved = localStorage.getItem('MAGIC_SAVED_SCREEN_MODE');
+      return saved === 'portrait' ? 'portrait' : 'landscape';
+    } catch (e) {
+      return 'landscape';
+    }
+  })()
 };
 
 export const GameOptions = OptionState;
@@ -93,7 +102,8 @@ export function getSerializedOptions() {
     vibrationOn: Boolean(OptionState.vibrationOn),
     powerSaveOn: Boolean(OptionState.powerSaveOn),
     keepScreenAwake: OptionState.keepScreenAwake !== false,
-    questGuideArrow: OptionState.questGuideArrow !== false
+    questGuideArrow: OptionState.questGuideArrow !== false,
+    screenMode: OptionState.screenMode === 'portrait' ? 'portrait' : 'landscape'
   };
 }
 
@@ -118,6 +128,23 @@ export function loadCharacterOptions(charRecordOrOpts) {
   if (typeof opts.powerSaveOn === 'boolean') OptionState.powerSaveOn = opts.powerSaveOn;
   if (typeof opts.keepScreenAwake === 'boolean') OptionState.keepScreenAwake = opts.keepScreenAwake;
   if (typeof opts.questGuideArrow === 'boolean') OptionState.questGuideArrow = opts.questGuideArrow;
+  if (opts.screenMode === 'landscape' || opts.screenMode === 'portrait') {
+    OptionState.screenMode = opts.screenMode;
+    try { localStorage.setItem('MAGIC_SAVED_SCREEN_MODE', opts.screenMode); } catch (e) {}
+  } else {
+    try {
+      const localMode = localStorage.getItem('MAGIC_SAVED_SCREEN_MODE');
+      OptionState.screenMode = (localMode === 'portrait') ? 'portrait' : 'landscape';
+    } catch (e) {
+      OptionState.screenMode = 'landscape';
+    }
+  }
+
+  // 인게임 화면(#game-wrapper)이 활성화된 상태에서만 화면 모드를 즉시 전환 (로그인/캐릭터선택창은 항상 세로모드 유지)
+  const gw = document.getElementById('game-wrapper');
+  if (gw && gw.style.display !== 'none' && typeof window.setLandscapeMode === 'function') {
+    window.setLandscapeMode(OptionState.screenMode === 'landscape', true);
+  }
   window.syncGameWakeLock?.();
 
   if (window.player) {
@@ -133,6 +160,11 @@ export function loadCharacterOptions(charRecordOrOpts) {
 // 🌟 변경된 옵션을 브라우저가 아닌 수파베이스(캐릭터 레코드 & 계정 공유 데이터)에 즉시 저장 요청
 function persistOptionPrefs() {
   const serialized = getSerializedOptions();
+  try {
+    if (typeof localStorage !== 'undefined' && serialized.screenMode) {
+      localStorage.setItem('MAGIC_SAVED_SCREEN_MODE', serialized.screenMode);
+    }
+  } catch (e) {}
   if (window.player) {
     window.player.options = serialized;
   }
@@ -248,6 +280,35 @@ export function initOptionSystem() {
     window.syncGameWakeLock();
   }
 
+  window.setScreenOrientationModeOption = function(mode, fromToggleBtn = false) {
+    const nextMode = (mode === 'portrait') ? 'portrait' : 'landscape';
+    if (!fromToggleBtn && typeof window.requestToggleLandscapeMode === 'function') {
+      const curIsLand = Boolean(window.isLandscapeMode);
+      if ((nextMode === 'landscape') !== curIsLand) {
+        window.requestToggleLandscapeMode(nextMode === 'landscape');
+        return;
+      }
+    }
+    OptionState.screenMode = nextMode;
+    try { localStorage.setItem('MAGIC_SAVED_SCREEN_MODE', nextMode); } catch (e) {}
+    persistOptionPrefs();
+    if (!fromToggleBtn && typeof window.setLandscapeMode === 'function') {
+      window.setLandscapeMode(nextMode === 'landscape', true);
+    }
+    if (!fromToggleBtn) {
+      window.addChat?.(
+        nextMode === 'landscape'
+          ? `🌄 [화면 모드 고정] '가로모드(우측 2중 아크 UI)'로 고정 저장되었습니다. 다음 게임 시작 시에도 가로모드로 자동 시작됩니다.`
+          : `📱 [화면 모드 고정] '세로모드(기본 UI)'로 고정 저장되었습니다. 다음 게임 시작 시에도 세로모드로 자동 시작됩니다.`,
+        'log-sys'
+      );
+    }
+    const optUi = document.getElementById('option-ui');
+    if (optUi && !optUi.classList.contains('hidden')) {
+      renderOptionUI();
+    }
+  };
+
   window.toggleFullScreen = function() {
     try {
       if (!document.fullscreenElement && !document.webkitFullscreenElement) {
@@ -322,6 +383,20 @@ export function initOptionSystem() {
     window.addChat?.(`💎 [루팅 등급] 장비 루팅 등급이 '${gLabel}'(으)로 수파베이스에 저장되었습니다.`, 'log-sys');
   };
 
+  window.stepSoundVolume = function(key, delta) {
+    if (key === 'sfxVol') {
+      const next = Math.max(0, Math.min(100, (Number(OptionState.sfxVolume) || 0) + delta));
+      window.updateSoundOption('sfxVol', next);
+      const sl = document.getElementById('opt-sfx-range-input');
+      if (sl) sl.value = String(next);
+    } else if (key === 'bgmVol') {
+      const next = Math.max(0, Math.min(100, (Number(OptionState.bgmVolume) || 0) + delta));
+      window.updateSoundOption('bgmVol', next);
+      const sl = document.getElementById('opt-bgm-range-input');
+      if (sl) sl.value = String(next);
+    }
+  };
+
   window.updateSoundOption = function(key, val) {
     if (key === 'sfxOn') {
       OptionState.sfxOn = Boolean(val);
@@ -388,48 +463,70 @@ export function renderOptionUI() {
   ui.innerHTML = `
     <div class="modal-header drag-handle">⚙️ 환경 설정 <button class="help-q-btn" onclick="showHelpModal('option', event)" title="옵션 도움말">?</button></div>
     <button class="close-x-btn" onclick="toggleOptionUI()">✖</button>
-    <div style="display:flex; flex-direction:column; gap:6px; padding:4px; font-size:10.5px; overflow-y:auto; max-height:calc(68dvh - 42px); color:#e5e7eb;">
+    <div class="opt-modal-grid" style="display:flex; flex-direction:column; gap:6px; padding:4px; font-size:10.5px; overflow-y:auto; flex:1 1 auto; min-height:0; color:#e5e7eb;">
 
-      <!-- 🔊 사운드 설정 -->
-      <div style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:6px; display:flex; flex-direction:column; gap:5px; overflow:hidden;">
+      <!-- 🔊 사운드 설정 (가로/세로 어디서나 널찍하고 조작하기 편한 풀와이드 슬라이더 바) -->
+      <div class="opt-card opt-card-sound" style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:6px 7px; display:flex; flex-direction:column; gap:6px;">
         <div style="color:#facc15; font-weight:bold; border-bottom:1px solid #292018; padding-bottom:2px; display:flex; justify-content:space-between; align-items:center;">
-          <span>🔊 사운드</span>
-          <span style="font-size:8.5px; color:#86efac;">☁️ 수파베이스 계정 연동</span>
+          <span>🔊 사운드 볼륨 조절</span>
+          <span style="font-size:8.5px; color:#86efac;">☁️ 계정 연동</span>
         </div>
 
         <!-- 효과음 (SFX) -->
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:4px; background:#0c0e14; padding:4px 5px; border-radius:5px; border:1px solid #2d3748; width:100%; overflow:hidden;">
-          <div style="flex:0 0 52px; min-width:52px;">
-            <div style="font-weight:bold; color:#fde047; font-size:9.5px; white-space:nowrap;">⚔️ 효과음</div>
-            <div style="font-size:7.5px; color:#9ca3af; white-space:nowrap;">타격·스킬</div>
+        <div class="opt-sound-box" style="display:flex; flex-direction:column; gap:4px; background:#0c0e14; padding:5px 7px; border-radius:6px; border:1px solid #2d3748;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+            <div style="display:flex; align-items:center; gap:5px;">
+              <span style="font-weight:bold; color:#fde047; font-size:10px;">⚔️ 효과음</span>
+              <span style="font-size:8.5px; color:#9ca3af;">(타격·스킬)</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:5px;">
+              <span id="opt-sfx-vol-txt" style="min-width:30px; text-align:right; font-size:10px; color:#4ade80; font-weight:900;">${OptionState.sfxVolume}%</span>
+              <button type="button" class="shop-buy-btn opt-sound-toggle-btn" style="min-width:52px; padding:2.5px 7px; font-size:9px; background:${sfxBtnBg}; border-color:${sfxBtnBd};" onclick="updateSoundOption('sfxOn', !OptionState.sfxOn)">
+                ${OptionState.sfxOn ? '🔊 ON' : '🔇 OFF'}
+              </button>
+            </div>
           </div>
-          <div style="flex:1 1 0%; min-width:0; display:flex; align-items:center; gap:3px;">
-            <input type="range" min="0" max="100" value="${OptionState.sfxVolume}" style="flex:1 1 0%; width:100%; min-width:0; max-width:100%; height:16px; margin:0; accent-color:#4ade80; cursor:pointer;" oninput="updateSoundOption('sfxVol', this.value)" onchange="updateSoundOption('sfxVol', this.value)">
-            <span id="opt-sfx-vol-txt" style="flex:0 0 26px; width:26px; text-align:right; font-size:8.5px; color:#4ade80; font-weight:bold;">${OptionState.sfxVolume}%</span>
+          <div style="display:flex; align-items:center; gap:5px; width:100%;">
+            <button type="button" class="opt-vol-step-btn" onclick="stepSoundVolume('sfxVol', -10)" title="효과음 -10%">−</button>
+            <input id="opt-sfx-range-input" class="opt-vol-slider sfx-slider" type="range" min="0" max="100" value="${OptionState.sfxVolume}" oninput="updateSoundOption('sfxVol', this.value)" onchange="updateSoundOption('sfxVol', this.value)">
+            <button type="button" class="opt-vol-step-btn" onclick="stepSoundVolume('sfxVol', 10)" title="효과음 +10%">+</button>
           </div>
-          <button class="shop-buy-btn" style="flex:0 0 auto; min-width:46px; padding:3px 6px; font-size:9px; white-space:nowrap; background:${sfxBtnBg}; border-color:${sfxBtnBd};" onclick="updateSoundOption('sfxOn', !OptionState.sfxOn)">
-            ${OptionState.sfxOn ? '🔊 ON' : '🔇 OFF'}
-          </button>
         </div>
 
         <!-- 배경음 (BGM) -->
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:4px; background:#0c0e14; padding:4px 5px; border-radius:5px; border:1px solid #2d3748; width:100%; overflow:hidden;">
-          <div style="flex:0 0 52px; min-width:52px;">
-            <div style="font-weight:bold; color:#93c5fd; font-size:9.5px; white-space:nowrap;">🎵 배경음</div>
-            <div style="font-size:7.5px; color:#9ca3af; white-space:nowrap;">마을·필드</div>
+        <div class="opt-sound-box" style="display:flex; flex-direction:column; gap:4px; background:#0c0e14; padding:5px 7px; border-radius:6px; border:1px solid #2d3748;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+            <div style="display:flex; align-items:center; gap:5px;">
+              <span style="font-weight:bold; color:#93c5fd; font-size:10px;">🎵 배경음</span>
+              <span style="font-size:8.5px; color:#9ca3af;">(마을·필드)</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:5px;">
+              <span id="opt-bgm-vol-txt" style="min-width:30px; text-align:right; font-size:10px; color:#93c5fd; font-weight:900;">${OptionState.bgmVolume}%</span>
+              <button type="button" class="shop-buy-btn opt-sound-toggle-btn" style="min-width:52px; padding:2.5px 7px; font-size:9px; background:${bgmBtnBg}; border-color:${bgmBtnBd};" onclick="updateSoundOption('bgmOn', !OptionState.bgmOn)">
+                ${OptionState.bgmOn ? '🎵 ON' : '🔇 OFF'}
+              </button>
+            </div>
           </div>
-          <div style="flex:1 1 0%; min-width:0; display:flex; align-items:center; gap:3px;">
-            <input type="range" min="0" max="100" value="${OptionState.bgmVolume}" style="flex:1 1 0%; width:100%; min-width:0; max-width:100%; height:16px; margin:0; accent-color:#60a5fa; cursor:pointer;" oninput="updateSoundOption('bgmVol', this.value)" onchange="updateSoundOption('bgmVol', this.value)">
-            <span id="opt-bgm-vol-txt" style="flex:0 0 26px; width:26px; text-align:right; font-size:8.5px; color:#93c5fd; font-weight:bold;">${OptionState.bgmVolume}%</span>
+          <div style="display:flex; align-items:center; gap:5px; width:100%;">
+            <button type="button" class="opt-vol-step-btn" onclick="stepSoundVolume('bgmVol', -10)" title="배경음 -10%">−</button>
+            <input id="opt-bgm-range-input" class="opt-vol-slider bgm-slider" type="range" min="0" max="100" value="${OptionState.bgmVolume}" oninput="updateSoundOption('bgmVol', this.value)" onchange="updateSoundOption('bgmVol', this.value)">
+            <button type="button" class="opt-vol-step-btn" onclick="stepSoundVolume('bgmVol', 10)" title="배경음 +10%">+</button>
           </div>
-          <button class="shop-buy-btn" style="flex:0 0 auto; min-width:46px; padding:3px 6px; font-size:9px; white-space:nowrap; background:${bgmBtnBg}; border-color:${bgmBtnBd};" onclick="updateSoundOption('bgmOn', !OptionState.bgmOn)">
-            ${OptionState.bgmOn ? '🎵 ON' : '🔇 OFF'}
-          </button>
         </div>
       </div>
 
-      <!-- 🎥 카메라 시야 배율 및 스마트 시점 -->
-      <div style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:6px; display:flex; flex-direction:column; gap:5px;">
+      <!-- 🎥 화면 모드 고정(가로/세로) · 시야 배율 및 스마트 시점 -->
+      <div class="opt-card opt-card-camera" style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:6px 7px; display:flex; flex-direction:column; gap:5px;">
+        <div style="background:#0c0e14; border:1px solid #ca8a04; border-radius:5px; padding:5px 6px; display:flex; flex-direction:column; gap:4px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:9.5px; font-weight:bold; color:#fde047;">🌄/📱 인게임 화면 모드 (기본: 가로)</span>
+            <span style="font-size:8.5px; color:#4ade80; font-weight:bold;">${OptionState.screenMode === 'landscape' ? '🌄 가로모드 고정됨' : '📱 세로모드 고정됨'}</span>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px;">
+            <button type="button" class="shop-buy-btn" style="padding:4px 4px; font-size:9.5px; text-align:center; ${camBtnStyle(OptionState.screenMode === 'landscape')}" onclick="setScreenOrientationModeOption('landscape')">🌄 가로모드 (기본)</button>
+            <button type="button" class="shop-buy-btn" style="padding:4px 4px; font-size:9.5px; text-align:center; ${camBtnStyle(OptionState.screenMode !== 'landscape')}" onclick="setScreenOrientationModeOption('portrait')">📱 세로모드</button>
+          </div>
+        </div>
         <div style="color:#facc15; font-weight:bold; display:flex; justify-content:space-between; align-items:center;">
           <span>🎥 시야 및 카메라</span>
           <span style="font-size:8.5px; color:#38bdf8;">${OptionState.cameraAutoZoom ? '자동 배율 조정 중' : `${OptionState.cameraStage}단계 고정`}</span>
@@ -440,51 +537,54 @@ export function renderOptionUI() {
           <button class="shop-buy-btn" style="padding:4px 2px; font-size:9px; text-align:center; ${camBtnStyle(!OptionState.cameraAutoZoom && OptionState.cameraStage === 2)}" onclick="setCameraZoomMode(2)">2단계(표준)</button>
           <button class="shop-buy-btn" style="padding:4px 2px; font-size:9px; text-align:center; ${camBtnStyle(!OptionState.cameraAutoZoom && OptionState.cameraStage === 3)}" onclick="setCameraZoomMode(3)">3단계(광각)</button>
         </div>
-        <div style="display:flex; gap:4px;">
-          <button class="shop-buy-btn" style="flex:1.35; background:${trackBtnBg}; border-color:${trackBtnBd}; padding:4px 5px; font-size:9.5px;" onclick="toggleSmoothCameraOption()">
+        <div style="display:grid; grid-template-columns: 1.2fr 0.8fr; gap:4px;">
+          <button class="shop-buy-btn" style="background:${trackBtnBg}; border-color:${trackBtnBd}; padding:4px 5px; font-size:9.5px; text-align:center;" onclick="toggleSmoothCameraOption()">
             🎯 시점추적: ${OptionState.smoothCamera ? 'ON' : 'OFF'}
           </button>
-          <button class="shop-buy-btn" style="flex:0.85; background:#374151; border-color:#6b7280; padding:4px 5px; font-size:9.5px;" onclick="toggleFullScreen()">⛶ 전체화면</button>
+          <button class="shop-buy-btn" style="background:#374151; border-color:#6b7280; padding:4px 5px; font-size:9.5px; text-align:center;" onclick="toggleFullScreen()">⛶ 전체화면</button>
         </div>
         ${(typeof window.isWakeLockSupported === 'function' ? window.isWakeLockSupported() : ('wakeLock' in navigator)) ? `
-        <label style="display:flex; align-items:center; justify-content:space-between; gap:6px; background:#0c0e14; border:1px solid ${OptionState.keepScreenAwake ? '#34d399' : '#2d3748'}; border-radius:5px; padding:5px 7px; cursor:pointer; user-select:none;">
+        <label style="display:flex; align-items:center; justify-content:space-between; gap:6px; background:#0c0e14; border:1px solid ${OptionState.keepScreenAwake ? '#34d399' : '#2d3748'}; border-radius:5px; padding:4px 6px; cursor:pointer; user-select:none;">
           <div style="display:flex; align-items:center; gap:5px;">
-            <input type="checkbox" ${OptionState.keepScreenAwake ? 'checked' : ''} onchange="toggleKeepScreenAwakeOption(this.checked)" style="width:14px; height:14px; accent-color:#10b981; cursor:pointer; margin:0;">
-            <span style="font-size:9.5px; font-weight:bold; color:${OptionState.keepScreenAwake ? '#6ee7b7' : '#d1d5db'};">💡 화면 항상 켜기 (전체화면·자동사냥 절전방지)</span>
+            <input type="checkbox" ${OptionState.keepScreenAwake ? 'checked' : ''} onchange="toggleKeepScreenAwakeOption(this.checked)" style="width:13px; height:13px; accent-color:#10b981; cursor:pointer; margin:0;">
+            <span style="font-size:9px; font-weight:bold; color:${OptionState.keepScreenAwake ? '#6ee7b7' : '#d1d5db'};">💡 화면 항상 켜기 (절전방지)</span>
           </div>
           <span style="font-size:8.5px; color:${OptionState.keepScreenAwake ? '#4ade80' : '#9ca3af'}; font-weight:bold;">${OptionState.keepScreenAwake ? '켜짐' : '꺼짐'}</span>
         </label>
         ` : ''}
-        <label style="display:flex; align-items:center; justify-content:space-between; gap:6px; background:#0c0e14; border:1px solid ${OptionState.questGuideArrow !== false ? '#facc15' : '#2d3748'}; border-radius:5px; padding:5px 7px; cursor:pointer; user-select:none;">
+        <label style="display:flex; align-items:center; justify-content:space-between; gap:6px; background:#0c0e14; border:1px solid ${OptionState.questGuideArrow !== false ? '#facc15' : '#2d3748'}; border-radius:5px; padding:4px 6px; cursor:pointer; user-select:none;">
           <div style="display:flex; align-items:center; gap:5px;">
-            <input type="checkbox" ${OptionState.questGuideArrow !== false ? 'checked' : ''} onchange="toggleQuestGuideArrowOption(this.checked)" style="width:14px; height:14px; accent-color:#eab308; cursor:pointer; margin:0;">
-            <span style="font-size:9.5px; font-weight:bold; color:${OptionState.questGuideArrow !== false ? '#fde047' : '#d1d5db'};">🧭 퀘스트 해당지역 방향 화살표 연하게 표시</span>
+            <input type="checkbox" ${OptionState.questGuideArrow !== false ? 'checked' : ''} onchange="toggleQuestGuideArrowOption(this.checked)" style="width:13px; height:13px; accent-color:#eab308; cursor:pointer; margin:0;">
+            <span style="font-size:9px; font-weight:bold; color:${OptionState.questGuideArrow !== false ? '#fde047' : '#d1d5db'};">🧭 퀘스트 목표 방향 화살표 표시</span>
           </div>
           <span style="font-size:8.5px; color:${OptionState.questGuideArrow !== false ? '#facc15' : '#9ca3af'}; font-weight:bold;">${OptionState.questGuideArrow !== false ? '켜짐' : '꺼짐'}</span>
         </label>
       </div>
 
       <!-- 💎 자동사냥 장비 루팅 등급 -->
-      <div style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:6px; display:flex; flex-direction:column; gap:4px;">
-        <div style="color:#facc15; font-weight:bold;">💎 자동사냥 장비 루팅 등급</div>
-        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:3px;">
-          <button class="shop-buy-btn" style="padding:4px 2px; font-size:9px; text-align:center; ${btnStyle(0)}" onclick="setLootGradeOption(0)">일반+</button>
-          <button class="shop-buy-btn" style="padding:4px 2px; font-size:9px; text-align:center; ${btnStyle(1)}" onclick="setLootGradeOption(1)">고급+</button>
-          <button class="shop-buy-btn" style="padding:4px 2px; font-size:9px; text-align:center; ${btnStyle(2)}" onclick="setLootGradeOption(2)">희귀+</button>
-          <button class="shop-buy-btn" style="padding:4px 2px; font-size:9px; text-align:center; ${btnStyle(3)}" onclick="setLootGradeOption(3)">전설+</button>
-          <button class="shop-buy-btn" style="padding:4px 2px; font-size:9px; text-align:center; ${btnStyle(4)}" onclick="setLootGradeOption(4)">초월만</button>
+      <div class="opt-card opt-card-loot" style="background:#14171f; border:1px solid #3d3020; border-radius:6px; padding:6px 7px; display:flex; flex-direction:column; gap:5px; justify-content:center;">
+        <div style="color:#facc15; font-weight:bold; display:flex; justify-content:space-between; align-items:center;">
+          <span>💎 자동사냥 장비 루팅 등급</span>
+          <span style="font-size:8.5px; color:#fde047;">${(FALLBACK_GRADE_NAMES[curGrade] || '일반 이상').split(' ')[0]}</span>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:3.5px;">
+          <button class="shop-buy-btn" style="padding:5px 2px; font-size:9.2px; text-align:center; ${btnStyle(0)}" onclick="setLootGradeOption(0)">일반+</button>
+          <button class="shop-buy-btn" style="padding:5px 2px; font-size:9.2px; text-align:center; ${btnStyle(1)}" onclick="setLootGradeOption(1)">고급+</button>
+          <button class="shop-buy-btn" style="padding:5px 2px; font-size:9.2px; text-align:center; ${btnStyle(2)}" onclick="setLootGradeOption(2)">희귀+</button>
+          <button class="shop-buy-btn" style="padding:5px 2px; font-size:9.2px; text-align:center; ${btnStyle(3)}" onclick="setLootGradeOption(3)">전설+</button>
+          <button class="shop-buy-btn" style="padding:5px 2px; font-size:9.2px; text-align:center; ${btnStyle(4)}" onclick="setLootGradeOption(4)">초월만</button>
         </div>
       </div>
 
-      <!-- 👤 계정 및 캐릭터 관리 (월드맵 버튼 제거 완료) -->
-      <div style="background:#1a1612; border:1px solid #b45309; border-radius:6px; padding:6px; display:flex; flex-direction:column; gap:5px;">
+      <!-- 👤 계정 및 캐릭터 관리 (캐릭터 선택창/로그아웃 시 자동으로 세로모드 전환) -->
+      <div class="opt-card opt-card-account" style="background:#1a1612; border:1px solid #b45309; border-radius:6px; padding:6px 7px; display:flex; flex-direction:column; gap:5px; justify-content:center;">
         <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #3d3020; padding-bottom:2px;">
           <span style="color:#fde047; font-weight:bold;">👤 계정 및 접속 관리</span>
           <span id="opt-autosave-badge" style="font-size:8.5px; color:#4ade80;">☁️ 수파베이스 동기화됨</span>
         </div>
-        <div style="display:flex; gap:6px;">
-          <button class="shop-buy-btn" style="flex:1.15; background:#1e3a8a; border-color:#60a5fa; padding:6px 6px; font-size:10.5px;" onclick="returnToCharacterSelect()">🔄 캐릭터 선택</button>
-          <button class="shop-buy-btn" style="flex:1; background:#7f1d1d; border-color:#f87171; padding:6px 6px; font-size:10.5px;" onclick="logoutAccount()">🚪 로그아웃</button>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+          <button class="shop-buy-btn" style="background:#1e3a8a; border-color:#60a5fa; padding:6px 6px; font-size:10px; text-align:center;" onclick="returnToCharacterSelect()">🔄 캐릭터 선택</button>
+          <button class="shop-buy-btn" style="background:#7f1d1d; border-color:#f87171; padding:6px 6px; font-size:10px; text-align:center;" onclick="logoutAccount()">🚪 로그아웃</button>
         </div>
       </div>
 
