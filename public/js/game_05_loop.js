@@ -1030,7 +1030,7 @@ function gameLoop(rawDelta) {
   const needMercAutoHeal = mercenary.hired && !mercenary.isDead && (mercenary.hp / mercenary.maxHp <= 0.65);
 
   if (needSelfAutoHeal || needMercAutoHeal) {
-    let hpSlot = needSelfAutoHeal ? [1, 2, 3, 4, 5, 6, 7, 8, 9].find(i => {
+    let hpSlot = needSelfAutoHeal ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find(i => {
       const s = window.skillSlots[i];
       if (!s || s.type !== 'item') return false;
       const iDef = window.itemDict[s.itemType];
@@ -1045,7 +1045,7 @@ function gameLoop(rawDelta) {
         window.useSlot(hpSlot, true);
       }
     } else if (now - lastAutoHealTime >= (autoPotCfg.autoHealIntervalMs || 1000)) {
-      let healSlot = [1, 2, 3, 4, 5, 6, 7, 8, 9].find(i => {
+      let healSlot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find(i => {
         const s = window.skillSlots[i];
         if (!s || s.type !== 'skill') return false;
         const sInfo = SKILLS_DB[player.class].find(x => x.name === s.name);
@@ -1058,7 +1058,7 @@ function gameLoop(rawDelta) {
   }
 
   if (player.mp / player.maxMp <= mpThresh) {
-    let mpSlot = [1, 2, 3, 4, 5, 6, 7, 8, 9].find(i => {
+    let mpSlot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find(i => {
       const s = window.skillSlots[i];
       if (!s || s.type !== 'item') return false;
       const iDef = window.itemDict[s.itemType];
@@ -1076,7 +1076,7 @@ function gameLoop(rawDelta) {
 
   if (now - lastAutoBuffTime >= 800) {
     if ((player.activeBuffs.ELIXIR || 0) <= 2000) {
-      let elixirSlot = [1, 2, 3, 4, 5, 6, 7, 8, 9].find(i => {
+      let elixirSlot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find(i => {
         const s = window.skillSlots[i];
         return s && s.type === 'item' && s.itemType === 'C_P05' &&
           player.inventory.some(it => it && it.type === 'C_P05' && it.qty > 0);
@@ -1086,7 +1086,7 @@ function gameLoop(rawDelta) {
       }
     }
 
-   for (let i = 1; i <= 9; i++) {
+   for (let i = 1; i <= 10; i++) {
       const s = window.skillSlots[i];
       if (!s || s.type !== 'skill') continue;
       if (!window.autoSlots.has(i)) continue;

@@ -39,14 +39,13 @@ window.onload = async () => {
 
   window.forceResizePixiApp = function() {
     if (!app || !app.renderer) return;
-    const wrapEl = document.getElementById('game-wrapper') || wrapper;
-    const w = Math.max(wrapEl?.clientWidth || 0, window.innerWidth || 360);
-    const h = Math.max(wrapEl?.clientHeight || 0, window.innerHeight || 640);
+    window.syncLandscapeViewportRotation?.();
+    const cWrap = document.getElementById('canvas-wrapper') || wrapper;
+    const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth || 360, height: window.innerHeight || 640 };
+    const w = (cWrap && cWrap.clientWidth > 0) ? cWrap.clientWidth : vp.width;
+    const h = (cWrap && cWrap.clientHeight > 0) ? cWrap.clientHeight : vp.height;
     if (w > 0 && h > 0) {
       app.renderer.resize(w, h);
-      if (typeof app.resize === 'function' && (wrapEl?.clientWidth || 0) > 0 && (wrapEl?.clientHeight || 0) > 0) {
-        try { app.resize(); } catch (e) {}
-      }
       if (cameraContainer && player && typeof currentWorldWidth === 'number' && typeof currentWorldHeight === 'number') {
         const halfW = w / 2;
         const halfH = h / 2;
@@ -146,6 +145,8 @@ cameraContainer.addChild(window.bottomMagicCircleG);
   }
 
   bindQuickSlotEvents();
+  window.setupModeToggleFab?.();
+  window.syncPartyHudPlacement?.();
   app.ticker.add(gameLoop);
   app.ticker.add(() => window.updateHotbarCooldowns());
 
@@ -283,6 +284,11 @@ function updateStatusHUD() {
   document.getElementById('hud-mp-bar').style.width = `${Math.max(0, (player.mp / player.maxMp) * 100)}%`;
   document.getElementById('hud-mp-txt').innerText = `${Math.ceil(player.mp)}/${player.maxMp}`;
 
+  const hudNameEl = document.getElementById('hud-player-name');
+  const hudLvEl = document.getElementById('hud-player-lv');
+  if (hudNameEl) hudNameEl.innerText = player.name || CLASS_STATS[player.class]?.name || '플레이어';
+  if (hudLvEl) hudLvEl.innerText = `Lv.${player.level || 1}`;
+
   let expPercent = Math.min(100, Math.floor((player.exp / player.maxExp) * 100));
   document.getElementById('btm-lv').innerText = player.level;
   document.getElementById('btm-exp').innerText = `${expPercent}%`;
@@ -364,11 +370,13 @@ window.updateBuffUI = function() {
   });
   // 버프 아이콘이 늘어나 우측 대화 확장 아이콘과 겹칠 수 있으면 대화 아이콘을 버프 아이콘 바로 위로 이동!
   const fab = document.getElementById('chat-toggle-fab');
-  if (fab) {
+  const modeFab = document.getElementById('mode-toggle-fab');
+  if (fab && !window.isLandscapeMode) {
     const viewW = window.innerWidth || 360;
     const estBuffRight = 14 + activeBuffCount * 41;
     const shouldMoveAbove = activeBuffCount >= 5 || (estBuffRight >= viewW - 54);
     fab.classList.toggle('shifted-above-buffs', shouldMoveAbove);
+    if (modeFab) modeFab.classList.toggle('shifted-above-buffs', shouldMoveAbove);
   }
 };
 
@@ -1964,7 +1972,7 @@ function getBestSkillForTarget(target) {
   const cStatsNow = calculateCombatStats(false);
   let attackSlots = [];
 
-  for (let i = 1; i <= 9; i++) {
+  for (let i = 1; i <= 10; i++) {
     if (window.autoSlots.has(i) && window.skillSlots[i] && window.skillSlots[i].type === 'skill') {
       const slotData = window.skillSlots[i]; // ✅ 슬롯 데이터 안전 추출
       const sInfo = SKILLS_DB[player.class]?.find(s => s.name === slotData.name); // ✅ sInfo 정의
@@ -2952,11 +2960,14 @@ function setupVirtualJoystickEvents() {
     if (wm && wm.classList.contains('active-modal')) return;
     if (sm && sm.classList.contains('active-modal')) return;
 
+    const isRot = window.isForceLandscapeRotated && window.isForceLandscapeRotated();
     const rect = view.getBoundingClientRect();
-    const relX = e.clientX - rect.left;
-    const relY = e.clientY - rect.top;
+    const gp = isRot ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const vp = isRot ? window.getGameViewportSize() : { width: rect.width, height: rect.height };
+    const relX = gp.x;
+    const relY = gp.y;
 
-    // 화면 좌측 하단 영역(좌측 60%, 하단 72% 영역) 터치 시 조이스틱 대기 시작, 그 외 영역도 pointerup에서 탭 판정하여 NPC(월드맵) 클릭 관통 버그 원천 차단!
+    // 화면 좌측 하단 영역(파티원 HUD 아래쪽 영역 포함) 터치 시 스마트 조이스틱 대기 시작!
     if (joystickState.pointerId === null) {
       joystickState.pointerId = e.pointerId;
       joystickState.startX = relX;
@@ -2965,7 +2976,7 @@ function setupVirtualJoystickEvents() {
       joystickState.curY = relY;
       joystickState.active = false;
       joystickState.power = 0;
-      joystickState.canJoystick = (relX <= rect.width * 0.60 && relY >= rect.height * 0.28);
+      joystickState.canJoystick = (relX <= vp.width * (window.isLandscapeMode ? 0.52 : 0.60) && relY >= vp.height * (window.isLandscapeMode ? 0.22 : 0.28));
       joystickState.downEvent = { clientX: e.clientX, clientY: e.clientY };
       try { view.setPointerCapture(e.pointerId); } catch (err) {}
     }
@@ -2973,9 +2984,11 @@ function setupVirtualJoystickEvents() {
 
   view.addEventListener('pointermove', (e) => {
     if (joystickState.pointerId !== e.pointerId) return;
+    const isRot = window.isForceLandscapeRotated && window.isForceLandscapeRotated();
     const rect = view.getBoundingClientRect();
-    const relX = e.clientX - rect.left;
-    const relY = e.clientY - rect.top;
+    const gp = isRot ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const relX = gp.x;
+    const relY = gp.y;
     const dx = relX - joystickState.startX;
     const dy = relY - joystickState.startY;
     const dist = Math.hypot(dx, dy);
@@ -3049,16 +3062,19 @@ function processCanvasTap(e) {
   if (wm && wm.classList.contains('active-modal')) return;
   if (sm && sm.classList.contains('active-modal')) return;
 
+  const isRot = window.isForceLandscapeRotated && window.isForceLandscapeRotated();
   const rect = app.view.getBoundingClientRect();
-  const scaleX = (app.renderer.width / app.renderer.resolution) / rect.width;
-  const scaleY = (app.renderer.height / app.renderer.resolution) / rect.height;
+  const vp = isRot ? window.getGameViewportSize() : { width: rect.width, height: rect.height };
+  const scaleX = (app.renderer.width / app.renderer.resolution) / Math.max(1, vp.width);
+  const scaleY = (app.renderer.height / app.renderer.resolution) / Math.max(1, vp.height);
   const zoom = camera.zoom || 1;
 
   const clientX = e.clientX !== undefined ? e.clientX : (e.touches?.[0]?.clientX || 0);
   const clientY = e.clientY !== undefined ? e.clientY : (e.touches?.[0]?.clientY || 0);
+  const localPt = isRot ? window.getGameClientCoords(clientX, clientY) : { x: clientX - rect.left, y: clientY - rect.top };
 
-  const cx = ((clientX - rect.left) * scaleX) / zoom + camera.x;
-  const cy = ((clientY - rect.top) * scaleY) / zoom + camera.y;
+  const cx = (localPt.x * scaleX) / zoom + camera.x;
+  const cy = (localPt.y * scaleY) / zoom + camera.y;
 
   if (checkCollision(player.x, player.y)) {
     const rescued = findSafeSpot(player.x, player.y);

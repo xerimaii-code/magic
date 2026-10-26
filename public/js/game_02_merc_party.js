@@ -1977,6 +1977,7 @@ window.updateMercHUD = function() {
     legacyMercHud.style.display = 'none';
   }
 
+  window.syncPartyHudPlacement?.();
   const pHud = document.getElementById('party-hud');
   if (!pHud) return;
 

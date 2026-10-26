@@ -1163,19 +1163,32 @@ window.renderQuestUI = function() {
 
 function updateQuestButtonBadge() {
   const btn = document.getElementById('bottom-quest-btn');
-  if (!btn) return;
+  const landBtn = document.getElementById('landscape-quest-btn');
+  const landBadge = document.getElementById('landscape-quest-badge');
   const activeQuests = GameDB.Quests.filter(q => player.quests[q.id]?.status === 'ACTIVE');
   if (activeQuests.length > 0) {
     const readyCount = activeQuests.filter(q => player.quests[q.id].count >= q.reqCount).length;
-    btn.classList.add('quest-active');
-    if (readyCount > 0) {
-      btn.innerHTML = `📜 퀘스트 <span style="color:#4ade80;">(완료${readyCount})</span>`;
-    } else {
-      btn.innerHTML = `📜 퀘스트 <span style="color:#fde047;">(${activeQuests.length})</span>`;
+    if (btn) {
+      btn.classList.add('quest-active');
+      if (readyCount > 0) {
+        btn.innerHTML = `📜 퀘스트 <span style="color:#4ade80;">(완료${readyCount})</span>`;
+      } else {
+        btn.innerHTML = `📜 퀘스트 <span style="color:#fde047;">(${activeQuests.length})</span>`;
+      }
+    }
+    if (landBtn) landBtn.classList.add('quest-active');
+    if (landBadge) {
+      landBadge.classList.remove('hidden');
+      landBadge.innerText = readyCount > 0 ? `✔${readyCount}` : `${activeQuests.length}`;
+      landBadge.style.background = readyCount > 0 ? '#22c55e' : '#facc15';
     }
   } else {
-    btn.classList.remove('quest-active');
-    btn.innerHTML = `📜 퀘스트`;
+    if (btn) {
+      btn.classList.remove('quest-active');
+      btn.innerHTML = `📜 퀘스트`;
+    }
+    if (landBtn) landBtn.classList.remove('quest-active');
+    if (landBadge) landBadge.classList.add('hidden');
   }
 }
 
@@ -1843,7 +1856,7 @@ window.addEventListener('blur', () => {
 });
 
 function clearHotbarDragHighlights() {
-  for (let i = 1; i <= 9; i++) {
+  for (let i = 1; i <= 10; i++) {
     document.getElementById(`slot-${i}`)?.classList.remove('drag-over-target');
   }
 }
@@ -1854,10 +1867,10 @@ function resolveQuickSlotAtPoint(clientX, clientY) {
   const directSlot = hitEl?.closest?.('.slot[data-slot]');
   if (directSlot) {
     const n = Number(directSlot.getAttribute('data-slot'));
-    if (n >= 1 && n <= 9) return { slotNum: n, slotEl: directSlot };
+    if (n >= 1 && n <= 10) return { slotNum: n, slotEl: directSlot };
   }
-  // 모바일 손가락 끝 오차를 고려한 핫바 슬롯(1~9) 여유 히트박스 판정 (±12px)
-  for (let i = 1; i <= 9; i++) {
+  // 모바일 손가락 끝 오차를 고려한 핫바 슬롯(1~10) 여유 히트박스 판정 (±12px)
+  for (let i = 1; i <= 10; i++) {
     const sEl = document.getElementById(`slot-${i}`);
     if (!sEl) continue;
     const r = sEl.getBoundingClientRect();
@@ -1985,7 +1998,7 @@ function setupTouchDragSource(el, payloadGetter) {
       if (wasDragging && activePayload) {
         window._lastInvTouchDragEndTime = Date.now();
         const found = resolveQuickSlotAtPoint(cx, cy) || resolveQuickSlotAtPoint(lastMoveX, lastMoveY);
-        if (found && found.slotNum >= 1 && found.slotNum <= 9) {
+        if (found && found.slotNum >= 1 && found.slotNum <= 10) {
           assignToQuickSlot(found.slotNum, activePayload);
         }
       }
@@ -2014,7 +2027,7 @@ function setupTouchDragSource(el, payloadGetter) {
       // pointercancel이 발생하더라도 이미 핫바 슬롯 위까지 드래그한 상태라면 드롭 성공으로 처리!
       if (dragging && touchDragPayload) {
         const found = resolveQuickSlotAtPoint(lastMoveX, lastMoveY);
-        if (found && found.slotNum >= 1 && found.slotNum <= 9) {
+        if (found && found.slotNum >= 1 && found.slotNum <= 10) {
           const payloadCopy = touchDragPayload;
           cleanupListeners();
           window._lastInvTouchDragEndTime = Date.now();
@@ -2063,7 +2076,7 @@ function assignToQuickSlot(slotNum, payload) {
 }
 
 window.renderHotbarSlots = function() {
-  for (let i = 1; i <= 9; i++) {
+  for (let i = 1; i <= 10; i++) {
     const slotEl = document.getElementById(`slot-${i}`);
     if (!slotEl) continue;
     const iconEl = slotEl.querySelector('.slot-icon');
@@ -2072,7 +2085,11 @@ window.renderHotbarSlots = function() {
 
     const data = window.skillSlots[i];
     if (!data) {
-      iconEl.innerHTML = '';
+      if (i === 10) {
+        iconEl.innerHTML = `<span>ATK</span><span style="font-size:7.5px;">(AUTO)</span>`;
+      } else {
+        iconEl.innerHTML = '';
+      }
       slotEl.classList.remove('auto-active');
       window.autoSlots.delete(i);
       continue;
@@ -2106,9 +2123,10 @@ window.clearQuickSlot = function(slotNum) {
 };
 
 function bindQuickSlotEvents() {
-  for (let i = 1; i <= 9; i++) {
+  for (let i = 1; i <= 10; i++) {
     const slotEl = document.getElementById(`slot-${i}`);
-    if (!slotEl) continue;
+    if (!slotEl || slotEl._quickSlotBound) continue;
+    slotEl._quickSlotBound = true;
 
     let pressTimer = null;
     let longPressTriggered = false;
@@ -2122,8 +2140,11 @@ function bindQuickSlotEvents() {
         if (window.skillSlots[i]) {
           longPressTriggered = true;
           window.clearQuickSlot(i);
+        } else if (i === 10) {
+          longPressTriggered = true;
+          window.toggleAutoAttack();
         }
-      }, 550);
+      }, 520);
     });
 
     slotEl.addEventListener('pointerup', (e) => {
@@ -2132,6 +2153,17 @@ function bindQuickSlotEvents() {
       if (longPressTriggered) return;
 
       const now = Date.now();
+      if (!window.skillSlots[i] && i === 10 && !window.selectedSkillForSlot) {
+        if (now - lastTap < 300) {
+          lastTap = 0;
+          window.toggleAutoAttack();
+        } else {
+          lastTap = now;
+          window.handleBasicAttack();
+        }
+        return;
+      }
+
       if (now - lastTap < 300) {
         lastTap = 0;
         window.toggleAutoUse(i);
@@ -2145,7 +2177,46 @@ function bindQuickSlotEvents() {
     slotEl.addEventListener('pointercancel', () => clearTimeout(pressTimer));
     slotEl.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      window.toggleAutoUse(i);
+      if (!window.skillSlots[i] && i === 10) window.toggleAutoAttack();
+      else window.toggleAutoUse(i);
+    });
+  }
+
+  // ⚔️ 가로모드 우측 메인 칼(공격) 버튼 바인딩: 한번 터치 시 기본 공격(ATK), 길게 누르면 오토사냥(AUTO) 토글!
+  const landAtkBtn = document.getElementById('landscape-atk-btn');
+  if (landAtkBtn && !landAtkBtn._atkBound) {
+    landAtkBtn._atkBound = true;
+    let atkPressTimer = null;
+    let atkLongPressed = false;
+
+    landAtkBtn.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (e.button && e.button !== 0) return;
+      atkLongPressed = false;
+      clearTimeout(atkPressTimer);
+      atkPressTimer = setTimeout(() => {
+        atkLongPressed = true;
+        window.SoundSystem?.playUiClick?.();
+        window.toggleAutoAttack();
+      }, 400);
+    });
+
+    landAtkBtn.addEventListener('pointerup', (e) => {
+      e.stopPropagation();
+      if (e.button && e.button !== 0) return;
+      clearTimeout(atkPressTimer);
+      if (!atkLongPressed) {
+        window.handleBasicAttack();
+      }
+    });
+
+    landAtkBtn.addEventListener('pointerleave', () => clearTimeout(atkPressTimer));
+    landAtkBtn.addEventListener('pointercancel', () => clearTimeout(atkPressTimer));
+    landAtkBtn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clearTimeout(atkPressTimer);
+      window.toggleAutoAttack();
     });
   }
 }
@@ -2340,12 +2411,18 @@ window.toggleAutoAttack = function() {
   }
   window.isAutoAttack = !window.isAutoAttack;
   let el = document.getElementById('slot-10');
+  let landBtn = document.getElementById('landscape-atk-btn');
+  let landTag = document.getElementById('landscape-atk-auto-tag');
   if (window.isAutoAttack) {
     if (el) el.classList.add('slot-10-auto');
+    if (landBtn) landBtn.classList.add('slot-10-auto');
+    if (landTag) landTag.innerText = 'AUTO';
     player.manualMoving = false;
     window.addChat(`⚔️ [자동 사냥] 시작! (원거리 클래스는 원형 카이팅 & 피격 시 우선 반격 기동 수행)`, 'log-sys');
   } else {
     if (el) el.classList.remove('slot-10-auto');
+    if (landBtn) landBtn.classList.remove('slot-10-auto');
+    if (landTag) landTag.innerText = 'ATK';
     window.clearTarget();
     player.isMoving = false;
     player.path = [];
@@ -2612,26 +2689,28 @@ window.bringModalToFront = function(modalElOrId) {
 window.centerModalOnScreen = function(modalElOrId) {
   const modal = typeof modalElOrId === 'string' ? document.getElementById(modalElOrId) : modalElOrId;
   if (!modal || modal.classList.contains('hidden')) return;
-  const wrapperEl = document.getElementById('game-wrapper') || document.body;
-  const pw = wrapperEl.clientWidth || window.innerWidth;
-  const ph = wrapperEl.clientHeight || window.innerHeight;
-  const bottomPanelH = document.getElementById('bottom-panel')?.offsetHeight || 142;
+  const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth, height: window.innerHeight };
+  const pw = vp.width;
+  const ph = vp.height;
+  const bottomPanelH = window.isLandscapeMode ? 22 : (document.getElementById('bottom-panel')?.offsetHeight || 142);
   const isEquipOrStat = modal.id === 'equip-ui' || modal.id === 'stat-alloc-modal';
-  const safeTop = isEquipOrStat ? 28 : 40;
-  const maxAllowedH = isEquipOrStat
-    ? Math.max(340, ph - safeTop - 16)
-    : Math.max(230, ph - bottomPanelH - safeTop - 4);
+  const safeTop = window.isLandscapeMode ? 26 : (isEquipOrStat ? 28 : 40);
+  const maxAllowedH = window.isLandscapeMode
+    ? Math.max(200, ph - safeTop - bottomPanelH - 4)
+    : (isEquipOrStat ? Math.max(340, ph - safeTop - 16) : Math.max(230, ph - bottomPanelH - safeTop - 4));
 
   modal.style.maxHeight = `${maxAllowedH}px`;
   modal.style.transform = 'none';
 
-  const rect = modal.getBoundingClientRect();
-  const mw = Math.min(pw - 10, rect.width || 340);
-  const mh = Math.min(maxAllowedH, rect.height || 320);
+  const mw = Math.min(pw - 10, modal.offsetWidth || (window.isLandscapeMode ? 480 : 340));
+  const mh = Math.min(maxAllowedH, modal.offsetHeight || (window.isLandscapeMode ? 280 : 300));
 
-  const leftPx = Math.max(5, Math.min(pw - mw - 5, Math.round((pw - mw) / 2)));
-  const availPlayAreaH = isEquipOrStat ? (ph - 12) : (ph - bottomPanelH);
-  const topPx  = Math.max(safeTop, Math.min(ph - mh - 8, Math.round((availPlayAreaH - mh) / 2)));
+  // 가로모드에서 가방/스킬 창을 열 때는 우측 10슬롯 아크를 가리지 않도록 좌측~중앙 영역에 배치
+  const isSlotSourceModal = window.isLandscapeMode && (modal.id === 'inventory-ui' || modal.id === 'skill-ui');
+  const effectiveW = isSlotSourceModal ? Math.max(mw + 20, pw - 135) : pw;
+  const leftPx = Math.max(6, Math.min(pw - mw - 6, Math.round((effectiveW - mw) / 2)));
+  const availPlayAreaH = (window.isLandscapeMode || isEquipOrStat) ? (ph - bottomPanelH) : (ph - bottomPanelH);
+  const topPx  = Math.max(safeTop, Math.min(ph - mh - bottomPanelH - 2, Math.round((availPlayAreaH - mh) / 2) + (window.isLandscapeMode ? 6 : 0)));
   modal.style.left = `${leftPx}px`;
   modal.style.top  = `${topPx}px`;
 };
@@ -2650,38 +2729,47 @@ function makeDraggable(modalId) {
 
   modal.addEventListener('pointerdown', (e) => {
     window.bringModalToFront(modal);
-    const handle = e.target.closest('.drag-handle');
+    const handle = e.target.closest('.drag-handle, .modal-header');
     if (!handle || !modal.contains(handle)) return;
     if (e.target.closest('button, input, select, a')) return;
 
     isDragging = true;
-    activeHandle = handle;
+    activeHandle = modal;
 
-    const rect = modal.getBoundingClientRect();
-    const parentRect = (modal.offsetParent || document.body).getBoundingClientRect();
-    initialLeft = rect.left - parentRect.left;
-    initialTop = rect.top - parentRect.top;
+    if (modal.style.transform && modal.style.transform !== 'none') {
+      const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth, height: window.innerHeight };
+      const mw = modal.offsetWidth || 340;
+      modal.style.transform = 'none';
+      if (!modal.style.left || modal.style.left.includes('%')) {
+        modal.style.left = `${Math.max(6, Math.round((vp.width - mw) / 2))}px`;
+      }
+    }
 
-    modal.style.transform = 'none';
+    initialLeft = modal.offsetLeft || parseFloat(modal.style.left) || 0;
+    initialTop = modal.offsetTop || parseFloat(modal.style.top) || 0;
+
     modal.style.left = `${initialLeft}px`;
     modal.style.top = `${initialTop}px`;
 
-    startX = e.clientX;
-    startY = e.clientY;
+    const gp = window.getGameClientCoords ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX, y: e.clientY };
+    startX = gp.x;
+    startY = gp.y;
     try {
-      handle.setPointerCapture(e.pointerId);
+      modal.setPointerCapture(e.pointerId);
     } catch (err) {}
     e.preventDefault();
   });
 
   modal.addEventListener('pointermove', (e) => {
     if (!isDragging) return;
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    const maxW = window.innerWidth - 60;
-    const maxH = window.innerHeight - 60;
-    const newLeft = Math.max(-40, Math.min(maxW, initialLeft + dx));
-    const newTop = Math.max(5, Math.min(maxH, initialTop + dy));
+    const gp = window.getGameClientCoords ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX, y: e.clientY };
+    const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth, height: window.innerHeight };
+    const dx = gp.x - startX;
+    const dy = gp.y - startY;
+    const maxW = vp.width - 50;
+    const maxH = vp.height - 40;
+    const newLeft = Math.max(-60, Math.min(maxW, initialLeft + dx));
+    const newTop = Math.max(2, Math.min(maxH, initialTop + dy));
     modal.style.left = `${newLeft}px`;
     modal.style.top = `${newTop}px`;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
@@ -3101,8 +3189,8 @@ window.updateHotbarCooldowns = function() {
   const now = Date.now();
   const cStatsNow = calculateCombatStats(false);
 
-  // 1~9번 슬롯 쿨타임 계산
-  for (let i = 1; i <= 9; i++) {
+  // 1~10번 슬롯 쿨타임 계산
+  for (let i = 1; i <= 10; i++) {
     const slotEl = document.getElementById(`slot-${i}`);
     if (!slotEl) continue;
     const overlay = slotEl.querySelector('.cooldown-overlay');
@@ -3141,23 +3229,26 @@ window.updateHotbarCooldowns = function() {
           }
         }
       }
+    } else if (i === 10) {
+      const atkInterval = getAttackInterval();
+      const elapsedAtk = now - (player.lastAttackTime || 0);
+      if (elapsedAtk < atkInterval) {
+        percent = 100 - (elapsedAtk / atkInterval * 100);
+      }
     }
     overlay.style.height = `${percent}%`;
   }
 
-  // 0번(기본 공격) 슬롯 쿨타임 계산
-  const slot10El = document.getElementById('slot-10');
-  if (slot10El) {
-    const overlay10 = slot10El.querySelector('.cooldown-overlay');
-    if (overlay10) {
-      let percent10 = 0;
-      const atkInterval = getAttackInterval();
-      const elapsedAtk = now - (player.lastAttackTime || 0);
-      if (elapsedAtk < atkInterval) {
-        percent10 = 100 - (elapsedAtk / atkInterval * 100);
-      }
-      overlay10.style.height = `${percent10}%`;
+  // 가로모드 메인 칼(공격) 버튼 쿨타임 오버레이 동기화
+  const landAtkCool = document.getElementById('landscape-atk-cooldown');
+  if (landAtkCool) {
+    let percentAtk = 0;
+    const atkInterval = getAttackInterval();
+    const elapsedAtk = now - (player.lastAttackTime || 0);
+    if (elapsedAtk < atkInterval) {
+      percentAtk = 100 - (elapsedAtk / atkInterval * 100);
     }
+    landAtkCool.style.height = `${percentAtk}%`;
   }
 };
 

@@ -706,17 +706,26 @@ function updateClosedChatHudFeed() {
   const win = document.getElementById('chat-window-ui');
   if (!feedEl) return;
   const isChatClosed = !win || win.classList.contains('hidden');
-  if (!isChatClosed || recentClosedChatLines.length === 0) {
+  // 가로모드에서는 좌측 상단 체력바 바로 아래에 기본 채팅 2줄을 상시 표시 (단, 대화창이 열려 있을 때도 겹침 없이 표시 가능)
+  if (!window.isLandscapeMode && !isChatClosed) {
+    feedEl.classList.add('hidden');
+    return;
+  }
+  const linesToShow = recentClosedChatLines.length > 0
+    ? recentClosedChatLines.slice(-2)
+    : (window.isLandscapeMode ? [{ text: '⚔️ [시스템] 가로모드 인터페이스가 활성화되었습니다.', type: 'log-sys' }] : []);
+  if (linesToShow.length === 0) {
     feedEl.classList.add('hidden');
     return;
   }
   feedEl.classList.remove('hidden');
-  feedEl.innerHTML = recentClosedChatLines.slice(-3).map(item => {
+  feedEl.innerHTML = linesToShow.map(item => {
     const col = item.type === 'log-kill' ? '#4ade80' : (item.type === 'log-hit' ? '#f87171' : (item.type === 'log-whisper' ? '#f472b6' : (item.type === 'log-gm' ? '#fde047' : '#f3f4f6')));
     const safeTxt = String(item.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return `<div class="hud-closed-chat-line" style="color:${col};">${safeTxt}</div>`;
   }).join('');
 }
+window.updateClosedChatHudFeed = updateClosedChatHudFeed;
 
 // 대화창 상단 헤더 투명화 토글: 텍스트 빼고 배경 전부 투명 처리 & 투명 전 조정 줄수(높이) 유지 & 상단 복구 버튼 외 터치 비활성화
 window.toggleChatTextOnlyTransparency = function(ev) {
@@ -790,13 +799,14 @@ window.toggleChatWindow = function(forceOpen = null) {
 window.toggleChatWindowExpand = function() {
   const win = document.getElementById('chat-window-ui');
   if (!win) return;
+  const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth, height: window.innerHeight };
   chatWindowExpanded = !chatWindowExpanded;
   if (chatWindowExpanded) {
-    win.style.width = `${Math.min(window.innerWidth - 16, 660)}px`;
-    win.style.height = `${Math.min(Math.round(window.innerHeight * 0.62), 460)}px`;
+    win.style.width = `${Math.min(vp.width - 16, window.isLandscapeMode ? 520 : 660)}px`;
+    win.style.height = `${Math.min(Math.round(vp.height * 0.68), window.isLandscapeMode ? 280 : 460)}px`;
   } else {
-    win.style.width = `${Math.min(window.innerWidth - 20, 460)}px`;
-    win.style.height = `230px`;
+    win.style.width = `${Math.min(vp.width - 20, window.isLandscapeMode ? 360 : 460)}px`;
+    win.style.height = window.isLandscapeMode ? `185px` : `230px`;
   }
   const chatBox = document.getElementById('chat-box');
   if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
@@ -951,14 +961,17 @@ function setupChatWindowDragAndResize() {
   if (!win || !header) return;
 
   const ensureAbsoluteLeftTop = () => {
-    const rect = win.getBoundingClientRect();
-    const parentRect = (win.offsetParent || document.body).getBoundingClientRect();
+    const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth, height: window.innerHeight };
+    const curW = win.offsetWidth || 360;
+    const curH = win.offsetHeight || 200;
+    const curL = win.offsetLeft || 10;
+    const curT = win.offsetTop || Math.max(32, vp.height - curH - 20);
     win.style.bottom = 'auto';
     win.style.right = 'auto';
-    win.style.left = `${Math.max(2, rect.left - parentRect.left)}px`;
-    win.style.top = `${Math.max(2, rect.top - parentRect.top)}px`;
-    win.style.width = `${rect.width}px`;
-    win.style.height = `${rect.height}px`;
+    win.style.left = `${Math.max(2, curL)}px`;
+    win.style.top = `${Math.max(2, curT)}px`;
+    win.style.width = `${curW}px`;
+    win.style.height = `${curH}px`;
   };
 
   win.addEventListener('pointerdown', () => {
@@ -974,8 +987,9 @@ function setupChatWindowDragAndResize() {
     if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
     ensureAbsoluteLeftTop();
     isDragging = true;
-    dragStartX = e.clientX;
-    dragStartY = e.clientY;
+    const gp = window.getGameClientCoords ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX, y: e.clientY };
+    dragStartX = gp.x;
+    dragStartY = gp.y;
     initLeft = parseFloat(win.style.left) || 0;
     initTop = parseFloat(win.style.top) || 0;
     try { header.setPointerCapture(e.pointerId); } catch (err) {}
@@ -983,12 +997,14 @@ function setupChatWindowDragAndResize() {
 
   header.addEventListener('pointermove', (e) => {
     if (!isDragging) return;
-    const dx = e.clientX - dragStartX;
-    const dy = e.clientY - dragStartY;
-    const maxL = Math.max(0, window.innerWidth - 80);
-    const maxT = Math.max(32, window.innerHeight - 60);
+    const gp = window.getGameClientCoords ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX, y: e.clientY };
+    const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth, height: window.innerHeight };
+    const dx = gp.x - dragStartX;
+    const dy = gp.y - dragStartY;
+    const maxL = Math.max(0, vp.width - 80);
+    const maxT = Math.max(28, vp.height - 50);
     win.style.left = `${Math.max(-20, Math.min(maxL, initLeft + dx))}px`;
-    win.style.top = `${Math.max(32, Math.min(maxT, initTop + dy))}px`;
+    win.style.top = `${Math.max(28, Math.min(maxT, initTop + dy))}px`;
   });
 
   const endHeaderDrag = () => { isDragging = false; };
@@ -1007,8 +1023,9 @@ function setupChatWindowDragAndResize() {
       e.stopPropagation();
       ensureAbsoluteLeftTop();
       isResizing = true;
-      rStartX = e.clientX;
-      rStartY = e.clientY;
+      const gp = window.getGameClientCoords ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX, y: e.clientY };
+      rStartX = gp.x;
+      rStartY = gp.y;
       sLeft = parseFloat(win.style.left) || 0;
       sTop = parseFloat(win.style.top) || 0;
       sWidth = parseFloat(win.style.width) || 420;
@@ -1019,12 +1036,14 @@ function setupChatWindowDragAndResize() {
     handle.addEventListener('pointermove', (e) => {
       if (!isResizing) return;
       e.stopPropagation();
-      const dx = e.clientX - rStartX;
-      const dy = e.clientY - rStartY;
-      const minW = 250;
-      const minH = 145;
-      const maxW = window.innerWidth - 8;
-      const maxH = window.innerHeight - 40;
+      const gp = window.getGameClientCoords ? window.getGameClientCoords(e.clientX, e.clientY) : { x: e.clientX, y: e.clientY };
+      const vp = window.getGameViewportSize ? window.getGameViewportSize() : { width: window.innerWidth, height: window.innerHeight };
+      const dx = gp.x - rStartX;
+      const dy = gp.y - rStartY;
+      const minW = 240;
+      const minH = 135;
+      const maxW = vp.width - 8;
+      const maxH = vp.height - 24;
 
       let newL = sLeft, newT = sTop, newW = sWidth, newH = sHeight;
 
@@ -1329,18 +1348,18 @@ function ensureAllGameModals() {
       .rpg-close-floating { position:absolute; top:8px; right:8px; background:rgba(153,27,27,0.9); color:#fff; border:1px solid #f87171; border-radius:6px; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:12px; z-index:60; box-shadow:0 2px 6px #000; }
       .rpg-close-floating:hover { background:#dc2626; }
 
-      /* 모든 모달 창이 화면 크기에 맞게 정중앙에 오도록 설정 및 작은 화면 잘림 방지 */
-      .modal-panel {
+      /* 세로모드에서 모달 창 크기 설정 (가로모드에서는 와이드 전용 스타일 적용) */
+      body:not(.landscape-mode) .modal-panel {
         max-height: min(76dvh, calc(100dvh - 158px)) !important;
         max-width: min(92vw, 356px) !important;
         width: min(90vw, 348px) !important;
         overflow: hidden !important;
       }
-      #option-ui.modal-panel {
+      body:not(.landscape-mode) #option-ui.modal-panel {
         width: min(90vw, 336px) !important;
         max-width: min(92vw, 340px) !important;
       }
-      .status-layout {
+      body:not(.landscape-mode) .status-layout {
         height: 360px !important;
       }
       .paperdoll-right {
@@ -2432,9 +2451,249 @@ function disableAutoAttack(reasonMsg = null) {
   if (!window.isAutoAttack) return;
   window.isAutoAttack = false;
   document.getElementById('slot-10')?.classList.remove('slot-10-auto');
+  document.getElementById('landscape-atk-btn')?.classList.remove('slot-10-auto');
+  const landTag = document.getElementById('landscape-atk-auto-tag');
+  if (landTag) landTag.innerText = 'ATK';
   window.clearTarget();
   if (reasonMsg) window.addChat(reasonMsg, 'log-sys');
 }
+
+// ============================================================================
+// 🔄 세로모드 ↔ 가로모드 전환 · 유동적(드래그) 버튼 · 좌표 변환 시스템
+// ============================================================================
+window.isLandscapeMode = false;
+
+window.isForceLandscapeRotated = function() {
+  return Boolean(window.isLandscapeMode && document.body.classList.contains('force-landscape-rotate'));
+};
+
+window.syncLandscapeViewportRotation = function() {
+  if (!window.isLandscapeMode) {
+    document.body.classList.remove('force-landscape-rotate');
+    return;
+  }
+  const isPortraitViewport = (window.innerWidth || 360) < (window.innerHeight || 640);
+  document.body.classList.toggle('force-landscape-rotate', isPortraitViewport);
+};
+
+window.getGameViewportSize = function() {
+  const wrapEl = document.getElementById('game-wrapper');
+  if (wrapEl && wrapEl.clientWidth > 0 && wrapEl.clientHeight > 0) {
+    return { width: wrapEl.clientWidth, height: wrapEl.clientHeight };
+  }
+  if (window.isForceLandscapeRotated()) {
+    return { width: window.innerHeight || 640, height: window.innerWidth || 360 };
+  }
+  return { width: window.innerWidth || 360, height: window.innerHeight || 640 };
+};
+
+window.getGameClientCoords = function(clientX, clientY) {
+  if (!window.isForceLandscapeRotated()) {
+    return { x: clientX, y: clientY };
+  }
+  const w = window.innerWidth || 360;
+  return {
+    x: clientY,
+    y: w - clientX
+  };
+};
+
+window.syncPartyHudPlacement = function() {
+  const pHud = document.getElementById('party-hud');
+  if (!pHud) return;
+  if (window.isLandscapeMode) {
+    const leftSlot = document.getElementById('left-party-hud-slot');
+    if (leftSlot && pHud.parentElement !== leftSlot) {
+      leftSlot.appendChild(pHud);
+    }
+  } else {
+    const rightHud = document.querySelector('#top-hud .right-hud');
+    if (rightHud && pHud.parentElement !== rightHud) {
+      const safeBadge = document.getElementById('safe-zone-badge');
+      if (safeBadge && safeBadge.parentElement === rightHud) {
+        rightHud.insertBefore(pHud, safeBadge);
+      } else {
+        rightHud.appendChild(pHud);
+      }
+    }
+  }
+};
+
+window.setLandscapeMode = function(enable) {
+  window.isLandscapeMode = Boolean(enable);
+  document.body.classList.toggle('landscape-mode', window.isLandscapeMode);
+  window.syncLandscapeViewportRotation();
+
+  const modeBtn = document.getElementById('mode-toggle-fab');
+  const modeIcon = document.getElementById('mode-toggle-icon');
+  const modeLbl = document.getElementById('mode-toggle-label');
+
+  if (window.isLandscapeMode) {
+    try {
+      if (screen.orientation && typeof screen.orientation.lock === 'function') {
+        screen.orientation.lock('landscape').catch(() => {});
+      }
+    } catch (e) {}
+
+    if (modeBtn) {
+      // 가로모드에서는 우측 대화창 아이콘 바로 옆 고정 위치 사용
+      modeBtn.style.left = '';
+      modeBtn.style.top = '';
+      modeBtn.style.right = '';
+      modeBtn.style.bottom = '';
+      modeBtn.title = '터치: 세로모드로 돌아가기';
+    }
+    if (modeIcon) {
+      modeIcon.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5" stroke="#fde047"/><path d="M10 8l2-2 2 2M10 16l2 2 2-2" stroke="#38bdf8"/></svg>`;
+    }
+    if (modeLbl) modeLbl.innerText = '세로';
+
+    // 가로모드 전환 시 대형 대화창은 닫고 좌측 상단 체력바 아래 2줄 기본채팅 표시
+    const chatWin = document.getElementById('chat-window-ui');
+    if (chatWin) {
+      chatWin.style.left = '';
+      chatWin.style.top = '';
+      chatWin.style.width = '';
+      chatWin.style.height = '';
+    }
+    window.toggleChatWindow?.(false);
+    window.addChat?.('🌄 [가로모드] 우측 아크 10슬롯 & 확장 화면 인터페이스로 전환되었습니다.', 'log-sys');
+  } else {
+    try {
+      if (screen.orientation && typeof screen.orientation.unlock === 'function') {
+        screen.orientation.unlock();
+      }
+    } catch (e) {}
+
+    if (modeBtn) {
+      if (modeBtn.dataset.savedLeft && modeBtn.dataset.savedTop) {
+        modeBtn.style.left = modeBtn.dataset.savedLeft;
+        modeBtn.style.top = modeBtn.dataset.savedTop;
+        modeBtn.style.right = 'auto';
+        modeBtn.style.bottom = 'auto';
+      } else {
+        modeBtn.style.left = '';
+        modeBtn.style.top = '';
+        modeBtn.style.right = '';
+        modeBtn.style.bottom = '';
+      }
+      modeBtn.title = '터치: 가로모드 작동 (드래그하여 위치 이동 가능)';
+    }
+    if (modeIcon) {
+      modeIcon.innerHTML = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2.5" stroke="#fde047"/><path d="M8 10l-2 2 2 2M16 10l2 2-2 2" stroke="#38bdf8"/></svg>`;
+    }
+    if (modeLbl) modeLbl.innerText = '가로';
+
+    const chatWin = document.getElementById('chat-window-ui');
+    if (chatWin) {
+      chatWin.style.left = '';
+      chatWin.style.top = '';
+      chatWin.style.width = '';
+      chatWin.style.height = '';
+    }
+    window.addChat?.('📱 [세로모드] 기본 세로 화면 인터페이스로 전환되었습니다.', 'log-sys');
+  }
+
+  window.syncPartyHudPlacement();
+  window.updateMercHUD?.();
+  window.updateStatusHUD?.();
+  window.updateBuffUI?.();
+  updateClosedChatHudFeed();
+
+  const recenterAllOpenModals = () => {
+    document.querySelectorAll('.modal-panel').forEach(el => {
+      if (el && !el.classList.contains('hidden')) {
+        el._hasCustomDragPos = false;
+        window.centerModalOnScreen?.(el);
+      }
+    });
+  };
+  recenterAllOpenModals();
+  window.forceResizePixiApp?.();
+  requestAnimationFrame(() => {
+    window.forceResizePixiApp?.();
+    recenterAllOpenModals();
+  });
+  setTimeout(() => {
+    window.forceResizePixiApp?.();
+    recenterAllOpenModals();
+  }, 70);
+  setTimeout(() => {
+    window.forceResizePixiApp?.();
+    recenterAllOpenModals();
+  }, 220);
+};
+
+window.toggleLandscapeMode = function() {
+  window.setLandscapeMode(!window.isLandscapeMode);
+};
+
+window.setupModeToggleFab = function() {
+  const btn = document.getElementById('mode-toggle-fab');
+  if (!btn || btn._modeFabBound) return;
+  btn._modeFabBound = true;
+
+  let dragging = false;
+  let moved = false;
+  let startX = 0, startY = 0;
+  let origLeft = 0, origTop = 0;
+
+  btn.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    if (e.button && e.button !== 0) return;
+    dragging = true;
+    moved = false;
+    const gp = window.getGameClientCoords(e.clientX, e.clientY);
+    startX = gp.x;
+    startY = gp.y;
+    origLeft = btn.offsetLeft;
+    origTop = btn.offsetTop;
+    try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+
+  btn.addEventListener('pointermove', (e) => {
+    if (!dragging || window.isLandscapeMode) return;
+    const gp = window.getGameClientCoords(e.clientX, e.clientY);
+    const dx = gp.x - startX;
+    const dy = gp.y - startY;
+    if (!moved && Math.hypot(dx, dy) >= 7) {
+      moved = true;
+      btn.classList.add('custom-dragged');
+    }
+    if (moved) {
+      const parent = btn.offsetParent || document.getElementById('canvas-wrapper') || document.body;
+      const maxL = Math.max(10, (parent.clientWidth || window.innerWidth) - btn.offsetWidth - 4);
+      const maxT = Math.max(10, (parent.clientHeight || window.innerHeight) - btn.offsetHeight - 4);
+      const nextL = Math.max(4, Math.min(maxL, Math.round(origLeft + dx)));
+      const nextT = Math.max(4, Math.min(maxT, Math.round(origTop + dy)));
+      btn.style.right = 'auto';
+      btn.style.bottom = 'auto';
+      btn.style.left = `${nextL}px`;
+      btn.style.top = `${nextT}px`;
+      btn.dataset.savedLeft = `${nextL}px`;
+      btn.dataset.savedTop = `${nextT}px`;
+    }
+  });
+
+  const finishPointer = (e) => {
+    if (!dragging) return;
+    e.stopPropagation();
+    const wasMoved = moved;
+    dragging = false;
+    moved = false;
+    try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
+    if (!wasMoved) {
+      window.SoundSystem?.playUiClick?.();
+      window.toggleLandscapeMode();
+    }
+  };
+
+  btn.addEventListener('pointerup', finishPointer);
+  btn.addEventListener('pointercancel', () => {
+    dragging = false;
+    moved = false;
+  });
+};
 
 function movePlayerViaDetailMap(tx, ty, zoneType = 'field', label = '') {
   window.closeShireMapUI();
