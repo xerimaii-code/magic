@@ -146,7 +146,8 @@ const {
   ensure50AICharactersSeeded,
   resetAndReseedAICharacters
 } = require('./seed_ai_50.js');
-// ─── 내장 폴백 지원하는 Redis Lazy Sync & Bulk Upsert 로더 (단독 파일 실행 시에도 모듈 에러 0%) ───
+
+// ─── 내장 폴백 지원하는 Redis Lazy Sync & Bulk Upsert 로더 (I/O 극대화 절감) ───
 let updateAgentState, handleAgentLogout, syncDirtyAgentsToSupabase, startBatchSyncWorker;
 try {
   ({
@@ -185,7 +186,7 @@ try {
       _dirtySet.add(String(id));
     }
   };
-  startBatchSyncWorker = (ms = 180000) => {
+  startBatchSyncWorker = (ms = 240000) => {
     if (_batchTimer) return _batchTimer;
     _batchTimer = setInterval(() => syncDirtyAgentsToSupabase(), ms);
     return _batchTimer;
@@ -196,7 +197,7 @@ try { require('dotenv').config(); } catch (_) {}
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PORT = Number(process.env.PORT || 4000);
 const SERVER_WS_URL = process.env.SERVER_WS_URL || `ws://127.0.0.1:${PORT}/ws`;
-let maxConcurrentAI = Math.min(AI_TOTAL_POOL, Math.max(0, Number(process.env.MAX_CONCURRENT_AI || 150)));
+let maxConcurrentAI = Math.min(AI_TOTAL_POOL, Math.max(0, Number(process.env.MAX_CONCURRENT_AI || 100)));
 const MAX_PARTY_MEMBERS = 5;
 const MAX_AGENTS_PER_MAP = 8; // 단일 맵(필드/던전) 최대 상주 인원 캡(7~9명 기준 8명)
 const CPU_LIMIT_PCT = Math.min(85, Math.max(35, Number(process.env.MAX_CPU_PERCENT || 65)));
@@ -1085,10 +1086,8 @@ class AIAgentClient {
       case 'FORCE_CLIENT_SAVE':
       case 'SERVER_SHUTDOWN_NOTICE':
       case 'SERVER_REBOOT_COUNTDOWN': {
-        if (msg.type !== 'SERVER_REBOOT_COUNTDOWN' || msg.secondsLeft === 5 || msg.secondsLeft === 1) {
-          // 개별 에이전트가 수파베이스에 단건 요청을 폭주시키지 않고 Redis에만 즉시 반영 후 전역 배치 1회 호출
+        if (msg.type !== 'SERVER_REBOOT_COUNTDOWN' || msg.secondsLeft === 15 || msg.secondsLeft === 5 || msg.secondsLeft === 2) {
           this.saveToSupabase(false);
-          scheduleGlobalEmergencyBatchFlush(msg.type);
         }
         break;
       }
@@ -1280,15 +1279,15 @@ class AIAgentClient {
       if (this.rejectedTargets.size > 30) this.rejectedTargets.clear();
     }
 
-    // 4) 실시간 상태 업데이트 (Redis 전용 - Supabase 직접 호출 0회!)
-    //    이동(x, y), 체력(hp, mp), 경험치/인벤토리 변경 시 Redis(agent_state:{id}, dirty_agents)에만 가볍게 기록하고,
-    //    실제 Supabase 저장은 백그라운드 배치 워커(startBatchSyncWorker)가 주기적 Bulk Upsert 1회로 처리합니다.
-    const posMoved = Math.abs(Math.round(this.x) - (this._lastRedisX ?? Math.round(this.x))) >= 15 ||
-                     Math.abs(Math.round(this.y) - (this._lastRedisY ?? Math.round(this.y))) >= 15;
-    const vitalsChanged = Math.abs(Math.round(this.hp) - (this._lastRedisHp ?? Math.round(this.hp))) >= 20 ||
-                          Math.abs(Math.round(this.mp) - (this._lastRedisMp ?? Math.round(this.mp))) >= 20;
-    if ((this._isDirty || posMoved || vitalsChanged) && (now - this.lastSupabaseSyncTime >= 2500)) {
-      this.lastSupabaseSyncTime = now + ((this.slotIndex * 53) % 1000);
+    // 4) 실시간 상태 업데이트 (Redis 전용 Lazy Sync - Supabase 직접 호출 0회!)
+    //    이동(x, y), 체력(hp, mp), 경험치/인벤토리 변경 시 Redis에만 가볍게 기록하고,
+    //    실제 Supabase 저장은 백그라운드 배치 워커가 주기적(3~5분) Bulk Upsert 1회로 처리합니다.
+    const posMoved = Math.abs(Math.round(this.x) - (this._lastRedisX ?? Math.round(this.x))) >= 25 ||
+                     Math.abs(Math.round(this.y) - (this._lastRedisY ?? Math.round(this.y))) >= 25;
+    const vitalsChanged = Math.abs(Math.round(this.hp) - (this._lastRedisHp ?? Math.round(this.hp))) >= 25 ||
+                          Math.abs(Math.round(this.mp) - (this._lastRedisMp ?? Math.round(this.mp))) >= 25;
+    if ((this._isDirty || posMoved || vitalsChanged) && (now - this.lastSupabaseSyncTime >= 3500)) {
+      this.lastSupabaseSyncTime = now + ((this.slotIndex * 67) % 1500);
       this._isDirty = false;
       this._lastRedisX = Math.round(this.x);
       this._lastRedisY = Math.round(this.y);
@@ -3267,10 +3266,9 @@ ${situationContext}
   }
 
   /**
-   * [DB I/O 최적화]
-   * - 평시(isLogout === false): Supabase에 직접 API를 호출하지 않고,
-   *   Redis에 JSON 상태 저장(SET agent_state:{id}) 및 저장 대상 등록(SADD dirty_agents {id})만 수행합니다.
-   * - 로그아웃(isLogout === true): 세션 종료 예외 처리로 즉시 Supabase에 반영 후 SREM 처리합니다.
+   * [DB I/O 극대화 최적화]
+   * - 평시: Supabase에 단건 API를 직접 호출하지 않고 Redis(SET agent_state:{id} + SADD dirty_agents)에만 기록!
+   * - 로그아웃: 세션 종료 시 안전하게 Supabase에 즉시 반영 후 SREM 처리합니다.
    */
   async saveToSupabase(isLogout = false) {
     const updatedRecord = this.buildCharacterRecord(isLogout);
@@ -3420,14 +3418,14 @@ async function setConcurrentAICount(newMax, requesterCharId = null) {
 /**
  * 운영자 명령어 (/모험가생성 <숫자>) 처리: 기존 AI 전체 삭제 후 신규 생성 및 기본 50명 상시 로테이션 시작
  */
-async function rebuildAIPool(newTotalCount = 600, defaultConcurrent = 150, requesterCharId = null) {
+async function rebuildAIPool(newTotalCount = 600, defaultConcurrent = 100, requesterCharId = null) {
   if (isRebuildingPool) {
     sendControlReport(requesterCharId, `⚠️ 이미 모험가 생성 작업이 진행 중입니다. 완료될 때까지 잠시만 기다려주세요.`, 'log-hit');
     return;
   }
   isRebuildingPool = true;
   const targetTotal = Math.max(1, Math.min(1000, Number(newTotalCount) || 600));
-  const targetConcurrent = Math.min(targetTotal, Math.max(1, Number(defaultConcurrent) || 150));
+  const targetConcurrent = Math.min(targetTotal, Math.max(1, Number(defaultConcurrent) || 100));
 
   try {
     console.log(`⚙️ [GM 모험가생성 시작] 기존 AI 에이전트 접속 종료 및 삭제 후 ${targetTotal}명 재생성을 시작합니다...`);
@@ -3502,22 +3500,13 @@ function connectRunnerControlSocket() {
   controlWs.on('error', () => {});
 }
 
-let emergencyFlushTimer = null;
-function scheduleGlobalEmergencyBatchFlush(reason = 'server_signal') {
-  if (emergencyFlushTimer) return;
-  emergencyFlushTimer = setTimeout(async () => {
-    emergencyFlushTimer = null;
-    await syncDirtyAgentsToSupabase(reason);
-  }, 300);
-}
-
 let runnerStarted = false;
 async function startAIAgentRunner() {
   if (runnerStarted) return;
   runnerStarted = true;
 
-  // 백그라운드 Redis -> Supabase 일괄 배치 동기화 워커 가동 (기본 3분 주기)
-  startBatchSyncWorker();
+  // 백그라운드 Redis -> Supabase 일괄 배치 동기화 워커 가동 (기본 3~4분 주기)
+  startBatchSyncWorker(240000);
 
   await initGroqModel();
   allAiDbRecords = await ensure50AICharactersSeeded(AI_TOTAL_POOL);
