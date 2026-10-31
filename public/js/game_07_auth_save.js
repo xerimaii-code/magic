@@ -400,7 +400,7 @@ window.handleAuthSubmit = async function() {
   } else if (srvLogin && srvLogin.error && srvLogin.error.includes('비밀번호')) {
     if (statusMsg) {
       statusMsg.style.color = '#f87171';
-      statusMsg.innerText = `⚠️ ${srvLogin.error}`;
+      statusMsg.innerText = `⚠️ ${srvLogin.error} ([🔑 비번 찾기/변경]으로 재설정 가능)`;
     }
     return;
   }
@@ -419,20 +419,30 @@ window.handleAuthSubmit = async function() {
       if (parsedTok.pwHash) {
         const storedPrefix = String(parsedTok.pwHash).split('_')[0];
         const inputPrefix = String(pwHash).split('_')[0];
-        if (parsedTok.pwHash === pwHash || parsedTok.pwHash === legacyB64 || (storedPrefix && storedPrefix.length >= 16 && storedPrefix === inputPrefix)) {
+        if (
+          parsedTok.pwHash === pwHash ||
+          parsedTok.pwHash === legacyB64 ||
+          parsedTok.pwHash === password ||
+          (storedPrefix && storedPrefix.length >= 16 && storedPrefix === inputPrefix)
+        ) {
           loggedUser = { id: row.user_id, email: emailRaw };
         } else {
           if (statusMsg) {
             statusMsg.style.color = '#f87171';
-            statusMsg.innerText = '⚠️ 비밀번호가 일치하지 않습니다.';
+            statusMsg.innerText = '⚠️ 비밀번호가 일치하지 않습니다. (우측 하단 [🔑 비번 찾기/변경]으로 즉시 재설정 가능)';
           }
           return;
         }
       } else {
-        const { data: authData } = await supabaseClient.auth.signInWithPassword({ email: emailRaw, password });
-        if (authData?.user) {
-          loggedUser = { id: row.user_id || authData.user.id, email: emailRaw };
-        }
+        // 초기 시딩 계정 등 active_session_token에 pwHash가 비어있는 경우 입력한 비밀번호로 즉시 해시 등록 후 로그인 허용
+        const newTok = buildAccountTokenString(pwHash, parsedTok.sessionToken || '');
+        try {
+          await supabaseClient
+            .from(accTable)
+            .update({ active_session_token: newTok, updated_at: new Date().toISOString() })
+            .eq('user_id', row.user_id);
+        } catch (e) {}
+        loggedUser = { id: row.user_id, email: emailRaw };
       }
     }
 
@@ -1466,12 +1476,11 @@ async function saveCurrentCharacterAndStorageNow(reason = 'auto', useKeepaliveFe
         fetch(`${url}/rest/v1/${charTable}?on_conflict=id`, {
           method: 'POST',
           keepalive: true,
-          headers: {
+          headers: Object.assign({
             'Content-Type': 'application/json',
             'apikey': key,
-            'Authorization': `Bearer ${key}`,
-            'Prefer': 'resolution=merge-duplicates'
-          },
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
+          }, String(key).startsWith('eyJ') ? { 'Authorization': `Bearer ${key}` } : {}),
           body: JSON.stringify(charPayload)
         }).catch(() => {});
       } catch (e) {}
@@ -1930,3 +1939,358 @@ window.initAuthAndCharacterSystem = async function() {
 if (document.readyState === 'complete' && !window._magicBootStarted && typeof window.onload === 'function') {
   window.onload();
 }
+
+
+// ============================================================================
+// 🔍 12) 아이디(이메일) 찾기 & 비밀번호 즉시 재설정 시스템 (수파베이스 실시간 연동)
+// ============================================================================
+window.openAuthRecoveryModal = function(mode = 'id') {
+  const modal = document.getElementById('auth-recovery-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  window.switchRecoveryTab(mode === 'pw' ? 'pw' : 'id');
+
+  const curLoginEmail = (document.getElementById('auth-email')?.value || '').trim().toLowerCase();
+  const pwEmailInp = document.getElementById('recovery-pw-email');
+  if (pwEmailInp && curLoginEmail && !pwEmailInp.value) {
+    pwEmailInp.value = curLoginEmail;
+  }
+};
+
+window.closeAuthRecoveryModal = function() {
+  const modal = document.getElementById('auth-recovery-modal');
+  if (modal) modal.style.display = 'none';
+};
+
+window.switchRecoveryTab = function(tab = 'id') {
+  const isPw = (tab === 'pw');
+  const idBtn = document.getElementById('tab-rec-id-btn');
+  const pwBtn = document.getElementById('tab-rec-pw-btn');
+  const idPanel = document.getElementById('recovery-id-panel');
+  const pwPanel = document.getElementById('recovery-pw-panel');
+
+  if (idBtn) idBtn.classList.toggle('active', !isPw);
+  if (pwBtn) pwBtn.classList.toggle('active', isPw);
+  if (idPanel) idPanel.style.display = isPw ? 'none' : 'flex';
+  if (pwPanel) pwPanel.style.display = isPw ? 'flex' : 'none';
+};
+
+window.applyFoundEmailToAuth = function(email, switchToPwReset = false) {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanEmail) return;
+
+  const loginEmailInp = document.getElementById('auth-email');
+  if (loginEmailInp) {
+    loginEmailInp.value = cleanEmail;
+    window.onAuthEmailInput?.();
+  }
+
+  if (switchToPwReset) {
+    const pwEmailInp = document.getElementById('recovery-pw-email');
+    if (pwEmailInp) pwEmailInp.value = cleanEmail;
+    window.switchRecoveryTab('pw');
+    const newPwInp = document.getElementById('recovery-pw-new');
+    if (newPwInp) newPwInp.focus();
+  } else {
+    window.closeAuthRecoveryModal();
+    window.switchAuthMode('login');
+    const pwInp = document.getElementById('auth-password');
+    if (pwInp) pwInp.focus();
+  }
+};
+
+window.executeFindAccountId = async function() {
+  const queryRaw = (document.getElementById('recovery-find-query')?.value || '').trim();
+  const msgEl = document.getElementById('recovery-id-msg');
+  const listEl = document.getElementById('recovery-id-results');
+  if (listEl) listEl.innerHTML = '';
+
+  if (queryRaw.length < 2) {
+    if (msgEl) {
+      msgEl.style.color = '#f87171';
+      msgEl.innerText = '⚠️ 캐릭터 이름 또는 이메일 일부를 2글자 이상 입력해주세요.';
+    }
+    return;
+  }
+
+  if (msgEl) {
+    msgEl.style.color = '#93c5fd';
+    msgEl.innerText = '⏳ 수파베이스 DB에서 계정 및 캐릭터 정보를 조회 중입니다...';
+  }
+
+  if (!isSupabaseOnlineVerified) {
+    await initSupabaseConnection();
+  }
+
+  const accTable = GameDB.SupabaseConfig?.tables?.accounts || 'magic_accounts';
+  const charTable = GameDB.SupabaseConfig?.tables?.characters || 'magic_characters';
+  let results = [];
+  let searchSucceeded = false;
+
+  // 1순위: 중앙 서버(/api/auth/find-id) 조회
+  const srvRes = await callCentralServerApi('/api/auth/find-id', 'POST', { query: queryRaw });
+  if (srvRes && srvRes.ok && Array.isArray(srvRes.results)) {
+    results = srvRes.results;
+    searchSucceeded = true;
+  }
+
+  // 2순위: 브라우저 -> Supabase 직접 조회 폴백
+  if (!searchSucceeded && supabaseClient) {
+    try {
+      const accountMap = new Map();
+
+      // A) 캐릭터 이름(slot_index < 100)으로 검색
+      const { data: charRows, error: charErr } = await supabaseClient
+        .from(charTable)
+        .select('id, user_id, name, class, level, slot_index')
+        .lt('slot_index', 100)
+        .ilike('name', `%${queryRaw}%`)
+        .limit(15);
+
+      if (!charErr && Array.isArray(charRows) && charRows.length > 0) {
+        searchSucceeded = true;
+        const userIds = Array.from(new Set(charRows.map(c => c.user_id).filter(Boolean)));
+        if (userIds.length > 0) {
+          const { data: accRows } = await supabaseClient
+            .from(accTable)
+            .select('user_id, email')
+            .in('user_id', userIds);
+
+          if (Array.isArray(accRows)) {
+            for (const acc of accRows) {
+              accountMap.set(acc.user_id, {
+                user_id: acc.user_id,
+                email: acc.email,
+                characters: []
+              });
+            }
+          }
+        }
+        for (const ch of charRows) {
+          const entry = accountMap.get(ch.user_id);
+          if (entry) {
+            entry.characters.push({ name: ch.name, class: ch.class, level: ch.level });
+          }
+        }
+      }
+
+      // B) 이메일 일부로 검색
+      const { data: emailRows, error: emailErr } = await supabaseClient
+        .from(accTable)
+        .select('user_id, email')
+        .ilike('email', `%${queryRaw}%`)
+        .limit(15);
+
+      if (!emailErr && Array.isArray(emailRows)) {
+        searchSucceeded = true;
+        const newUids = [];
+        for (const acc of emailRows) {
+          if (!accountMap.has(acc.user_id)) {
+            accountMap.set(acc.user_id, {
+              user_id: acc.user_id,
+              email: acc.email,
+              characters: []
+            });
+            newUids.push(acc.user_id);
+          }
+        }
+        if (newUids.length > 0) {
+          const { data: extraChars } = await supabaseClient
+            .from(charTable)
+            .select('user_id, name, class, level, slot_index')
+            .in('user_id', newUids)
+            .lt('slot_index', 100);
+          if (Array.isArray(extraChars)) {
+            for (const ch of extraChars) {
+              const entry = accountMap.get(ch.user_id);
+              if (entry) {
+                entry.characters.push({ name: ch.name, class: ch.class, level: ch.level });
+              }
+            }
+          }
+        }
+      }
+
+      results = Array.from(accountMap.values());
+    } catch (e) {}
+  }
+
+  if (!searchSucceeded) {
+    if (msgEl) {
+      msgEl.style.color = '#f87171';
+      msgEl.innerText = '⚠️ 수파베이스 서버와 통신할 수 없습니다. 잠시 후 다시 시도해주세요.';
+    }
+    return;
+  }
+
+  if (!results || results.length === 0) {
+    if (msgEl) {
+      msgEl.style.color = '#f87171';
+      msgEl.innerText = `⚠️ '${queryRaw}'와(과) 일치하는 캐릭터 또는 이메일 계정을 찾을 수 없습니다.`;
+    }
+    return;
+  }
+
+  if (msgEl) {
+    msgEl.style.color = '#4ade80';
+    msgEl.innerText = `✅ 총 ${results.length}개의 계정을 찾았습니다!`;
+  }
+
+  if (listEl) {
+    listEl.innerHTML = results.map(item => {
+      const safeEmail = String(item.email || '').replace(/['"<>]/g, '');
+      const charDesc = Array.isArray(item.characters) && item.characters.length > 0
+        ? item.characters.map(c => `Lv.${c.level || 1} ${c.name}`).join(', ')
+        : '생성된 캐릭터 없음';
+      return `
+        <div style="background:#11141b; border:1px solid #4a3b2c; border-radius:6px; padding:7px 9px; display:flex; justify-content:space-between; align-items:center; gap:6px;">
+          <div style="min-width:0; flex:1;">
+            <div style="font-size:12px; font-weight:bold; color:#fde047; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">📧 ${safeEmail}</div>
+            <div style="font-size:10px; color:#93c5fd; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">⚔️ 캐릭터: ${charDesc}</div>
+          </div>
+          <div style="display:flex; gap:4px; flex-shrink:0;">
+            <button type="button" class="auth-primary-btn" style="width:auto; padding:4px 7px; font-size:10px;" onclick="applyFoundEmailToAuth('${safeEmail}', false)">로그인창 입력</button>
+            <button type="button" class="auth-sub-btn" style="width:auto; padding:4px 7px; font-size:10px; color:#93c5fd;" onclick="applyFoundEmailToAuth('${safeEmail}', true)">비번변경</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+};
+
+window.executeResetAccountPassword = async function() {
+  const emailRaw = (document.getElementById('recovery-pw-email')?.value || '').trim().toLowerCase();
+  const charNameRaw = (document.getElementById('recovery-pw-char')?.value || '').trim();
+  const newPassword = document.getElementById('recovery-pw-new')?.value || '';
+  const confirmPassword = document.getElementById('recovery-pw-confirm')?.value || '';
+  const msgEl = document.getElementById('recovery-pw-msg');
+
+  if (!emailRaw) {
+    if (msgEl) {
+      msgEl.style.color = '#f87171';
+      msgEl.innerText = '⚠️ 가입한 이메일 계정을 입력해주세요.';
+    }
+    return;
+  }
+  if (!newPassword || newPassword.length < 6) {
+    if (msgEl) {
+      msgEl.style.color = '#f87171';
+      msgEl.innerText = '⚠️ 새 비밀번호는 6자리 이상이어야 합니다.';
+    }
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    if (msgEl) {
+      msgEl.style.color = '#f87171';
+      msgEl.innerText = '⚠️ 새 비밀번호와 비밀번호 확인이 일치하지 않습니다.';
+    }
+    return;
+  }
+
+  if (msgEl) {
+    msgEl.style.color = '#93c5fd';
+    msgEl.innerText = '⏳ 수파베이스 DB에서 계정 확인 및 비밀번호를 변경하고 있습니다...';
+  }
+
+  if (!isSupabaseOnlineVerified) {
+    await initSupabaseConnection();
+  }
+
+  const accTable = GameDB.SupabaseConfig?.tables?.accounts || 'magic_accounts';
+  const charTable = GameDB.SupabaseConfig?.tables?.characters || 'magic_characters';
+  const newPwHash = encodePasswordHash(emailRaw, newPassword);
+  let resetSuccess = false;
+  let resetErrorMsg = '';
+
+  // 1순위: 중앙 서버(/api/auth/reset-password) 요청
+  const srvReset = await callCentralServerApi('/api/auth/reset-password', 'POST', {
+    email: emailRaw,
+    charName: charNameRaw,
+    newPassword,
+    pw_hash: newPwHash
+  });
+  if (srvReset) {
+    if (srvReset.ok) {
+      resetSuccess = true;
+    } else if (srvReset.error) {
+      resetErrorMsg = srvReset.error;
+    }
+  }
+
+  // 2순위: 브라우저 -> Supabase 직접 업데이트 (서버 응답과 병행하여 100% 반영 보장)
+  if (!resetSuccess && supabaseClient && !resetErrorMsg) {
+    try {
+      const { data: accRows, error: accErr } = await supabaseClient
+        .from(accTable)
+        .select('*')
+        .ilike('email', emailRaw)
+        .limit(1);
+
+      if (!accErr && Array.isArray(accRows) && accRows.length > 0) {
+        const acc = accRows[0];
+        if (charNameRaw) {
+          const { data: charRows } = await supabaseClient
+            .from(charTable)
+            .select('name')
+            .eq('user_id', acc.user_id)
+            .lt('slot_index', 100);
+          if (Array.isArray(charRows) && charRows.length > 0) {
+            const matched = charRows.some(c => String(c.name || '').trim().toLowerCase() === charNameRaw.toLowerCase());
+            if (!matched) {
+              resetErrorMsg = `입력하신 캐릭터 이름('${charNameRaw}')이 해당 계정의 보유 캐릭터와 일치하지 않습니다. (비워두시면 이메일 기준으로 변경됩니다)`;
+            }
+          }
+        }
+
+        if (!resetErrorMsg) {
+          const parsedTok = parseAccountTokenString(acc.active_session_token);
+          const updatedToken = buildAccountTokenString(newPwHash, parsedTok.sessionToken || '');
+          const { error: upErr } = await supabaseClient
+            .from(accTable)
+            .update({
+              active_session_token: updatedToken,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', acc.user_id);
+
+          if (!upErr) {
+            resetSuccess = true;
+          } else {
+            resetErrorMsg = '수파베이스 비밀번호 업데이트 중 오류가 발생했습니다.';
+          }
+        }
+      } else if (!accErr) {
+        resetErrorMsg = '수파베이스에 등록되지 않은 이메일 계정입니다. [아이디 찾기] 또는 [회원가입]을 이용해주세요.';
+      }
+    } catch (e) {}
+  }
+
+  if (!resetSuccess) {
+    if (msgEl) {
+      msgEl.style.color = '#f87171';
+      msgEl.innerText = `⚠️ ${resetErrorMsg || '수파베이스 서버와 통신할 수 없습니다.'}`;
+    }
+    return;
+  }
+
+  if (msgEl) {
+    msgEl.style.color = '#4ade80';
+    msgEl.innerText = '✅ 새 비밀번호로 즉시 변경되었습니다!';
+  }
+
+  // 로그인 입력창에 변경된 이메일과 새 비밀번호 자동 입력
+  const loginEmailInp = document.getElementById('auth-email');
+  const loginPwInp = document.getElementById('auth-password');
+  if (loginEmailInp) loginEmailInp.value = emailRaw;
+  if (loginPwInp) loginPwInp.value = newPassword;
+  window.switchAuthMode('login');
+
+  setTimeout(() => {
+    window.closeAuthRecoveryModal();
+    const statusMsg = document.getElementById('auth-status-msg');
+    if (statusMsg) {
+      statusMsg.style.color = '#4ade80';
+      statusMsg.innerText = '✅ 비밀번호가 재설정되었습니다! 바로 [로그인] 버튼을 눌러 접속하세요.';
+    }
+  }, 550);
+};

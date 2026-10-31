@@ -185,6 +185,32 @@ window.saveSupabaseConfigFromUI = async function() {
 let isSupabaseOnlineVerified = false;
 window.isSupabaseOnlineVerified = false;
 
+let _supabaseRetryTimer = null;
+let _lastClientUrlKey = '';
+
+function createSafeSupabaseBrowserClient(url, key) {
+  if (!url || !key || !url.startsWith('http') || !window.supabase?.createClient) return null;
+  // 🌟 핵심 패치: sb_publishable_ 신규 키 사용 시 @supabase/supabase-js가 기본 첨부하는
+  // Authorization: Bearer sb_publishable_... 헤더를 제거해야 PostgREST 401(Invalid JWT) 오류가 발생하지 않음!
+  const customFetch = (input, init = {}) => {
+    const headers = new Headers(init.headers || {});
+    const authVal = headers.get('Authorization') || headers.get('authorization') || '';
+    if (authVal.includes('sb_publishable_') || !String(key).startsWith('eyJ')) {
+      headers.delete('Authorization');
+      headers.delete('authorization');
+    }
+    if (!headers.has('apikey') && key) {
+      headers.set('apikey', key);
+    }
+    init.headers = headers;
+    return fetch(input, init);
+  };
+  return window.supabase.createClient(url, key, {
+    auth: { persistSession: true, autoRefreshToken: Boolean(String(key).startsWith('eyJ')) },
+    global: { fetch: customFetch }
+  });
+}
+
 function setAuthButtonsOnlineState(isOnline, statusMessage = '') {
   const badge = document.getElementById('db-conn-badge');
   const submitBtn = document.getElementById('auth-action-btn');
@@ -203,18 +229,19 @@ function setAuthButtonsOnlineState(isOnline, statusMessage = '') {
     } else {
       badge.classList.remove('online');
       badge.classList.add('offline');
-      badge.title = '🔴 수파베이스(Supabase) 오프라인 — 온라인 상태에서만 로그인·회원가입 가능 (클릭 시 설정)';
+      badge.title = '🔴 수파베이스(Supabase) 재연결 대기 중 (클릭 시 설정)';
     }
   }
 
+  // 버튼을 disabled로 잠그지 않고 항상 클릭 가능하게 유지하여 클릭 즉시 재연결 시도 보장
   if (submitBtn) {
-    submitBtn.disabled = !isOnline;
-    submitBtn.style.opacity = isOnline ? '1' : '0.55';
-    submitBtn.style.cursor = isOnline ? 'pointer' : 'not-allowed';
+    submitBtn.disabled = false;
+    submitBtn.style.opacity = '1';
+    submitBtn.style.cursor = 'pointer';
   }
   if (checkBtn) {
-    checkBtn.disabled = !isOnline;
-    checkBtn.style.opacity = isOnline ? '1' : '0.55';
+    checkBtn.disabled = false;
+    checkBtn.style.opacity = '1';
   }
   if (statusMsg && statusMessage) {
     statusMsg.style.color = isOnline ? '#4ade80' : '#f87171';
@@ -224,65 +251,99 @@ function setAuthButtonsOnlineState(isOnline, statusMessage = '') {
   }
 }
 
+async function pingSupabaseDirectRest(url, key, table) {
+  if (!url || !key) return false;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const tid = controller ? setTimeout(() => controller.abort(), 3500) : null;
+  try {
+    const headers = { apikey: key };
+    if (String(key).startsWith('eyJ')) {
+      headers.Authorization = `Bearer ${key}`;
+    }
+    const res = await fetch(`${url}/rest/v1/${table}?select=*&limit=1`, {
+      method: 'GET',
+      headers,
+      signal: controller ? controller.signal : undefined
+    });
+    if (tid) clearTimeout(tid);
+    return res.ok;
+  } catch (e) {
+    if (tid) clearTimeout(tid);
+    return false;
+  }
+}
+
 async function initSupabaseConnection() {
-  const { url, key } = getEffectiveSupabaseCreds();
+  let { url, key } = getEffectiveSupabaseCreds();
   const badge = document.getElementById('db-conn-badge');
   const accTable = GameDB.SupabaseConfig?.tables?.accounts || 'magic_accounts';
 
-  // 체크 시작 시 황색(미확인) 상태에서는 로그인/회원가입 버튼 비활성화
-  if (badge) {
+  if (badge && !isSupabaseOnlineVerified) {
     badge.classList.remove('online', 'offline');
     badge.title = '🟡 수파베이스(Supabase) 온라인 접속 확인 중...';
   }
-  isSupabaseOnlineVerified = false;
-  window.isSupabaseOnlineVerified = false;
 
-  let clientReady = false;
-  if (url && key && url.startsWith('http') && key !== 'YOUR_SUPABASE_ANON_KEY' && window.supabase?.createClient) {
-    try {
-      if (!supabaseClient) {
-        supabaseClient = window.supabase.createClient(url, key, {
-          auth: { persistSession: true, autoRefreshToken: true }
-        });
+  if (url && key && url.startsWith('http') && key !== 'YOUR_SUPABASE_ANON_KEY') {
+    const sig = `${url}|${key}`;
+    if (!supabaseClient || _lastClientUrlKey !== sig) {
+      try {
+        supabaseClient = createSafeSupabaseBrowserClient(url, key);
+        _lastClientUrlKey = sig;
+      } catch (err) {
+        console.warn('[Supabase 초기화 오류]', err);
+        supabaseClient = null;
       }
-      clientReady = true;
-    } catch (err) {
-      console.warn('[Supabase 초기화 오류]', err);
-      supabaseClient = null;
     }
   }
 
-  // 1) 브라우저 -> Supabase 직접 실시간 쿼리 검증 (3.5초 타임아웃)
-  let directOnlineOk = false;
-  if (clientReady && supabaseClient) {
-    try {
-      const pingPromise = supabaseClient.from(accTable).select('user_id').limit(1);
-      const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ error: new Error('timeout') }), 3500));
-      const res = await Promise.race([pingPromise, timeoutPromise]);
-      if (res && !res.error) {
-        directOnlineOk = true;
-      }
-    } catch (e) {}
-  }
+  // 1) 브라우저 직접 REST 핑 & 2) 중앙 서버(/api/supabase/ping) 동시 병렬 확인
+  const [directRestOk, srvPing] = await Promise.all([
+    pingSupabaseDirectRest(url, key, accTable),
+    callCentralServerApi('/api/supabase/ping', 'GET')
+  ]);
 
-  // 2) 중앙 서버(/api/supabase/ping) 경유 Supabase 온라인 검증
-  let serverOnlineOk = false;
-  if (!directOnlineOk) {
-    const srvPing = await callCentralServerApi('/api/supabase/ping', 'GET');
-    if (srvPing && srvPing.ok && srvPing.online) {
-      serverOnlineOk = true;
+  let directOnlineOk = Boolean(directRestOk);
+  let serverOnlineOk = Boolean(srvPing && srvPing.ok && srvPing.online);
+
+  // 만약 localStorage에 잘못된 URL/Key가 저장되어 실패한 경우 기본 설정으로 자동 복구 후 재시도
+  if (!directOnlineOk && !serverOnlineOk) {
+    const hasCustomLocal = localStorage.getItem('MAGIC_SUPABASE_URL') || localStorage.getItem('MAGIC_SUPABASE_ANON_KEY');
+    if (hasCustomLocal) {
+      try {
+        localStorage.removeItem('MAGIC_SUPABASE_URL');
+        localStorage.removeItem('MAGIC_SUPABASE_ANON_KEY');
+      } catch (_) {}
+      const fallbackCreds = getEffectiveSupabaseCreds();
+      url = fallbackCreds.url;
+      key = fallbackCreds.key;
+      supabaseClient = createSafeSupabaseBrowserClient(url, key);
+      _lastClientUrlKey = `${url}|${key}`;
+      directOnlineOk = await pingSupabaseDirectRest(url, key, accTable);
     }
   }
 
   if (directOnlineOk || serverOnlineOk) {
-    isSupabaseRemoteConnected = directOnlineOk;
+    isSupabaseRemoteConnected = directOnlineOk || Boolean(supabaseClient);
     setAuthButtonsOnlineState(true, '');
+    if (_supabaseRetryTimer) {
+      clearInterval(_supabaseRetryTimer);
+      _supabaseRetryTimer = null;
+    }
     return true;
   }
 
-  // 오프라인 또는 황색(연결 실패) 상태 -> 로컬 미러 폴백 절대 금지! 로그인/회원가입 즉시 차단!
   isSupabaseRemoteConnected = false;
-  setAuthButtonsOnlineState(false, '⚠️ 수파베이스(Supabase) 온라인 연결 실패: 온라인(🟢) 상태에서만 로그인·회원가입이 가능합니다.');
+  setAuthButtonsOnlineState(false, '⚠️ 수파베이스 연결 재시도 중... 로그인 버튼을 누르면 즉시 재연결합니다.');
+  if (!_supabaseRetryTimer) {
+    _supabaseRetryTimer = setInterval(() => {
+      if (!isSupabaseOnlineVerified) {
+        initSupabaseConnection();
+      } else if (_supabaseRetryTimer) {
+        clearInterval(_supabaseRetryTimer);
+        _supabaseRetryTimer = null;
+      }
+    }, 3500);
+  }
   return false;
 }
 window.initSupabaseConnection = initSupabaseConnection;

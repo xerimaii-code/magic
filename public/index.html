@@ -47,10 +47,14 @@
                     <input type="password" id="auth-password-confirm" class="auth-input" placeholder="비밀번호 다시 입력" autocomplete="new-password">
                 </div>
 
-                <div id="remember-id-wrap" style="display:flex; align-items:center; justify-content:space-between; margin-top:2px;">
+                <div id="remember-id-wrap" style="display:flex; align-items:center; justify-content:space-between; margin-top:2px; flex-wrap:wrap; gap:4px;">
                     <label style="color:#cbd5e1; font-size: 11.5px; cursor: pointer; display:flex; align-items:center; gap:5px;">
-                        <input type="checkbox" id="auth-remember-id" checked onchange="window.onRememberEmailToggle && window.onRememberEmailToggle()" style="accent-color:#facc15; width:14px; height:14px;"> 이메일 아이디 기억하기
+                        <input type="checkbox" id="auth-remember-id" checked onchange="window.onRememberEmailToggle && window.onRememberEmailToggle()" style="accent-color:#facc15; width:14px; height:14px;"> 이메일 기억
                     </label>
+                    <div style="display:flex; gap:4px; align-items:center;">
+                        <button type="button" class="auth-sub-btn" style="padding:3px 7px; font-size:10.5px; color:#fde047; border-color:#854d0e;" onclick="openAuthRecoveryModal('id')">🔍 아이디 찾기</button>
+                        <button type="button" class="auth-sub-btn" style="padding:3px 7px; font-size:10.5px; color:#93c5fd; border-color:#1e40af;" onclick="openAuthRecoveryModal('pw')">🔑 비번 찾기/변경</button>
+                    </div>
                 </div>
 
                 <div id="auth-status-msg" style="font-size:11px; color:#fca5a5; text-align:center; min-height:16px;"></div>
@@ -161,6 +165,68 @@
         <div style="display:flex; gap:6px;">
             <button type="button" class="auth-sub-btn" style="flex:1;" onclick="toggleSupabaseConfigModal()">닫기</button>
             <button type="button" class="auth-primary-btn" style="flex:1;" onclick="saveSupabaseConfigFromUI()">💾 저장 및 연결</button>
+        </div>
+    </div>
+</div>
+
+<!-- 🔑 4-2. 아이디(이메일) 찾기 & 비밀번호 즉시 재설정 모달 -->
+<div id="auth-recovery-modal" class="modal flex-center" style="display: none; z-index: 9850;">
+    <div class="auth-card-box" style="max-width: 360px; text-align:left;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <h3 style="font-size:15px; font-weight:bold; color:#facc15; margin:0;">🔍 계정 아이디 · 비밀번호 찾기</h3>
+            <button type="button" class="auth-sub-btn" style="padding:2px 7px; font-size:11px;" onclick="closeAuthRecoveryModal()">✖</button>
+        </div>
+
+        <div class="auth-tabs" style="margin-bottom:10px;">
+            <button type="button" id="tab-rec-id-btn" class="auth-tab active" onclick="switchRecoveryTab('id')">🔍 아이디(이메일) 찾기</button>
+            <button type="button" id="tab-rec-pw-btn" class="auth-tab" onclick="switchRecoveryTab('pw')">🔑 비밀번호 재설정</button>
+        </div>
+
+        <!-- [탭 1] 아이디(이메일) 찾기 -->
+        <div id="recovery-id-panel" style="display:flex; flex-direction:column; gap:8px;">
+            <p style="font-size:11px; color:#9ca3af; line-height:1.4; margin:0;">
+                생성한 <b style="color:#fde047;">캐릭터 이름</b> 또는 기억나는 <b style="color:#93c5fd;">이메일 앞자리</b>를 입력하면 수파베이스 DB에서 가입된 이메일 계정을 찾아드립니다.
+            </p>
+            <div>
+                <label style="font-size:11px; color:#d1d5db; font-weight:bold; display:block; margin-bottom:3px;">캐릭터 이름 또는 이메일 일부</label>
+                <div style="display:flex; gap:5px;">
+                    <input type="text" id="recovery-find-query" class="auth-input" placeholder="예: 캐릭터명 또는 이메일 일부 입력" onkeydown="if(event.key==='Enter') executeFindAccountId()">
+                    <button type="button" class="auth-primary-btn" style="width:auto; padding:0 12px; font-size:11.5px; white-space:nowrap;" onclick="executeFindAccountId()">조회</button>
+                </div>
+            </div>
+            <div id="recovery-id-msg" style="font-size:11px; min-height:15px; color:#fca5a5;"></div>
+            <div id="recovery-id-results" style="max-height:165px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+            <div style="display:flex; gap:6px; margin-top:4px;">
+                <button type="button" class="auth-sub-btn" style="flex:1;" onclick="closeAuthRecoveryModal()">닫기</button>
+            </div>
+        </div>
+
+        <!-- [탭 2] 비밀번호 찾기 / 즉시 재설정 -->
+        <div id="recovery-pw-panel" style="display:none; flex-direction:column; gap:8px;">
+            <p style="font-size:11px; color:#9ca3af; line-height:1.4; margin:0;">
+                가입한 <b style="color:#fde047;">이메일 계정</b>과 새로 사용할 비밀번호를 입력하시면 수파베이스 DB에 즉시 새 비밀번호로 변경됩니다.
+            </p>
+            <div>
+                <label style="font-size:11px; color:#d1d5db; font-weight:bold; display:block; margin-bottom:3px;">가입한 이메일 계정</label>
+                <input type="email" id="recovery-pw-email" class="auth-input" placeholder="example@email.com">
+            </div>
+            <div>
+                <label style="font-size:11px; color:#d1d5db; font-weight:bold; display:block; margin-bottom:3px;">보유 캐릭터 이름 <span style="color:#9ca3af; font-weight:normal;">(선택 · 기억나지 않으면 비워두세요)</span></label>
+                <input type="text" id="recovery-pw-char" class="auth-input" placeholder="보유 캐릭터 이름 (생략 가능)">
+            </div>
+            <div>
+                <label style="font-size:11px; color:#d1d5db; font-weight:bold; display:block; margin-bottom:3px;">새 비밀번호 (6자리 이상)</label>
+                <input type="password" id="recovery-pw-new" class="auth-input" placeholder="새 비밀번호 입력 (6자리 이상)">
+            </div>
+            <div>
+                <label style="font-size:11px; color:#d1d5db; font-weight:bold; display:block; margin-bottom:3px;">새 비밀번호 확인</label>
+                <input type="password" id="recovery-pw-confirm" class="auth-input" placeholder="새 비밀번호 다시 입력" onkeydown="if(event.key==='Enter') executeResetAccountPassword()">
+            </div>
+            <div id="recovery-pw-msg" style="font-size:11px; min-height:15px; color:#fca5a5; text-align:center;"></div>
+            <div style="display:flex; gap:6px; margin-top:2px;">
+                <button type="button" class="auth-sub-btn" style="flex:0.7;" onclick="closeAuthRecoveryModal()">닫기</button>
+                <button type="button" class="auth-primary-btn" style="flex:1.3;" onclick="executeResetAccountPassword()">🔑 비밀번호 즉시 변경</button>
+            </div>
         </div>
     </div>
 </div>
