@@ -146,6 +146,12 @@ const {
   ensure50AICharactersSeeded,
   resetAndReseedAICharacters
 } = require('./seed_ai_50.js');
+const {
+  updateAgentState,
+  handleAgentLogout,
+  syncDirtyAgentsToSupabase,
+  startBatchSyncWorker
+} = require('./redis_sync_manager.js');
 
 try { require('dotenv').config(); } catch (_) {}
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
@@ -1040,8 +1046,10 @@ class AIAgentClient {
       case 'FORCE_CLIENT_SAVE':
       case 'SERVER_SHUTDOWN_NOTICE':
       case 'SERVER_REBOOT_COUNTDOWN': {
-        if (msg.type !== 'SERVER_REBOOT_COUNTDOWN' || msg.secondsLeft === 15 || msg.secondsLeft === 5 || msg.secondsLeft === 2) {
+        if (msg.type !== 'SERVER_REBOOT_COUNTDOWN' || msg.secondsLeft === 5 || msg.secondsLeft === 1) {
+          // 개별 에이전트가 수파베이스에 단건 요청을 폭주시키지 않고 Redis에만 즉시 반영 후 전역 배치 1회 호출
           this.saveToSupabase(false);
+          scheduleGlobalEmergencyBatchFlush(msg.type);
         }
         break;
       }
@@ -1233,13 +1241,21 @@ class AIAgentClient {
       if (this.rejectedTargets.size > 30) this.rejectedTargets.clear();
     }
 
-    // 4) 주기적 Supabase 저장 (60초 주기 + 변경사항 있을 때만 분산 저장하여 네트워크/CPU 스파이크 방지)
-    if (now - this.lastSupabaseSyncTime >= 60000) {
-      this.lastSupabaseSyncTime = now + ((this.slotIndex * 131) % 15000);
-      if (this._isDirty) {
-        this._isDirty = false;
-        this.saveToSupabase(false);
-      }
+    // 4) 실시간 상태 업데이트 (Redis 전용 - Supabase 직접 호출 0회!)
+    //    이동(x, y), 체력(hp, mp), 경험치/인벤토리 변경 시 Redis(agent_state:{id}, dirty_agents)에만 가볍게 기록하고,
+    //    실제 Supabase 저장은 백그라운드 배치 워커(startBatchSyncWorker)가 주기적 Bulk Upsert 1회로 처리합니다.
+    const posMoved = Math.abs(Math.round(this.x) - (this._lastRedisX ?? Math.round(this.x))) >= 15 ||
+                     Math.abs(Math.round(this.y) - (this._lastRedisY ?? Math.round(this.y))) >= 15;
+    const vitalsChanged = Math.abs(Math.round(this.hp) - (this._lastRedisHp ?? Math.round(this.hp))) >= 20 ||
+                          Math.abs(Math.round(this.mp) - (this._lastRedisMp ?? Math.round(this.mp))) >= 20;
+    if ((this._isDirty || posMoved || vitalsChanged) && (now - this.lastSupabaseSyncTime >= 2500)) {
+      this.lastSupabaseSyncTime = now + ((this.slotIndex * 53) % 1000);
+      this._isDirty = false;
+      this._lastRedisX = Math.round(this.x);
+      this._lastRedisY = Math.round(this.y);
+      this._lastRedisHp = Math.round(this.hp);
+      this._lastRedisMp = Math.round(this.mp);
+      this.saveToSupabase(false);
     }
 
     // 5) CPU 점유율(65% 캡) 연동 적응형 의사결정 주기 (평시 350ms, 부하 52%+ 시 460ms, 60%+ 시 580ms)
@@ -3176,8 +3192,8 @@ ${situationContext}
     }, 1500);
   }
 
-  async saveToSupabase(isLogout = false) {
-    const updatedRecord = {
+  buildCharacterRecord(isLogout = false) {
+    return {
       id: this.charId,
       user_id: this.userId,
       slot_index: this.slotIndex,
@@ -3209,14 +3225,26 @@ ${situationContext}
       },
       updated_at: new Date().toISOString()
     };
+  }
+
+  /**
+   * [DB I/O 최적화]
+   * - 평시(isLogout === false): Supabase에 직접 API를 호출하지 않고,
+   *   Redis에 JSON 상태 저장(SET agent_state:{id}) 및 저장 대상 등록(SADD dirty_agents {id})만 수행합니다.
+   * - 로그아웃(isLogout === true): 세션 종료 예외 처리로 즉시 Supabase에 반영 후 SREM 처리합니다.
+   */
+  async saveToSupabase(isLogout = false) {
+    const updatedRecord = this.buildCharacterRecord(isLogout);
 
     this.dbRow = updatedRecord;
     const memIdx = allAiDbRecords.findIndex(r => r.id === this.charId);
     if (memIdx > -1) allAiDbRecords[memIdx] = updatedRecord;
 
-    try {
-      await supabaseRest('magic_characters?on_conflict=id', 'POST', updatedRecord, 'resolution=merge-duplicates,return=minimal');
-    } catch (e) {}
+    if (isLogout) {
+      await handleAgentLogout(this.charId, updatedRecord);
+    } else {
+      await updateAgentState(this.charId, updatedRecord);
+    }
   }
 
   async logout(skipDbSave = false) {
@@ -3435,10 +3463,22 @@ function connectRunnerControlSocket() {
   controlWs.on('error', () => {});
 }
 
+let emergencyFlushTimer = null;
+function scheduleGlobalEmergencyBatchFlush(reason = 'server_signal') {
+  if (emergencyFlushTimer) return;
+  emergencyFlushTimer = setTimeout(async () => {
+    emergencyFlushTimer = null;
+    await syncDirtyAgentsToSupabase(reason);
+  }, 300);
+}
+
 let runnerStarted = false;
 async function startAIAgentRunner() {
   if (runnerStarted) return;
   runnerStarted = true;
+
+  // 백그라운드 Redis -> Supabase 일괄 배치 동기화 워커 가동 (기본 3분 주기)
+  startBatchSyncWorker();
 
   await initGroqModel();
   allAiDbRecords = await ensure50AICharactersSeeded(AI_TOTAL_POOL);
@@ -3446,7 +3486,7 @@ async function startAIAgentRunner() {
 
   connectRunnerControlSocket();
 
-  console.log(`🤖 [AI Agent Runner 가동] ${AI_ACCOUNT_EMAIL} 총 ${allAiDbRecords.length}명 풀(슬롯 ${AI_SLOT_START}~${AI_SLOT_START + allAiDbRecords.length - 1}) 중 동시접속 ${maxConcurrentAI}명 상시 유지 로테이션 가동! (파티 정원: ${MAX_PARTY_MEMBERS}명)`);
+  console.log(`🤖 [AI Agent Runner 가동] ${AI_ACCOUNT_EMAIL} 총 ${allAiDbRecords.length}명 풀(슬롯 ${AI_SLOT_START}~${AI_SLOT_START + allAiDbRecords.length - 1}) 중 동시접속 ${maxConcurrentAI}명 상시 유지 로테이션 가동! (파티 정원: ${MAX_PARTY_MEMBERS}명, Redis Lazy Sync 활성화)`);
   await manageAgentRotation();
   setInterval(manageAgentRotation, 5000);
 }

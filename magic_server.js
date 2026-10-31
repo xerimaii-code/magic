@@ -15,6 +15,13 @@ const path = require('path');
 const crypto = require('crypto');
 const vm = require('vm');
 const { exec, spawn } = require('child_process');
+const {
+  updateAgentState,
+  getMultipleAgentStates,
+  handleAgentLogout,
+  syncDirtyAgentsToSupabase,
+  startBatchSyncWorker
+} = require('./redis_sync_manager.js');
 
 // ============================================================================
 // 1. 환경변수(.env) 로드 및 서버 기본 설정
@@ -188,15 +195,18 @@ function parseAccountTokenString(tokenStr) {
   return { pwHash: parts[0].slice(3) || null, sessionToken: parts[1] || null };
 }
 
-async function supabaseRest(table, method = 'GET', query = '', bodyObj = null, conflictCol = null) {
+async function supabaseRest(table, method = 'GET', query = '', bodyObj = null, conflictCol = null, returnMinimal = null) {
   if (!SUPABASE_URL || !SUPABASE_KEY || typeof fetch === 'undefined') return null;
   try {
     const conflictParam = conflictCol ? `${query ? '&' : '?'}on_conflict=${conflictCol}` : '';
     const url = `${SUPABASE_URL}/rest/v1/${table}${query}${conflictParam}`;
+    const useMinimal = returnMinimal !== null ? returnMinimal : (method !== 'GET');
     const headers = {
       'Content-Type': 'application/json',
       'apikey': SUPABASE_KEY,
-      'Prefer': 'return=representation,resolution=merge-duplicates'
+      'Prefer': useMinimal
+        ? 'return=minimal,resolution=merge-duplicates'
+        : 'return=representation,resolution=merge-duplicates'
     };
     // Supabase 신규 sb_publishable_ 키는 apikey 헤더로만 전달 (Bearer 토큰 사용 금지)
     if (SUPABASE_KEY.startsWith('eyJ')) {
@@ -213,8 +223,10 @@ async function supabaseRest(table, method = 'GET', query = '', bodyObj = null, c
       return null;
     }
     const text = await res.text();
-    console.log(`[Supabase ${table}] ${method} 성공! (데이터가 수파베이스에 정상 저장/조회됨)`);
-    return text ? JSON.parse(text) : null;
+    if (!text) {
+      return method === 'GET' ? [] : (bodyObj ? [bodyObj] : true);
+    }
+    return JSON.parse(text);
   } catch (e) {
     console.error(`[Supabase ${table}] 네트워크 통신 오류:`, e.message);
     return null;
@@ -1856,6 +1868,7 @@ function triggerAdminServerReboot(adminName = '운영자', reasonLabel = '서버
     });
     broadcastToAll({ type: 'FORCE_CLIENT_SAVE' });
     broadcastToAll({ type: 'SERVER_SHUTDOWN_NOTICE' });
+    syncDirtyAgentsToSupabase('server_reboot_flush').catch(() => {});
 
     setTimeout(() => {
       exec('pm2 reload ecosystem.config.js || pm2 restart magic-game-server magic-ai-runner', (err) => {
@@ -4809,10 +4822,13 @@ function handleClientWsPacket(conn, msg) {
     return;
   }
 
-  // [10] 캐릭터 접속 종료
+  // [10] 캐릭터 접속 종료 (유저 로그아웃 시 Redis 지연 동기화 상태 즉시 Supabase 저장)
   if (msg.type === 'LEAVE_CHAR' && msg.charId) {
     const entry = activeCharSockets.get(msg.charId);
     if (entry) {
+      if (!isAIEntry(entry)) {
+        handleAgentLogout(msg.charId).catch(() => {});
+      }
       clearEntryMobileBgTimers(entry);
       const mk = entry.mapKey;
       removeCharFromParty(msg.charId, 'disconnect');
@@ -4832,6 +4848,9 @@ function removeDisconnectedConn(conn) {
   if (conn && conn.charId) {
     const entry = activeCharSockets.get(conn.charId);
     if (entry && entry.conn === conn) {
+      if (!isAIEntry(entry)) {
+        handleAgentLogout(conn.charId).catch(() => {});
+      }
       const mk = entry.mapKey;
       removeCharFromParty(conn.charId, 'disconnect');
       activeCharSockets.delete(conn.charId);
@@ -5656,17 +5675,23 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true });
   }
 
-  // [API 5] 캐릭터 슬롯 목록 조회 (수파베이스 필수 조회 + 현재 접속 중인 캐릭터 온라인 상태 표시)
+  // [API 5] 캐릭터 슬롯 목록 조회 (수파베이스 조회 + Redis 최신 지연 동기화 캐시 병합)
   if (pathname.startsWith('/api/characters/') && req.method === 'GET') {
     const userId = pathname.replace('/api/characters/', '').trim();
     const remoteChars = await supabaseRest('magic_characters', 'GET', `?user_id=eq.${encodeURIComponent(userId)}&slot_index=lt.100&order=slot_index.asc`);
     if (remoteChars === null) {
       return sendJson(res, 500, { ok: false, error: '수파베이스 캐릭터 조회에 실패했습니다.', characters: [] });
     }
-    const annotated = (Array.isArray(remoteChars) ? remoteChars : []).map(c => ({
-      ...c,
-      isOnline: Boolean(c && c.id && activeCharSockets.has(c.id))
-    }));
+    const charList = Array.isArray(remoteChars) ? remoteChars : [];
+    const redisMap = await getMultipleAgentStates(charList.map(c => c?.id).filter(Boolean));
+    const annotated = charList.map(c => {
+      const cached = c && c.id ? redisMap.get(String(c.id)) : null;
+      const merged = cached ? { ...c, ...cached } : c;
+      return {
+        ...merged,
+        isOnline: Boolean(c && c.id && activeCharSockets.has(c.id))
+      };
+    });
     return sendJson(res, 200, { ok: true, characters: annotated });
   }
 
@@ -5750,27 +5775,36 @@ const server = http.createServer(async (req, res) => {
           }
         }
       }
-      const saveRes = await supabaseRest('magic_characters', 'POST', '', charPayload, 'id');
-      if (!saveRes) {
-        return sendJson(res, 500, { ok: false, error: '수파베이스 캐릭터 저장 실패' });
+      if (isNewCreate) {
+        const saveRes = await supabaseRest('magic_characters', 'POST', '', charPayload, 'id');
+        if (!saveRes) {
+          return sendJson(res, 500, { ok: false, error: '수파베이스 캐릭터 저장 실패' });
+        }
+        await updateAgentState(charPayload.id, charPayload);
+        return sendJson(res, 200, { ok: true, character: Array.isArray(saveRes) ? saveRes[0] : charPayload });
       }
-      return sendJson(res, 200, { ok: true, character: Array.isArray(saveRes) ? saveRes[0] : charPayload });
+      // 기존 캐릭터의 주기적 상태 저장은 Redis(SET agent_state:{id} + SADD dirty_agents {id})로만 즉시 처리하여 디스크 I/O 절감
+      await updateAgentState(charPayload.id, charPayload);
+      return sendJson(res, 200, { ok: true, lazySynced: true, character: charPayload });
     }
     return sendJson(res, 400, { ok: false, error: '잘못된 캐릭터 데이터입니다.' });
   }
 
-  // [G-2] 모바일 백그라운드(5초 경과) 또는 캐릭터 선택창 복귀 시 유령 캐릭터 즉시 제거 API
+  // [G-2] 모바일 백그라운드(5초 경과) 또는 캐릭터 선택창 복귀 시 유령 캐릭터 즉시 제거 & Redis 상태 즉시 DB 저장
   if (pathname === '/api/characters/leave' && req.method === 'POST') {
     const body = await readJsonBody(req);
     const leaveCharId = body?.charId || body?.id;
-    if (leaveCharId && activeCharSockets.has(leaveCharId)) {
-      const entry = activeCharSockets.get(leaveCharId);
-      clearEntryMobileBgTimers(entry);
-      const mk = entry?.mapKey;
-      removeCharFromParty(leaveCharId, 'disconnect');
-      activeCharSockets.delete(leaveCharId);
-      if (mk) {
-        broadcastToMap(mk, { type: 'PLAYER_LEFT_MAP', charId: leaveCharId });
+    if (leaveCharId) {
+      handleAgentLogout(leaveCharId).catch(() => {});
+      if (activeCharSockets.has(leaveCharId)) {
+        const entry = activeCharSockets.get(leaveCharId);
+        clearEntryMobileBgTimers(entry);
+        const mk = entry?.mapKey;
+        removeCharFromParty(leaveCharId, 'disconnect');
+        activeCharSockets.delete(leaveCharId);
+        if (mk) {
+          broadcastToMap(mk, { type: 'PLAYER_LEFT_MAP', charId: leaveCharId });
+        }
       }
     }
     return sendJson(res, 200, { ok: true });
@@ -5995,6 +6029,7 @@ setInterval(() => {
 }, 3000);
 
 server.listen(PORT, '0.0.0.0', () => {
+  startBatchSyncWorker();
   console.log(`==============================================================`);
   console.log(`🚀 [Age of Magic] 수파베이스 단독 기준 서버 가동 완료!`);
   console.log(`🌐 접속 주소  : http://0.0.0.0:${PORT}`);
