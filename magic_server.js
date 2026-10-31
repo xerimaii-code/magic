@@ -15,13 +15,6 @@ const path = require('path');
 const crypto = require('crypto');
 const vm = require('vm');
 const { exec, spawn } = require('child_process');
-const {
-  updateAgentState,
-  getMultipleAgentStates,
-  handleAgentLogout,
-  syncDirtyAgentsToSupabase,
-  startBatchSyncWorker
-} = require('./redis_sync_manager.js');
 
 // ============================================================================
 // 1. 환경변수(.env) 로드 및 서버 기본 설정
@@ -195,18 +188,15 @@ function parseAccountTokenString(tokenStr) {
   return { pwHash: parts[0].slice(3) || null, sessionToken: parts[1] || null };
 }
 
-async function supabaseRest(table, method = 'GET', query = '', bodyObj = null, conflictCol = null, returnMinimal = null) {
+async function supabaseRest(table, method = 'GET', query = '', bodyObj = null, conflictCol = null) {
   if (!SUPABASE_URL || !SUPABASE_KEY || typeof fetch === 'undefined') return null;
   try {
     const conflictParam = conflictCol ? `${query ? '&' : '?'}on_conflict=${conflictCol}` : '';
     const url = `${SUPABASE_URL}/rest/v1/${table}${query}${conflictParam}`;
-    const useMinimal = returnMinimal !== null ? returnMinimal : (method !== 'GET');
     const headers = {
       'Content-Type': 'application/json',
       'apikey': SUPABASE_KEY,
-      'Prefer': useMinimal
-        ? 'return=minimal,resolution=merge-duplicates'
-        : 'return=representation,resolution=merge-duplicates'
+      'Prefer': 'return=representation,resolution=merge-duplicates'
     };
     // Supabase 신규 sb_publishable_ 키는 apikey 헤더로만 전달 (Bearer 토큰 사용 금지)
     if (SUPABASE_KEY.startsWith('eyJ')) {
@@ -223,10 +213,8 @@ async function supabaseRest(table, method = 'GET', query = '', bodyObj = null, c
       return null;
     }
     const text = await res.text();
-    if (!text) {
-      return method === 'GET' ? [] : (bodyObj ? [bodyObj] : true);
-    }
-    return JSON.parse(text);
+    console.log(`[Supabase ${table}] ${method} 성공! (데이터가 수파베이스에 정상 저장/조회됨)`);
+    return text ? JSON.parse(text) : null;
   } catch (e) {
     console.error(`[Supabase ${table}] 네트워크 통신 오류:`, e.message);
     return null;
@@ -1868,7 +1856,6 @@ function triggerAdminServerReboot(adminName = '운영자', reasonLabel = '서버
     });
     broadcastToAll({ type: 'FORCE_CLIENT_SAVE' });
     broadcastToAll({ type: 'SERVER_SHUTDOWN_NOTICE' });
-    syncDirtyAgentsToSupabase('server_reboot_flush').catch(() => {});
 
     setTimeout(() => {
       exec('pm2 reload ecosystem.config.js || pm2 restart magic-game-server magic-ai-runner', (err) => {
@@ -4822,13 +4809,10 @@ function handleClientWsPacket(conn, msg) {
     return;
   }
 
-  // [10] 캐릭터 접속 종료 (유저 로그아웃 시 Redis 지연 동기화 상태 즉시 Supabase 저장)
+  // [10] 캐릭터 접속 종료
   if (msg.type === 'LEAVE_CHAR' && msg.charId) {
     const entry = activeCharSockets.get(msg.charId);
     if (entry) {
-      if (!isAIEntry(entry)) {
-        handleAgentLogout(msg.charId).catch(() => {});
-      }
       clearEntryMobileBgTimers(entry);
       const mk = entry.mapKey;
       removeCharFromParty(msg.charId, 'disconnect');
@@ -4848,9 +4832,6 @@ function removeDisconnectedConn(conn) {
   if (conn && conn.charId) {
     const entry = activeCharSockets.get(conn.charId);
     if (entry && entry.conn === conn) {
-      if (!isAIEntry(entry)) {
-        handleAgentLogout(conn.charId).catch(() => {});
-      }
       const mk = entry.mapKey;
       removeCharFromParty(conn.charId, 'disconnect');
       activeCharSockets.delete(conn.charId);
@@ -5571,7 +5552,7 @@ const server = http.createServer(async (req, res) => {
 
   // [API 0] 수파베이스 실시간 온라인 연결 가능 여부 핑 체크 (온리 온라인 로그인/회원가입 검증용)
   if (pathname === '/api/supabase/ping' && (req.method === 'GET' || req.method === 'POST')) {
-    const pingRows = await supabaseRest('magic_accounts', 'GET', '?select=user_id&limit=1');
+    const pingRows = await supabaseRest('magic_accounts', 'GET', '?select=*&limit=1');
     if (pingRows === null) {
       return sendJson(res, 503, { ok: false, online: false, error: '수파베이스 DB에 온라인 연결할 수 없습니다.' });
     }
@@ -5633,6 +5614,7 @@ const server = http.createServer(async (req, res) => {
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
     const pwHash = body.pw_hash || encodePasswordHash(email, password);
+    const legacyB64 = Buffer.from(password, 'utf8').toString('base64');
 
     const remoteRows = await supabaseRest('magic_accounts', 'GET', `?email=ilike.${encodeURIComponent(email)}&limit=1`);
     if (remoteRows === null) {
@@ -5647,12 +5629,142 @@ const server = http.createServer(async (req, res) => {
     if (parsed.pwHash) {
       const storedPrefix = String(parsed.pwHash).split('_')[0];
       const inputPrefix = String(pwHash).split('_')[0];
-      const isMatch = parsed.pwHash === pwHash || (storedPrefix && storedPrefix.length >= 16 && storedPrefix === inputPrefix);
+      const isMatch =
+        parsed.pwHash === pwHash ||
+        parsed.pwHash === legacyB64 ||
+        parsed.pwHash === password ||
+        (storedPrefix && storedPrefix.length >= 16 && storedPrefix === inputPrefix);
       if (!isMatch) {
         return sendJson(res, 200, { ok: false, error: '비밀번호가 일치하지 않습니다.' });
       }
+    } else if (password && password.length >= 6) {
+      // 초기 시딩 계정 등 active_session_token에 비밀번호 해시가 없던 계정은 첫 로그인 비밀번호로 자동 세팅
+      const tokenStr = buildAccountTokenString(pwHash, parsed.sessionToken || '');
+      await supabaseRest('magic_accounts', 'POST', '', {
+        user_id: r.user_id,
+        email: r.email.toLowerCase(),
+        active_session_token: tokenStr,
+        updated_at: new Date().toISOString()
+      }, 'user_id');
     }
     return sendJson(res, 200, { ok: true, user: { id: r.user_id, email: r.email.toLowerCase() } });
+  }
+
+  // [API 3-1] 아이디(이메일) 찾기: 캐릭터 이름 또는 이메일 일부로 가입된 계정 조회
+  if (pathname === '/api/auth/find-id' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const q = String(body.query || '').trim();
+    if (q.length < 2) {
+      return sendJson(res, 400, { ok: false, error: '검색어를 2글자 이상 입력해주세요.' });
+    }
+
+    const accountMap = new Map();
+
+    // 1) 일반 유저 캐릭터 이름(slot_index < 100)으로 검색
+    const charRows = await supabaseRest(
+      'magic_characters',
+      'GET',
+      `?slot_index=lt.100&name=ilike.*${encodeURIComponent(q)}*&select=id,user_id,name,class,level,slot_index&limit=15`
+    );
+    if (Array.isArray(charRows) && charRows.length > 0) {
+      for (const ch of charRows) {
+        if (!ch || !ch.user_id) continue;
+        if (!accountMap.has(ch.user_id)) {
+          const accRows = await supabaseRest('magic_accounts', 'GET', `?user_id=eq.${encodeURIComponent(ch.user_id)}&select=user_id,email&limit=1`);
+          if (Array.isArray(accRows) && accRows.length > 0) {
+            accountMap.set(ch.user_id, {
+              user_id: ch.user_id,
+              email: accRows[0].email,
+              characters: []
+            });
+          }
+        }
+        const entry = accountMap.get(ch.user_id);
+        if (entry) {
+          entry.characters.push({ name: ch.name, class: ch.class, level: ch.level });
+        }
+      }
+    }
+
+    // 2) 이메일 일부로 검색
+    const emailRows = await supabaseRest(
+      'magic_accounts',
+      'GET',
+      `?email=ilike.*${encodeURIComponent(q)}*&select=user_id,email&limit=15`
+    );
+    if (Array.isArray(emailRows)) {
+      for (const acc of emailRows) {
+        if (!acc || !acc.user_id) continue;
+        if (!accountMap.has(acc.user_id)) {
+          const cRows = await supabaseRest(
+            'magic_characters',
+            'GET',
+            `?user_id=eq.${encodeURIComponent(acc.user_id)}&slot_index=lt.100&select=name,class,level&order=slot_index.asc`
+          );
+          accountMap.set(acc.user_id, {
+            user_id: acc.user_id,
+            email: acc.email,
+            characters: Array.isArray(cRows) ? cRows : []
+          });
+        }
+      }
+    }
+
+    return sendJson(res, 200, { ok: true, results: Array.from(accountMap.values()) });
+  }
+
+  // [API 3-2] 비밀번호 찾기 / 즉시 재설정
+  if (pathname === '/api/auth/reset-password' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const email = String(body.email || '').trim().toLowerCase();
+    const charName = String(body.charName || '').trim();
+    const newPassword = String(body.newPassword || '');
+    if (!email || newPassword.length < 6) {
+      return sendJson(res, 400, { ok: false, error: '이메일과 6자리 이상의 새 비밀번호를 입력해주세요.' });
+    }
+
+    const remoteRows = await supabaseRest('magic_accounts', 'GET', `?email=ilike.${encodeURIComponent(email)}&limit=1`);
+    if (remoteRows === null) {
+      return sendJson(res, 500, { ok: false, error: '수파베이스 DB 서버에 연결할 수 없습니다.' });
+    }
+    if (!Array.isArray(remoteRows) || remoteRows.length === 0) {
+      return sendJson(res, 200, { ok: false, error: '수파베이스에 등록되지 않은 이메일 계정입니다.' });
+    }
+
+    const acc = remoteRows[0];
+    if (charName) {
+      const charRows = await supabaseRest(
+        'magic_characters',
+        'GET',
+        `?user_id=eq.${encodeURIComponent(acc.user_id)}&slot_index=lt.100&select=name`
+      );
+      if (Array.isArray(charRows) && charRows.length > 0) {
+        const matched = charRows.some(c => String(c.name || '').trim().toLowerCase() === charName.toLowerCase());
+        if (!matched) {
+          return sendJson(res, 200, {
+            ok: false,
+            error: `입력하신 캐릭터 이름('${charName}')이 해당 계정의 보유 캐릭터와 일치하지 않습니다.`
+          });
+        }
+      }
+    }
+
+    const pwHash = body.pw_hash || encodePasswordHash(email, newPassword);
+    const parsed = parseAccountTokenString(acc.active_session_token);
+    const newTokenStr = buildAccountTokenString(pwHash, parsed.sessionToken || '');
+    const updatedRecord = {
+      user_id: acc.user_id,
+      email: acc.email.toLowerCase(),
+      active_session_token: newTokenStr,
+      updated_at: new Date().toISOString()
+    };
+
+    const saveRes = await supabaseRest('magic_accounts', 'POST', '', updatedRecord, 'user_id');
+    if (!saveRes) {
+      return sendJson(res, 500, { ok: false, error: '수파베이스 비밀번호 업데이트에 실패했습니다.' });
+    }
+
+    return sendJson(res, 200, { ok: true, user: { id: acc.user_id, email: acc.email.toLowerCase() } });
   }
 
   // [API 4] 계정 동기화 (수파베이스)
@@ -5675,23 +5787,17 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true });
   }
 
-  // [API 5] 캐릭터 슬롯 목록 조회 (수파베이스 조회 + Redis 최신 지연 동기화 캐시 병합)
+  // [API 5] 캐릭터 슬롯 목록 조회 (수파베이스 필수 조회 + 현재 접속 중인 캐릭터 온라인 상태 표시)
   if (pathname.startsWith('/api/characters/') && req.method === 'GET') {
     const userId = pathname.replace('/api/characters/', '').trim();
     const remoteChars = await supabaseRest('magic_characters', 'GET', `?user_id=eq.${encodeURIComponent(userId)}&slot_index=lt.100&order=slot_index.asc`);
     if (remoteChars === null) {
       return sendJson(res, 500, { ok: false, error: '수파베이스 캐릭터 조회에 실패했습니다.', characters: [] });
     }
-    const charList = Array.isArray(remoteChars) ? remoteChars : [];
-    const redisMap = await getMultipleAgentStates(charList.map(c => c?.id).filter(Boolean));
-    const annotated = charList.map(c => {
-      const cached = c && c.id ? redisMap.get(String(c.id)) : null;
-      const merged = cached ? { ...c, ...cached } : c;
-      return {
-        ...merged,
-        isOnline: Boolean(c && c.id && activeCharSockets.has(c.id))
-      };
-    });
+    const annotated = (Array.isArray(remoteChars) ? remoteChars : []).map(c => ({
+      ...c,
+      isOnline: Boolean(c && c.id && activeCharSockets.has(c.id))
+    }));
     return sendJson(res, 200, { ok: true, characters: annotated });
   }
 
@@ -5775,36 +5881,27 @@ const server = http.createServer(async (req, res) => {
           }
         }
       }
-      if (isNewCreate) {
-        const saveRes = await supabaseRest('magic_characters', 'POST', '', charPayload, 'id');
-        if (!saveRes) {
-          return sendJson(res, 500, { ok: false, error: '수파베이스 캐릭터 저장 실패' });
-        }
-        await updateAgentState(charPayload.id, charPayload);
-        return sendJson(res, 200, { ok: true, character: Array.isArray(saveRes) ? saveRes[0] : charPayload });
+      const saveRes = await supabaseRest('magic_characters', 'POST', '', charPayload, 'id');
+      if (!saveRes) {
+        return sendJson(res, 500, { ok: false, error: '수파베이스 캐릭터 저장 실패' });
       }
-      // 기존 캐릭터의 주기적 상태 저장은 Redis(SET agent_state:{id} + SADD dirty_agents {id})로만 즉시 처리하여 디스크 I/O 절감
-      await updateAgentState(charPayload.id, charPayload);
-      return sendJson(res, 200, { ok: true, lazySynced: true, character: charPayload });
+      return sendJson(res, 200, { ok: true, character: Array.isArray(saveRes) ? saveRes[0] : charPayload });
     }
     return sendJson(res, 400, { ok: false, error: '잘못된 캐릭터 데이터입니다.' });
   }
 
-  // [G-2] 모바일 백그라운드(5초 경과) 또는 캐릭터 선택창 복귀 시 유령 캐릭터 즉시 제거 & Redis 상태 즉시 DB 저장
+  // [G-2] 모바일 백그라운드(5초 경과) 또는 캐릭터 선택창 복귀 시 유령 캐릭터 즉시 제거 API
   if (pathname === '/api/characters/leave' && req.method === 'POST') {
     const body = await readJsonBody(req);
     const leaveCharId = body?.charId || body?.id;
-    if (leaveCharId) {
-      handleAgentLogout(leaveCharId).catch(() => {});
-      if (activeCharSockets.has(leaveCharId)) {
-        const entry = activeCharSockets.get(leaveCharId);
-        clearEntryMobileBgTimers(entry);
-        const mk = entry?.mapKey;
-        removeCharFromParty(leaveCharId, 'disconnect');
-        activeCharSockets.delete(leaveCharId);
-        if (mk) {
-          broadcastToMap(mk, { type: 'PLAYER_LEFT_MAP', charId: leaveCharId });
-        }
+    if (leaveCharId && activeCharSockets.has(leaveCharId)) {
+      const entry = activeCharSockets.get(leaveCharId);
+      clearEntryMobileBgTimers(entry);
+      const mk = entry?.mapKey;
+      removeCharFromParty(leaveCharId, 'disconnect');
+      activeCharSockets.delete(leaveCharId);
+      if (mk) {
+        broadcastToMap(mk, { type: 'PLAYER_LEFT_MAP', charId: leaveCharId });
       }
     }
     return sendJson(res, 200, { ok: true });
@@ -6029,7 +6126,6 @@ setInterval(() => {
 }, 3000);
 
 server.listen(PORT, '0.0.0.0', () => {
-  startBatchSyncWorker();
   console.log(`==============================================================`);
   console.log(`🚀 [Age of Magic] 수파베이스 단독 기준 서버 가동 완료!`);
   console.log(`🌐 접속 주소  : http://0.0.0.0:${PORT}`);

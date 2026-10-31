@@ -146,12 +146,51 @@ const {
   ensure50AICharactersSeeded,
   resetAndReseedAICharacters
 } = require('./seed_ai_50.js');
-const {
-  updateAgentState,
-  handleAgentLogout,
-  syncDirtyAgentsToSupabase,
-  startBatchSyncWorker
-} = require('./redis_sync_manager.js');
+// ─── 내장 폴백 지원하는 Redis Lazy Sync & Bulk Upsert 로더 (단독 파일 실행 시에도 모듈 에러 0%) ───
+let updateAgentState, handleAgentLogout, syncDirtyAgentsToSupabase, startBatchSyncWorker;
+try {
+  ({
+    updateAgentState,
+    handleAgentLogout,
+    syncDirtyAgentsToSupabase,
+    startBatchSyncWorker
+  } = require('./redis_sync_manager.js'));
+} catch (_) {
+  const _dirtySet = new Set();
+  const _stateMap = new Map();
+  let _batchTimer = null;
+  updateAgentState = async (id, state) => {
+    if (!id || !state) return;
+    _stateMap.set(String(id), state);
+    _dirtySet.add(String(id));
+  };
+  syncDirtyAgentsToSupabase = async () => {
+    if (_dirtySet.size === 0) return;
+    const ids = Array.from(_dirtySet);
+    const batch = ids.map(id => _stateMap.get(id)).filter(Boolean);
+    if (batch.length === 0) return;
+    try {
+      await supabaseRest('magic_characters?on_conflict=id', 'POST', batch, 'resolution=merge-duplicates,return=minimal');
+      ids.forEach(id => _dirtySet.delete(id));
+    } catch (e) {}
+  };
+  handleAgentLogout = async (id, state) => {
+    if (state) _stateMap.set(String(id), { ...state, session_token: null });
+    const rec = _stateMap.get(String(id));
+    if (!rec) return;
+    try {
+      await supabaseRest('magic_characters?on_conflict=id', 'POST', [rec], 'resolution=merge-duplicates,return=minimal');
+      _dirtySet.delete(String(id));
+    } catch (e) {
+      _dirtySet.add(String(id));
+    }
+  };
+  startBatchSyncWorker = (ms = 180000) => {
+    if (_batchTimer) return _batchTimer;
+    _batchTimer = setInterval(() => syncDirtyAgentsToSupabase(), ms);
+    return _batchTimer;
+  };
+}
 
 try { require('dotenv').config(); } catch (_) {}
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
