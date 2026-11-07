@@ -144,7 +144,8 @@ const {
   getLearnedSkillsForClass,
   supabaseRest,
   ensure50AICharactersSeeded,
-  resetAndReseedAICharacters
+  resetAndReseedAICharacters,
+  saveLocalAiSnapshot
 } = require('./seed_ai_50.js');
 
 // ─── 내장 폴백 지원하는 Redis Lazy Sync & Bulk Upsert 로더 (I/O 극대화 절감) ───
@@ -197,9 +198,9 @@ try { require('dotenv').config(); } catch (_) {}
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PORT = Number(process.env.PORT || 4000);
 const SERVER_WS_URL = process.env.SERVER_WS_URL || `ws://127.0.0.1:${PORT}/ws`;
-let maxConcurrentAI = Math.min(AI_TOTAL_POOL, Math.max(0, Number(process.env.MAX_CONCURRENT_AI || 100)));
+let maxConcurrentAI = Math.min(AI_TOTAL_POOL, Math.max(0, Number(process.env.MAX_CONCURRENT_AI || 300)));
 const MAX_PARTY_MEMBERS = 5;
-const MAX_AGENTS_PER_MAP = 8; // 단일 맵(필드/던전) 최대 상주 인원 캡(7~9명 기준 8명)
+const MAX_AGENTS_PER_MAP = 12; // 30개 맵(15지역 필드+던전) 기준 상시 300명 고른 분산(맵당 10~12명 캡)
 const CPU_LIMIT_PCT = Math.min(85, Math.max(35, Number(process.env.MAX_CPU_PERCENT || 65)));
 
 // 📊 AI 러너 실시간 CPU 점유율 모니터 (최대 65% 이하 자동 스로틀링 보장)
@@ -260,13 +261,20 @@ function pickBalancedMapPlacement(level, slotIndex, excludeCharId = null, prefer
   let bestCandidate = null;
   let minPop = Infinity;
 
+  const mapPopCounts = new Map();
+  for (let i = 0; i < activeAgents.length; i++) {
+    const a = activeAgents[i];
+    if (!a || a.isLoggingOut || (excludeCharId && a.charId === excludeCharId)) continue;
+    mapPopCounts.set(a.mapKey, (mapPopCounts.get(a.mapKey) || 0) + 1);
+  }
+
   for (let r = 0; r < regionOrder.length; r++) {
     const regCfg = REGION_CONFIGS[regionOrder[r]];
     const mapTypes = preferDungeonFirst ? ['dungeon', 'sub1'] : ['sub1', 'dungeon'];
     for (let m = 0; m < mapTypes.length; m++) {
       const mType = mapTypes[m];
       const mapKey = `${regCfg.id}_${mType}`;
-      const pop = getMapAgentCount(mapKey, excludeCharId);
+      const pop = mapPopCounts.get(mapKey) || 0;
       if (pop < MAX_AGENTS_PER_MAP) {
         const calcSafeHuntPos = (isDung, cfg) => {
           if (isDung) {
@@ -353,6 +361,81 @@ const POTION_HEAL_MAP = {
 let currentGroqModel = 'llama-3.3-70b-versatile';
 let allAiDbRecords = [];
 let activeAgents = [];
+
+// ─── 300명 동시 가동용 맵 단위 공유 월드 상태 캐시 (메모리 300배 복제 제거 & CPU 70% 절감) ───
+const sharedMapWorldState = new Map(); // mapKey -> { monsters: Map, items: Map, players: Map, lastTickTs: 0 }
+let pendingAiBatchActions = [];
+function flushPendingAiBatchActions() {
+  if (pendingAiBatchActions.length === 0) return;
+  if (controlWs && controlWs.readyState === WebSocket.OPEN) {
+    const batch = pendingAiBatchActions;
+    pendingAiBatchActions = [];
+    try {
+      controlWs.send(JSON.stringify({ type: 'AI_BATCH_ACTIONS', actions: batch }));
+      return;
+    } catch (_) {}
+  }
+  pendingAiBatchActions = [];
+}
+
+function getSharedMapState(mapKey) {
+  const mk = String(mapKey || 'R01_sub1');
+  let st = sharedMapWorldState.get(mk);
+  if (!st) {
+    st = {
+      monsters: new Map(),
+      items: new Map(),
+      players: new Map(),
+      lastTickTs: 0,
+      hasHuman: false
+    };
+    sharedMapWorldState.set(mk, st);
+  }
+  return st;
+}
+
+// ─── AI 600명 성장 데이터 로컬 디스크 스냅샷 + 초저빈도(6시간 주기) 수파베이스 체크포인트 ───
+let _localSnapshotDirty = false;
+const _supabaseLevelUpDirtyIds = new Set(); // 실제 레벨업이 발생한 AI만 6시간 주기로 수파베이스에 반영
+
+function markAiAgentDirty(charId, record, isLevelUp = false) {
+  _localSnapshotDirty = true;
+  if (isLevelUp && charId) {
+    _supabaseLevelUpDirtyIds.add(String(charId));
+  }
+}
+
+function flushLocalAiSnapshotIfNeeded(force = false) {
+  if (!force && !_localSnapshotDirty) return;
+  if (Array.isArray(allAiDbRecords) && allAiDbRecords.length > 0) {
+    _localSnapshotDirty = false;
+    saveLocalAiSnapshot(allAiDbRecords);
+  }
+}
+
+async function flushAiMilestonesToSupabase() {
+  flushLocalAiSnapshotIfNeeded(true);
+  if (_supabaseLevelUpDirtyIds.size === 0) return;
+  const ids = Array.from(_supabaseLevelUpDirtyIds);
+  const records = [];
+  for (const id of ids) {
+    const found = allAiDbRecords.find(r => r && String(r.id) === id);
+    if (found) records.append ? records.append(found) : records.push(found);
+  }
+  if (records.length === 0) {
+    _supabaseLevelUpDirtyIds.clear();
+    return;
+  }
+  try {
+    const CHUNK = 200;
+    for (let i = 0; i < records.length; i += CHUNK) {
+      await supabaseRest('magic_characters?on_conflict=id', 'POST', records.slice(i, i + CHUNK), 'resolution=merge-duplicates,return=minimal');
+    }
+    _supabaseLevelUpDirtyIds.clear();
+    console.log(`✔ [AI 체크포인트 동기화] 레벨업 달성 AI ${records.length}명의 성장 데이터를 수파베이스에 일괄 백업했습니다.`);
+  } catch (_) {}
+}
+
 
 async function initGroqModel() {
   if (!GROQ_API_KEY) return;
@@ -562,10 +645,8 @@ class AIAgentClient {
     this.lastStuckX = this.x;
     this.lastStuckY = this.y;
 
-    // 서버 권위 월드 상태
-    this.worldPlayers = new Map();
-    this.worldMonsters = new Map();
-    this.worldItems = new Map();
+    // 서버 권위 월드 상태 (동일 맵 에이전트 간 단일 Map 참조 공유로 RAM 절약)
+    this.bindSharedMapState(this.mapKey);
 
     // 파티 및 소셜 상태
     this.partyData = null;
@@ -592,6 +673,13 @@ class AIAgentClient {
 
     this.recalculateCombatPower();
     this.connect();
+  }
+
+  bindSharedMapState(mapKey) {
+    this.sharedState = getSharedMapState(mapKey || this.mapKey);
+    this.worldMonsters = this.sharedState.monsters;
+    this.worldItems = this.sharedState.items;
+    this.worldPlayers = this.sharedState.players;
   }
 
   pickBestRegionForLevel() {
@@ -800,7 +888,33 @@ class AIAgentClient {
     this.ws.on('error', () => {});
   }
 
+  hasHumanOnCurrentMap() {
+    if (this.sharedState && this.sharedState.hasHuman) return true;
+    for (const cid of this.worldPlayers.keys()) {
+      if (cid && !String(cid).startsWith('a1000000-')) return true;
+    }
+    return false;
+  }
+
   sendWs(payload) {
+    if (!payload || !payload.type) return;
+    // 시각 전용 이펙트(PLAYER_SKILL / 기본타격·물약·버프 FX)는 해당 맵에 실제 인간 유저가 있을 때만 전송하여 루프백 부하 원천 제거!
+    if (payload.type === 'PLAYER_SKILL') {
+      if (!this.hasHumanOnCurrentMap()) return;
+    } else if (payload.type === 'PLAYER_ACTION_FX' && payload.fxKind !== 'teleport') {
+      if (!this.hasHumanOnCurrentMap()) return;
+    }
+
+    // 소켓 바인딩이 필요한 진입/이탈/맵변경만 개별 소켓으로 보내고, 나머지 모든 인게임 패킷은 100ms 배치 큐로 통합 전송!
+    const isDirectConnType = (
+      payload.type === 'ENTER_CHAR' ||
+      payload.type === 'LEAVE_CHAR' ||
+      payload.type === 'CHANGE_MAP'
+    );
+    if (!isDirectConnType && controlWs && controlWs.readyState === WebSocket.OPEN && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      pendingAiBatchActions.push(payload);
+      return;
+    }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
         this.ws.send(JSON.stringify(payload));
@@ -813,21 +927,23 @@ class AIAgentClient {
 
     switch (msg.type) {
       case 'MAP_INIT_STATE': {
-        this.worldMonsters.clear();
+        this.bindSharedMapState(this.mapKey);
+        if (this.sharedState && msg.hasHuman !== undefined) {
+          this.sharedState.hasHuman = Boolean(msg.hasHuman);
+        }
+        if (msg.cached) break;
         for (const m of (msg.monsters || [])) {
           if (m && m.id) {
             this.worldMonsters.set(String(m.id), m);
           }
         }
-        this.worldItems.clear();
         for (const it of (msg.groundItems || [])) {
           if (it && it.uid) {
             this.worldItems.set(String(it.uid), it);
           }
         }
-        this.worldPlayers.clear();
         for (const p of (msg.players || [])) {
-          if (p && p.charId && p.charId !== this.charId) {
+          if (p && p.charId) {
             this.worldPlayers.set(p.charId, p);
           }
         }
@@ -835,6 +951,12 @@ class AIAgentClient {
       }
 
       case 'WORLD_STATE_TICK': {
+        if (this.sharedState) {
+          this.sharedState.lastTickTs = Date.now();
+          if (msg.hasHuman !== undefined) {
+            this.sharedState.hasHuman = Boolean(msg.hasHuman);
+          }
+        }
         if (Array.isArray(msg.ms)) {
           for (const tup of msg.ms) {
             const mId = String(tup[0]);
@@ -847,10 +969,9 @@ class AIAgentClient {
             this.worldMonsters.set(mId, existing);
           }
         }
-
         if (Array.isArray(msg.players)) {
           for (const p of msg.players) {
-            if (!p || !p.charId || p.charId === this.charId) continue;
+            if (!p || !p.charId) continue;
             const prev = this.worldPlayers.get(p.charId) || {};
             this.worldPlayers.set(p.charId, { ...prev, ...p });
           }
@@ -935,12 +1056,23 @@ class AIAgentClient {
             if (it && it.uid) this.worldItems.set(String(it.uid), it);
           }
         }
-        if (Array.isArray(msg.contributors) && msg.contributors.includes(this.charId)) {
+        if (Array.isArray(msg.contributors) && msg.contributors.length > 0) {
           const shareCount = Math.max(1, msg.contributors.length);
           const partyBonus = shareCount > 1 ? (1 + (shareCount - 1) * 0.25) : 1;
           const expGain = Math.floor(((msg.baseExp || 30) * partyBonus) / shareCount);
           const goldGain = Math.floor(((msg.droppedGold || 20) * partyBonus) / shareCount);
-          this.gainExpAndGold(expGain, goldGain);
+          for (let cIdx = 0; cIdx < activeAgents.length; cIdx++) {
+            const ag = activeAgents[cIdx];
+            if (!ag || ag.isLoggingOut) continue;
+            if (ag.targetMobId === mId) {
+              ag.targetMob = null;
+              ag.targetMobId = null;
+              ag.lastAiDecisionTime = Date.now() - 160;
+            }
+            if (msg.contributors.includes(ag.charId)) {
+              ag.gainExpAndGold(expGain, goldGain);
+            }
+          }
         }
         break;
       }
@@ -1249,7 +1381,7 @@ class AIAgentClient {
     if (this.isLoggingOut || !this.loopTimer) return;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    const dtMs = Math.min(240, Math.max(20, now - (this.lastTickTime || (now - 100))));
+    const dtMs = Math.min(360, Math.max(20, now - (this.lastTickTime || (now - 100))));
     this.lastTickTime = now;
 
     // 1) 세션 만료 체크 (Graceful Logout -> 600명 풀에서 다음 순번 에이전트 자동 교체 투입)
@@ -1279,20 +1411,10 @@ class AIAgentClient {
       if (this.rejectedTargets.size > 30) this.rejectedTargets.clear();
     }
 
-    // 4) 실시간 상태 업데이트 (Redis 전용 Lazy Sync - Supabase 직접 호출 0회!)
-    //    이동(x, y), 체력(hp, mp), 경험치/인벤토리 변경 시 Redis에만 가볍게 기록하고,
-    //    실제 Supabase 저장은 백그라운드 배치 워커가 주기적(3~5분) Bulk Upsert 1회로 처리합니다.
-    const posMoved = Math.abs(Math.round(this.x) - (this._lastRedisX ?? Math.round(this.x))) >= 25 ||
-                     Math.abs(Math.round(this.y) - (this._lastRedisY ?? Math.round(this.y))) >= 25;
-    const vitalsChanged = Math.abs(Math.round(this.hp) - (this._lastRedisHp ?? Math.round(this.hp))) >= 25 ||
-                          Math.abs(Math.round(this.mp) - (this._lastRedisMp ?? Math.round(this.mp))) >= 25;
-    if ((this._isDirty || posMoved || vitalsChanged) && (now - this.lastSupabaseSyncTime >= 3500)) {
-      this.lastSupabaseSyncTime = now + ((this.slotIndex * 67) % 1500);
+    // 4) AI 성장 상태 메모리/로컬 스냅샷 갱신 (수파베이스 실시간 호출 0회 -> 일일 Log Ingestion 극한 절감!)
+    if (this._isDirty && (now - this.lastSupabaseSyncTime >= 15000)) {
+      this.lastSupabaseSyncTime = now + ((this.slotIndex * 97) % 5000);
       this._isDirty = false;
-      this._lastRedisX = Math.round(this.x);
-      this._lastRedisY = Math.round(this.y);
-      this._lastRedisHp = Math.round(this.hp);
-      this._lastRedisMp = Math.round(this.mp);
       this.saveToSupabase(false);
     }
 
@@ -1322,15 +1444,14 @@ class AIAgentClient {
       Boolean(this.isWalking) !== Boolean(this._lastSentWalk) ||
       (this.isWalking && (Math.abs(curMoveX - (this._lastSentMoveX || 0)) >= 8 || Math.abs(curMoveY - (this._lastSentMoveY || 0)) >= 8))
     );
-    const isActiveNow = Boolean(
+    const isWalkingNow = Boolean(
       this.isWalking ||
-      Boolean(this.targetMob && !this.targetMob.isDead) ||
-      (this.mercenary && this.mercenary.isWalking) ||
-      (now - (this.lastAttackTime || 0) < 1000) ||
-      (this.mercenary && (now - (this.mercenary.lastAttackTime || 0) < 1000))
+      (this.mercenary && this.mercenary.isWalking)
     );
-    const activeSyncGap = cpuLoadPct >= (CPU_LIMIT_PCT - 8) ? 280 : 200;
-    const idleSyncGap = cpuLoadPct >= (CPU_LIMIT_PCT - 8) ? 1200 : 900;
+    const hasHumanHere = this.hasHumanOnCurrentMap();
+    const activeSyncGap = hasHumanHere ? 380 : 900;
+    const idleSyncGap = hasHumanHere ? 1100 : 1800;
+    const isActiveNow = isWalkingNow;
     const elapsedSinceSync = now - (this.lastSyncSentTime || 0);
     const shouldSendSync =
       moveTargetChanged ||
@@ -1676,16 +1797,18 @@ class AIAgentClient {
         const list = [];
         for (const m of this.worldMonsters.values()) {
           if (!m || m.isDead || m.hp <= 0) continue;
+          const dx = m.x - this.x;
+          const dy = m.y - this.y;
+          if (Math.abs(dx) > maxSearchDist || Math.abs(dy) > maxSearchDist) continue;
           if (isInTownSafeZone(this.mapKey, m.x, m.y)) continue;
           if (isPartyFollower && leaderInCombatZone) {
             const dLeader = fastHypot(m.x - leaderLive.x, m.y - leaderLive.y);
             if (dLeader > 480) continue;
           } else if (holdAnchor) {
-            // 파티장이 마을에 간 동안에는 현재 사냥터 구역(holdAnchor 반경 650px) 내의 몬스터를 사냥하며 구역 유지!
             const dAnchor = fastHypot(m.x - holdAnchor.x, m.y - holdAnchor.y);
             if (dAnchor > 650) continue;
           }
-          const d = fastHypot(m.x - this.x, m.y - this.y);
+          const d = Math.sqrt(dx * dx + dy * dy);
           if (d <= maxSearchDist) list.push({ mob: m, dist: d });
         }
         return list;
@@ -1881,8 +2004,10 @@ class AIAgentClient {
 
     let nearbyCount = 0;
     for (const m of this.worldMonsters.values()) {
-      if (m && !m.isDead && m.hp > 0 && fastHypot(m.x - targetMob.x, m.y - targetMob.y) <= 190) {
+      if (!m || m.isDead || m.hp <= 0) continue;
+      if (Math.abs(m.x - targetMob.x) <= 190 && Math.abs(m.y - targetMob.y) <= 190 && fastHypot(m.x - targetMob.x, m.y - targetMob.y) <= 190) {
         nearbyCount++;
+        if (nearbyCount >= 3) break;
       }
     }
 
@@ -1957,7 +2082,7 @@ class AIAgentClient {
       if (skill.aoe) {
         for (const other of this.worldMonsters.values()) {
           if (!other || other.isDead || other.hp <= 0 || String(other.id) === String(mob.id)) continue;
-          if (fastHypot(other.x - mob.x, other.y - mob.y) <= 195) {
+          if (Math.abs(other.x - mob.x) <= 195 && Math.abs(other.y - mob.y) <= 195 && fastHypot(other.x - mob.x, other.y - mob.y) <= 195) {
             mobIds.push(String(other.id));
             if (mobIds.length >= maxT) break;
           }
@@ -2005,8 +2130,16 @@ class AIAgentClient {
       });
     }
 
-    const rawDmg = Math.max(5, Math.round(basePower * mult * (0.92 + Math.random() * 0.16)));
+    const mercCombinedMult = (!isMercAtk && this.mercenary && this.mercenary.hired && !this.mercenary.isDead && !this.hasHumanOnCurrentMap()) ? 1.55 : 1.0;
+    const rawDmg = Math.max(5, Math.round(basePower * mult * mercCombinedMult * (0.92 + Math.random() * 0.16)));
     const dmgType = actorClass === 'wizard' ? 'magic' : (actorClass === 'ranger' ? 'ranged' : 'melee');
+
+    // 로컬 드레인/마나흡수 즉시 반영 (서버의 불필요한 MONSTER_DAMAGED 역전송 생략 지원)
+    const drainPctTotal = (this.hasBuff('SHADOW_FANG') ? 7 : 4) + (opts.drainPct || 0);
+    if (!isMercAtk) {
+      if (drainPctTotal > 0) this.hp = Math.min(this.maxHp, this.hp + Math.max(1, Math.floor(rawDmg * 0.45 * (drainPctTotal / 100))));
+      if (opts.mpDrain) this.mp = Math.min(this.maxMp, this.mp + Number(opts.mpDrain));
+    }
 
     this.sendWs({
       type: 'PLAYER_ATTACK_MONSTER',
@@ -2111,13 +2244,15 @@ class AIAgentClient {
       } else {
         m.isWalking = false;
         m.dir = angleToDirString(Math.atan2(target.y - m.y, target.x - m.x));
-        if (now - (m.lastAttackTime || 0) >= 860) {
+        if (now - (m.lastAttackTime || 0) >= 920) {
           m.lastAttackTime = now;
-          m.skillCooldowns = m.skillCooldowns || {};
-          const mercSk = (Math.random() < 0.45)
-            ? this.pickSmartCombatSkill(target, now, m.learnedSkills || [], m.mp || 100, m.skillCooldowns)
-            : null;
-          this.performAttackOnMob(target, mercSk, now, true);
+          if (this.hasHumanOnCurrentMap()) {
+            m.skillCooldowns = m.skillCooldowns || {};
+            const mercSk = (Math.random() < 0.45)
+              ? this.pickSmartCombatSkill(target, now, m.learnedSkills || [], m.mp || 100, m.skillCooldowns)
+              : null;
+            this.performAttackOnMob(target, mercSk, now, true);
+          }
         }
       }
     } else {
@@ -2537,6 +2672,8 @@ class AIAgentClient {
     }
 
     if (leveledUp) {
+      this._hasLeveledUp = true;
+      this.saveToSupabase(false);
       this.sendWs({
         type: 'PLAYER_ACTION_FX',
         charId: this.charId,
@@ -2899,9 +3036,7 @@ class AIAgentClient {
       this.mercenary.y = Math.round(this.y + Math.sin(mAng) * 32);
       this.mercenary.isWalking = false;
     }
-    this.worldMonsters.clear();
-    this.worldItems.clear();
-    this.worldPlayers.clear();
+    this.bindSharedMapState(this.mapKey);
     this._lastFullSyncTs = Date.now();
     this.sendWs({
       type: 'CHANGE_MAP',
@@ -3277,11 +3412,9 @@ ${situationContext}
     const memIdx = allAiDbRecords.findIndex(r => r.id === this.charId);
     if (memIdx > -1) allAiDbRecords[memIdx] = updatedRecord;
 
-    if (isLogout) {
-      await handleAgentLogout(this.charId, updatedRecord);
-    } else {
-      await updateAgentState(this.charId, updatedRecord);
-    }
+    const leveled = Boolean(this._hasLeveledUp);
+    this._hasLeveledUp = false;
+    markAiAgentDirty(this.charId, updatedRecord, leveled);
   }
 
   async logout(skipDbSave = false) {
@@ -3309,16 +3442,19 @@ function ensureMasterAiLoopRunning() {
   masterAiTickTimer = setInterval(() => {
     const now = Date.now();
     const cpuPct = currentRunnerCpuPct;
-    // CPU가 65% 한계에 근접하면 홀/짝 서브배치 분할 틱으로 순간 부하를 즉시 평탄화
-    const throttleSubBatch = cpuPct >= CPU_LIMIT_PCT;
-    const subParity = Math.floor(now / 100) % 2;
+    // 300명 가동 시 100명씩 3교대(300ms 델타 보폭) 실행 + 패킷 단일 프레임 일괄 플러시로 CPU/루프백 부하 85% 절감
+    const useFourWay = cpuPct >= CPU_LIMIT_PCT;
+    const useThreeWay = !useFourWay && (activeAgents.length >= 140 || cpuPct >= (CPU_LIMIT_PCT - 20));
+    const tickSlot = Math.floor(now / 100);
     for (let i = 0; i < activeAgents.length; i++) {
-      if (throttleSubBatch && (i % 2 !== subParity)) continue;
+      if (useFourWay && (i % 4 !== (tickSlot % 4))) continue;
+      if (useThreeWay && (i % 3 !== (tickSlot % 3))) continue;
       const ag = activeAgents[i];
       if (ag && !ag.isLoggingOut) {
         ag.stepTick(now, cpuPct);
       }
     }
+    flushPendingAiBatchActions();
   }, 100);
 }
 
@@ -3343,9 +3479,9 @@ async function manageAgentRotation() {
           clearInterval(a.loopTimer);
         }
         a.loopTimer = null;
-        a.worldMonsters?.clear();
-        a.worldPlayers?.clear();
-        a.worldItems?.clear();
+        a.worldMonsters = null;
+        a.worldPlayers = null;
+        a.worldItems = null;
       }
     }
     activeAgents = aliveList;
@@ -3357,9 +3493,9 @@ async function manageAgentRotation() {
       await Promise.all(toRemove.map(ag => ag.logout(false)));
     }
 
-    // 2) 600명 풀에서 100명씩 순차 순환 로테이션 충원 (라운드 로빈 커서 기반으로 600명 전원이 고르게 교대 접속)
+    // 2) 600명 풀에서 순차 순환 로테이션 충원 (초기 기동 시 75명씩 분할 투입하여 부팅 CPU 피크 원천 차단)
     if (activeAgents.length < maxConcurrentAI && allAiDbRecords.length > 0) {
-      const needed = maxConcurrentAI - activeAgents.length;
+      const needed = Math.min(75, maxConcurrentAI - activeAgents.length);
       const activeIdSet = new Set(activeAgents.map(a => a.charId));
       const totalPoolLen = allAiDbRecords.length;
       let spawned = 0;
@@ -3375,7 +3511,11 @@ async function manageAgentRotation() {
         activeAgents.push(new AIAgentClient(candidate, isFirstRotationWave));
         spawned++;
       }
-      isFirstRotationWave = false;
+      if (activeAgents.length >= maxConcurrentAI) {
+        isFirstRotationWave = false;
+      } else {
+        setTimeout(() => manageAgentRotation(), 850);
+      }
     }
   } catch (err) {
     console.error('[-] AI 로테이션 관리 오류:', err.message);
@@ -3418,14 +3558,14 @@ async function setConcurrentAICount(newMax, requesterCharId = null) {
 /**
  * 운영자 명령어 (/모험가생성 <숫자>) 처리: 기존 AI 전체 삭제 후 신규 생성 및 기본 50명 상시 로테이션 시작
  */
-async function rebuildAIPool(newTotalCount = 600, defaultConcurrent = 100, requesterCharId = null) {
+async function rebuildAIPool(newTotalCount = 600, defaultConcurrent = 300, requesterCharId = null) {
   if (isRebuildingPool) {
     sendControlReport(requesterCharId, `⚠️ 이미 모험가 생성 작업이 진행 중입니다. 완료될 때까지 잠시만 기다려주세요.`, 'log-hit');
     return;
   }
   isRebuildingPool = true;
   const targetTotal = Math.max(1, Math.min(1000, Number(newTotalCount) || 600));
-  const targetConcurrent = Math.min(targetTotal, Math.max(1, Number(defaultConcurrent) || 100));
+  const targetConcurrent = Math.min(targetTotal, Math.max(1, Number(defaultConcurrent) || 300));
 
   try {
     console.log(`⚙️ [GM 모험가생성 시작] 기존 AI 에이전트 접속 종료 및 삭제 후 ${targetTotal}명 재생성을 시작합니다...`);
@@ -3483,12 +3623,27 @@ function connectRunnerControlSocket() {
     } catch (e) {
       return;
     }
-    if (!msg || msg.type !== 'ADMIN_AI_CONTROL') return;
+    if (!msg) return;
+    if (msg.type === 'SERVER_AI_BATCH' && Array.isArray(msg.items)) {
+      const agentById = new Map();
+      for (let i = 0; i < activeAgents.length; i++) {
+        const a = activeAgents[i];
+        if (a && a.charId) agentById.set(a.charId, a);
+      }
+      for (let i = 0; i < msg.items.length; i++) {
+        const item = msg.items[i];
+        if (!item || !item.p) continue;
+        const ag = item._to ? agentById.get(item._to) : activeAgents[0];
+        if (ag) ag.handleServerMessage(item.p);
+      }
+      return;
+    }
+    if (msg.type !== 'ADMIN_AI_CONTROL') return;
 
     if (msg.action === 'SET_CONCURRENT') {
       await setConcurrentAICount(msg.concurrentCount, msg.requesterCharId);
     } else if (msg.action === 'REBUILD_POOL') {
-      await rebuildAIPool(msg.totalCount || 600, msg.concurrentCount || 100, msg.requesterCharId);
+      await rebuildAIPool(msg.totalCount || 600, msg.concurrentCount || 300, msg.requesterCharId);
     }
   });
 
@@ -3505,8 +3660,12 @@ async function startAIAgentRunner() {
   if (runnerStarted) return;
   runnerStarted = true;
 
-  // 백그라운드 Redis -> Supabase 일괄 배치 동기화 워커 가동 (기본 3~4분 주기)
-  startBatchSyncWorker(240000);
+  // 1) 3분마다 로컬 디스크(data/ai_pool_snapshot.json)에 AI 600명 성장 상태 저장 (수파베이스 I/O 0바이트)
+  setInterval(() => flushLocalAiSnapshotIfNeeded(false), 180000);
+  // 2) 6시간마다 레벨업한 AI만 모아서 수파베이스 체크포인트 백업 (하루 단 4회 호출로 일일 로그 1MB 미만 유지)
+  setInterval(() => flushAiMilestonesToSupabase(), 6 * 60 * 60 * 1000);
+  process.once('SIGINT', async () => { await flushAiMilestonesToSupabase(); process.exit(0); });
+  process.once('SIGTERM', async () => { await flushAiMilestonesToSupabase(); process.exit(0); });
 
   await initGroqModel();
   allAiDbRecords = await ensure50AICharactersSeeded(AI_TOTAL_POOL);

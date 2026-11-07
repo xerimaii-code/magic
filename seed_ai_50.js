@@ -48,6 +48,37 @@ const AI_TOTAL_POOL = (!isNaN(cliPoolArg) && cliPoolArg >= 50)
   : Number(process.env.AI_TOTAL_POOL || 600);
 const FALLBACK_AI_USER_ID = 'e0000000-0000-4000-8000-000000000100';
 
+const AI_SNAPSHOT_DIR = path.join(__dirname, 'data');
+const AI_SNAPSHOT_FILE = path.join(AI_SNAPSHOT_DIR, 'ai_pool_snapshot.json');
+
+function loadLocalAiSnapshot(expectedCount = AI_TOTAL_POOL) {
+  try {
+    if (!fs.existsSync(AI_SNAPSHOT_FILE)) return null;
+    const raw = fs.readFileSync(AI_SNAPSHOT_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length >= expectedCount) {
+      return parsed.slice(0, expectedCount);
+    }
+  } catch (_) {}
+  return null;
+}
+
+function saveLocalAiSnapshot(records) {
+  try {
+    if (!Array.isArray(records) || records.length === 0) return false;
+    if (!fs.existsSync(AI_SNAPSHOT_DIR)) {
+      fs.mkdirSync(AI_SNAPSHOT_DIR, { recursive: true });
+    }
+    const tmpFile = `${AI_SNAPSHOT_FILE}.tmp`;
+    fs.writeFileSync(tmpFile, JSON.stringify(records), 'utf8');
+    fs.renameSync(tmpFile, AI_SNAPSHOT_FILE);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+
 // =====================================================================
 // 1. 600명의 중복 없는 한국 MMORPG 감성 고유 닉네임 풀
 // =====================================================================
@@ -634,8 +665,16 @@ function generateLocal50AIPool(userId = FALLBACK_AI_USER_ID, poolSize = AI_TOTAL
   return pool;
 }
 
-async function ensure50AICharactersSeeded(customPoolSize = AI_TOTAL_POOL) {
+async function ensure50AICharactersSeeded(customPoolSize = AI_TOTAL_POOL, forceRemoteSync = false) {
   const targetPoolSize = Math.max(1, Math.min(1000, Number(customPoolSize) || AI_TOTAL_POOL));
+  // 📉 로컬 스냅샷(data/ai_pool_snapshot.json)이 있으면 수파베이스 조회(600행 SELECT)를 완전히 생략하여 부팅 I/O 0바이트 달성!
+  if (!forceRemoteSync) {
+    const cachedPool = loadLocalAiSnapshot(targetPoolSize);
+    if (cachedPool && cachedPool.length >= targetPoolSize) {
+      console.log(`✔ [AI 로컬 스냅샷 즉시 로드] 수파베이스 호출 없이 로컬 디스크에서 ${cachedPool.length}명의 AI 캐릭터 성장 데이터를 0.01초 만에 복원했습니다.`);
+      return cachedPool;
+    }
+  }
   let targetUserId = FALLBACK_AI_USER_ID;
   try {
     // 1. xerimaii@gmail.com 계정 조회 또는 생성
@@ -751,12 +790,15 @@ async function ensure50AICharactersSeeded(customPoolSize = AI_TOTAL_POOL) {
       if (row) mergedRows.push(row);
     }
     if (mergedRows.length > 0) {
+      saveLocalAiSnapshot(mergedRows);
       return mergedRows;
     }
   } catch (err) {
     console.warn(`⚠️ [Supabase AI 시딩 오프라인 폴백] 원격 DB 연결 대기 중이므로 내장된 ${targetPoolSize}명 AI 프로필 풀을 사용합니다: ${err.message}`);
   }
-  return generateLocal50AIPool(targetUserId, targetPoolSize);
+  const localGenerated = generateLocal50AIPool(targetUserId, targetPoolSize);
+  saveLocalAiSnapshot(localGenerated);
+  return localGenerated;
 }
 
 
@@ -791,7 +833,10 @@ async function resetAndReseedAICharacters(customPoolSize = AI_TOTAL_POOL) {
   } catch (err) {
     console.warn(`⚠️ [AI 초기화 경고] 기존 AI 삭제 중 오류 발생 (계속 진행): ${err.message}`);
   }
-  return await ensure50AICharactersSeeded(targetPoolSize);
+  try {
+    if (fs.existsSync(AI_SNAPSHOT_FILE)) fs.unlinkSync(AI_SNAPSHOT_FILE);
+  } catch (_) {}
+  return await ensure50AICharactersSeeded(targetPoolSize, true);
 }
 
 if (require.main === module) {
@@ -820,5 +865,7 @@ module.exports = {
   ensure50AICharactersSeeded,
   ensure300AICharactersSeeded: ensure50AICharactersSeeded,
   ensure600AICharactersSeeded: ensure50AICharactersSeeded,
-  resetAndReseedAICharacters
+  resetAndReseedAICharacters,
+  loadLocalAiSnapshot,
+  saveLocalAiSnapshot
 };

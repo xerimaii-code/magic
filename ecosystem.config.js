@@ -16,7 +16,7 @@ module.exports = {
         MAX_CONCURRENT_USERS: "150",
         MAX_CPU_PERCENT: "65",
         REDIS_URL: process.env.REDIS_URL || "redis://127.0.0.1:6379",
-        BATCH_SYNC_INTERVAL_MS: process.env.BATCH_SYNC_INTERVAL_MS || "240000"
+        BATCH_SYNC_INTERVAL_MS: process.env.BATCH_SYNC_INTERVAL_MS || "600000"
       }
     },
     {
@@ -33,7 +33,7 @@ module.exports = {
         MAX_CONCURRENT_AI: "300",
         MAX_CPU_PERCENT: "65",
         REDIS_URL: process.env.REDIS_URL || "redis://127.0.0.1:6379",
-        BATCH_SYNC_INTERVAL_MS: process.env.BATCH_SYNC_INTERVAL_MS || "240000"
+        BATCH_SYNC_INTERVAL_MS: process.env.BATCH_SYNC_INTERVAL_MS || "600000"
       }
     }
   ]

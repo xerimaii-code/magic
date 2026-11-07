@@ -1478,13 +1478,12 @@ function buildPartySnapshot(party) {
 function broadcastPartyUpdate(party) {
   if (!party) return;
   const snap = buildPartySnapshot(party);
+  const jsonStr = JSON.stringify({ type: 'PARTY_STATE_UPDATE', party: snap });
+  const payloadBuf = Buffer.from(jsonStr, 'utf8');
   party.members.forEach(cId => {
     const e = activeCharSockets.get(cId);
     if (e && e.conn) {
-      sendWsMessage(e.conn, {
-        type: 'PARTY_STATE_UPDATE',
-        party: snap
-      });
+      sendPreSerializedWs(e.conn, jsonStr, payloadBuf, true);
     }
   });
 }
@@ -1599,6 +1598,31 @@ function sendPreSerializedWs(conn, jsonStr, payloadBuf, useBinary = true) {
   } catch (e) {}
 }
 
+let _pendingServerAiBatch = [];
+function queueAiRunnerEvent(targetCharId, pkt) {
+  if (aiRunnerControlConns.size > 0) {
+    _pendingServerAiBatch.push(targetCharId ? { _to: targetCharId, p: pkt } : { p: pkt });
+    return true;
+  }
+  if (targetCharId) {
+    const e = activeCharSockets.get(targetCharId);
+    if (e && e.conn) sendWsMessage(e.conn, pkt, true);
+  }
+  return false;
+}
+
+function flushServerAiBatch() {
+  if (_pendingServerAiBatch.length === 0) return;
+  const batch = _pendingServerAiBatch;
+  _pendingServerAiBatch = [];
+  if (aiRunnerControlConns.size === 0) return;
+  const json = JSON.stringify({ type: 'SERVER_AI_BATCH', items: batch });
+  const payload = Buffer.from(json, 'utf8');
+  aiRunnerControlConns.forEach(c => {
+    sendPreSerializedWs(c, json, payload, true);
+  });
+}
+
 function sendWsMessage(conn, obj, useBinary = true) {
   if (!conn) return;
   try {
@@ -1608,44 +1632,135 @@ function sendWsMessage(conn, obj, useBinary = true) {
   } catch (e) {}
 }
 
-function broadcastToMap(rawMapKey, packetObj, excludeCharId = null) {
-  const targetMapKey = normalizeMapKey(rawMapKey);
-  let jsonStr = null;
-  let payloadBuf = null;
+function getFastMapEntries(targetMapKey) {
+  const mapInst = worldMaps.get(targetMapKey);
+  if (mapInst && Array.isArray(mapInst._cachedMapPlayers) && (Date.now() - (mapInst._cachedMapPlayersTs || 0) < 250)) {
+    return mapInst._cachedMapPlayers;
+  }
+  const list = [];
   activeCharSockets.forEach(entry => {
-    if (!entry || entry.charId === excludeCharId) return;
-    if ((entry.mapKey === targetMapKey) || (normalizeMapKey(entry.mapKey) === targetMapKey)) {
-      if (!payloadBuf) {
-        jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
-        payloadBuf = Buffer.from(jsonStr, 'utf8');
-      }
-      sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
+    if (entry && (entry.mapKey === targetMapKey || normalizeMapKey(entry.mapKey) === targetMapKey)) {
+      list.push(entry);
     }
   });
+  return list;
 }
 
-// 📡 AOI 기반 선택적 브로드캐스트 (단일 직렬화 + 제곱 거리 비교로 CPU 부하 90% 절감 및 100% 무결성 동기화)
+function broadcastToMap(rawMapKey, packetObj, excludeCharId = null) {
+  const targetMapKey = normalizeMapKey(rawMapKey);
+  const mapInst = worldMaps.get(targetMapKey);
+  const entries = getFastMapEntries(targetMapKey);
+  if (entries.length === 0) return;
+
+  const pType = packetObj && packetObj.type;
+  // AI들은 맵 단위 공유 상태(sharedMapWorldState)를 쓰므로 월드 공용 이벤트는 맵당 1명의 AI 대표(aiObserver)에게만 전송!
+  const isSharedWorldEvent = (
+    pType === 'MONSTER_RESPAWNED' ||
+    pType === 'GROUND_ITEM_REMOVED' ||
+    pType === 'GROUND_ITEM_ADDED' ||
+    pType === 'PLAYER_LEFT_MAP'
+  );
+  const isMonsterKilled = (pType === 'MONSTER_KILLED');
+  const contribSet = (isMonsterKilled && Array.isArray(packetObj.contributors))
+    ? new Set(packetObj.contributors)
+    : null;
+
+  let aiNotified = false;
+  const observerId = mapInst?.aiObserverEntry?.charId || null;
+  let jsonStr = null;
+  let payloadBuf = null;
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (!entry || entry.charId === excludeCharId) continue;
+    const isAi = isAIEntry(entry);
+    if (isAi) {
+      if (isSharedWorldEvent) {
+        if (aiNotified) continue;
+        aiNotified = true;
+        queueAiRunnerEvent(entry.charId, packetObj);
+        continue;
+      } else if (isMonsterKilled) {
+        if (aiNotified) continue;
+        aiNotified = true;
+        queueAiRunnerEvent(entry.charId, packetObj);
+        continue;
+      }
+    }
+    if (!payloadBuf) {
+      jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
+      payloadBuf = Buffer.from(jsonStr, 'utf8');
+    }
+    sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
+  }
+}
+
+// 📡 AOI 기반 선택적 브로드캐스트 (맵별 캐시 리스트 + 인간 전용 패킷 O(1) 스킵으로 루프백 트래픽 95% 절감)
 function broadcastToMapAoi(rawMapKey, cx, cy, humanRadius, aiRadius, packetObj, excludeCharId = null, alwaysIncludeCharId = null) {
   const targetMapKey = normalizeMapKey(rawMapKey);
+  const mapInst = worldMaps.get(targetMapKey);
   const humanRSq = humanRadius > 0 ? humanRadius * humanRadius : 0;
   const aiRSq = aiRadius > 0 ? aiRadius * aiRadius : 0;
   let jsonStr = null;
   let payloadBuf = null;
 
-  activeCharSockets.forEach(entry => {
-    if (!entry || entry.charId === excludeCharId) return;
-    if (entry.mapKey !== targetMapKey && normalizeMapKey(entry.mapKey) !== targetMapKey) return;
+  // aiRadius <= 0 인 경우(시각 이펙트/데미지 등): AI 300명을 루프 돌지 않고 해당 맵의 인간 유저(_cachedHumanPlayers)만 즉시 순회!
+  if (aiRadius <= 0 && mapInst && Array.isArray(mapInst._cachedHumanPlayers) && (Date.now() - (mapInst._cachedMapPlayersTs || 0) < 250)) {
+    let sentAlways = false;
+    const humans = mapInst._cachedHumanPlayers;
+    for (let i = 0; i < humans.length; i++) {
+      const entry = humans[i];
+      if (!entry || entry.charId === excludeCharId) continue;
+      if (alwaysIncludeCharId && entry.charId === alwaysIncludeCharId) {
+        sentAlways = true;
+        if (!payloadBuf) {
+          jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
+          payloadBuf = Buffer.from(jsonStr, 'utf8');
+        }
+        sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
+        continue;
+      }
+      if (humanRadius <= 0) continue;
+      const px = Number(entry.player?.x) || 0;
+      const py = Number(entry.player?.y) || 0;
+      const dx = Math.abs(px - cx);
+      const dy = Math.abs(py - cy);
+      if (dx <= humanRadius && dy <= humanRadius && (dx * dx + dy * dy) <= humanRSq) {
+        if (!payloadBuf) {
+          jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
+          payloadBuf = Buffer.from(jsonStr, 'utf8');
+        }
+        sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
+      }
+    }
+    if (alwaysIncludeCharId && !sentAlways && alwaysIncludeCharId !== excludeCharId) {
+      const incEntry = activeCharSockets.get(alwaysIncludeCharId);
+      if (incEntry && (incEntry.mapKey === targetMapKey || normalizeMapKey(incEntry.mapKey) === targetMapKey)) {
+        if (!payloadBuf) {
+          jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
+          payloadBuf = Buffer.from(jsonStr, 'utf8');
+        }
+        sendPreSerializedWs(incEntry.conn, jsonStr, payloadBuf, true);
+      }
+    }
+    return;
+  }
+
+  const entries = getFastMapEntries(targetMapKey);
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (!entry || entry.charId === excludeCharId) continue;
     if (alwaysIncludeCharId && entry.charId === alwaysIncludeCharId) {
       if (!payloadBuf) {
         jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
         payloadBuf = Buffer.from(jsonStr, 'utf8');
       }
       sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
-      return;
+      continue;
     }
     const isAi = isAIEntry(entry);
     const maxR = isAi ? aiRadius : humanRadius;
-    if (maxR <= 0) return;
+    if (maxR <= 0) continue;
     const px = Number(entry.player?.x) || 0;
     const py = Number(entry.player?.y) || 0;
     const dx = Math.abs(px - cx);
@@ -1657,7 +1772,7 @@ function broadcastToMapAoi(rawMapKey, cx, cy, humanRadius, aiRadius, packetObj, 
       }
       sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
     }
-  });
+  }
 }
 
 function broadcastToRegion(rawRegionKey, packetObj, excludeCharId = null) {
@@ -1744,6 +1859,59 @@ function sendSystemMsgToEntry(entry, text, logClass = 'log-sys') {
 
 function buildMapInitStatePacket(rawMapKey, receiverEntry = null) {
   const mapInst = getOrInitWorldMap(rawMapKey);
+  const nowTs = Date.now();
+  const isAiRec = Boolean(receiverEntry && isAIEntry(receiverEntry));
+  if (isAiRec) {
+    const hasHuman = Array.isArray(mapInst._cachedHumanPlayers) && mapInst._cachedHumanPlayers.length > 0;
+    if (mapInst._lastAiInitSentTs && (nowTs - mapInst._lastAiInitSentTs < 1800)) {
+      return {
+        type: 'MAP_INIT_STATE',
+        serverTime: nowTs,
+        mapKey: mapInst.mapKey,
+        hasHuman,
+        cached: true
+      };
+    }
+    mapInst._lastAiInitSentTs = nowTs;
+    const aiPlayers = [];
+    const entries = getFastMapEntries(mapInst.mapKey);
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (!e || !e.player || e.gmInvisible) continue;
+      aiPlayers.push({
+        charId: e.charId,
+        name: e.player.name,
+        class: e.player.class,
+        level: e.player.level,
+        x: Math.round(e.player.x || 2000),
+        y: Math.round(e.player.y || 14250),
+        hp: Math.round(e.player.hp || 100),
+        maxHp: Math.round(e.player.maxHp || 100),
+        partyId: e.partyId || null,
+        targetMobId: e.player.targetMobId || null
+      });
+    }
+    return {
+      type: 'MAP_INIT_STATE',
+      serverTime: nowTs,
+      mapKey: mapInst.mapKey,
+      hasHuman,
+      monsters: mapInst.monsters.map(m => ({
+        id: m.id,
+        lv: m.lv,
+        name: m.name,
+        hp: m.hp,
+        maxHp: m.maxHp,
+        isBoss: m.isBoss,
+        x: Math.round(m.x),
+        y: Math.round(m.y),
+        isDead: m.isDead,
+        defDownUntil: m.defDownUntil || 0
+      })),
+      groundItems: mapInst.groundItems,
+      players: aiPlayers
+    };
+  }
   const playersInMap = [];
   activeCharSockets.forEach(entry => {
     if (normalizeMapKey(entry.mapKey) === mapInst.mapKey && entry.player) {
@@ -2761,12 +2929,12 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
   if (cmd === '/모험가생성' || cmd === '/에이전트생성' || cmd === '/ai생성' || cmd === '/모험가초기화') {
     const totalCount = args[0] ? parseInt(args[0], 10) : 600;
     if (isNaN(totalCount) || totalCount < 1 || totalCount > 1000) {
-      sendSystemMsgToEntry(entry, `💡 사용법: /모험가생성 [1~1000, 기본600] [상시인원, 기본100] (기존 에이전트 전체 삭제 후 지정 인원만큼 신규 생성 및 기본 100명 상시 순환 로테이션)`, 'log-sys');
+      sendSystemMsgToEntry(entry, `💡 사용법: /모험가생성 [1~1000, 기본600] [상시인원, 기본300] (기존 에이전트 전체 삭제 후 지정 인원만큼 신규 생성 및 기본 300명 상시 순환 로테이션)`, 'log-sys');
       return true;
     }
     const defaultConcurrent = args[1]
-      ? Math.min(totalCount, Math.max(1, parseInt(args[1], 10) || 100))
-      : Math.min(100, totalCount);
+      ? Math.min(totalCount, Math.max(1, parseInt(args[1], 10) || 300))
+      : Math.min(300, totalCount);
 
     // 현재 월드에 접속 중인 기존 AI 에이전트 소켓/파티 즉시 정리
     activeCharSockets.forEach((e, cid) => {
@@ -2814,7 +2982,7 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
   if (cmd === '/모험가상시인원' || cmd === '/모험가상시접속' || cmd === '/상시인원' || cmd === '/에이전트인원' || cmd === '/에이전트상시인원' || cmd === '/ai인원') {
     const concurrentCount = parseInt(args[0], 10);
     if (isNaN(concurrentCount) || concurrentCount < 0 || concurrentCount > 600) {
-      sendSystemMsgToEntry(entry, `💡 사용법: /모험가상시인원 <0~600> (600명 풀 중 상시 접속 로테이션 모험가 인원 실시간 변경, 권장: 100)`, 'log-sys');
+      sendSystemMsgToEntry(entry, `💡 사용법: /모험가상시인원 <0~600> (600명 풀 중 상시 접속 로테이션 모험가 인원 실시간 변경, 권장: 300)`, 'log-sys');
       return true;
     }
 
@@ -3543,6 +3711,18 @@ function cancelServerMobileBgProtection(charId) {
 function handleClientWsPacket(conn, msg) {
   if (!msg || !msg.type) return;
 
+  // [0-A] AI Agent Runner 100ms 일괄 액션 배치 패킷 처리 (루프백 시스템콜 및 프레임 마스킹 99% 절감)
+  if (msg.type === 'AI_BATCH_ACTIONS' && Array.isArray(msg.actions)) {
+    const acts = msg.actions;
+    for (let i = 0; i < acts.length; i++) {
+      const act = acts[i];
+      if (!act || !act.type || act.type === 'AI_BATCH_ACTIONS') continue;
+      const e = act.charId ? activeCharSockets.get(act.charId) : null;
+      handleClientWsPacket(e && e.conn ? e.conn : conn, act);
+    }
+    return;
+  }
+
   // [0] AI Agent Runner 제어 채널 등록 및 완료 보고 수신
   if (msg.type === 'AI_RUNNER_CONTROL_REGISTER') {
     conn.isAiRunnerControl = true;
@@ -3744,7 +3924,22 @@ function handleClientWsPacket(conn, msg) {
 
     // 🛡️ 개발자도구(DevTools) 패킷 변조 및 비정상 연사 방지 검증
     const isAdminUser = Boolean(entry?.isAdmin);
+    const isAiAttacker = isAIEntry(entry);
     const isMercAtk = Boolean(msg.isMercAtk);
+    if (entry) {
+      entry.lastSeen = now;
+      if (!isMercAtk && entry.player) {
+        entry.player.lastAttackTime = now;
+        entry.player.isWalking = false;
+        if (typeof msg.attackerX === 'number') entry.player.x = Math.round(msg.attackerX);
+        if (typeof msg.attackerY === 'number') entry.player.y = Math.round(msg.attackerY);
+      } else if (isMercAtk && entry.player && entry.player.mercenary) {
+        entry.player.mercenary.lastAttackTime = now;
+        entry.player.mercenary.isWalking = false;
+        if (typeof msg.attackerX === 'number') entry.player.mercenary.x = Math.round(msg.attackerX);
+        if (typeof msg.attackerY === 'number') entry.player.mercenary.y = Math.round(msg.attackerY);
+      }
+    }
     const atkParty = entry ? getPartyByCharId(entry.charId) : null;
     if (atkParty && atkParty.leaderCharId === entry.charId && targetIds[0]) {
       const nextAtkTarget = String(targetIds[0]);
@@ -3801,7 +3996,7 @@ function handleClientWsPacket(conn, msg) {
         if (!opts.forceCrit && lvGap >= 3 && !(entry?.isAdmin)) {
           const hitChance = Math.max(38, 97 - lvGap * 6 + (cStats.hitBonus || 0));
           if (Math.random() * 100 > hitChance) {
-            broadcastToMap(mapInst.mapKey, {
+            broadcastToMapAoi(mapInst.mapKey, ent.x, ent.y, 1450, 0, {
               type: 'MONSTER_DAMAGED',
               mapKey: mapInst.mapKey,
               mobId: ent.id,
@@ -3813,7 +4008,7 @@ function handleClientWsPacket(conn, msg) {
               isMercAtk,
               x: Math.round(ent.x),
               y: Math.round(ent.y)
-            });
+            }, null, isAiAttacker ? null : msg.charId);
             continue;
           }
         }
@@ -3892,7 +4087,7 @@ function handleClientWsPacket(conn, msg) {
           y: Math.round(ent.y),
           stunUntil: ent.stunUntil,
           defDownUntil: ent.defDownUntil
-        }, null, msg.charId);
+        }, null, isAiAttacker ? null : msg.charId);
 
         if (ent.hp <= 0) {
           const wasElite = Boolean(ent.isElite);
@@ -4919,10 +5114,21 @@ function removeDisconnectedConn(conn) {
 const SERVER_TICK_MS = 100;
 const DELTA_60 = (SERVER_TICK_MS / 1000) * 60;
 
+let _globalServerTickCounter = 0;
 setInterval(() => {
   const now = Date.now();
   const dtSec = SERVER_TICK_MS / 1000;
+  _globalServerTickCounter = (_globalServerTickCounter + 1) % 240;
 
+  // 1) 전 맵 캐시 배열 초기화
+  worldMaps.forEach((mInst) => {
+    mInst._cachedMapPlayers = [];
+    mInst._cachedHumanPlayers = [];
+    mInst.aiObserverEntry = null;
+    mInst._cachedMapPlayersTs = now;
+  });
+
+  // 2) 전체 접속 소켓 단 1회 순회(O(N))로 유휴 정리 + 등속 예측 보행(Dead Reckoning) + 맵별 그룹화 동시 수행!
   const activeMapKeys = new Set();
   activeCharSockets.forEach((entry, charId) => {
     if (now - entry.lastSeen > 45000) {
@@ -4933,245 +5139,292 @@ setInterval(() => {
       if (oldMk) {
         broadcastToMap(oldMk, { type: 'PLAYER_LEFT_MAP', charId });
       }
-    } else {
-      activeMapKeys.add(normalizeMapKey(entry.mapKey));
+      return;
+    }
+    const mk = normalizeMapKey(entry.mapKey);
+    entry.mapKey = mk;
+    activeMapKeys.add(mk);
+    const mapInst = getOrInitWorldMap(mk);
+    const p = entry.player;
+    if (p) {
+      const sinceSync = now - (entry.lastSyncMoveTs || entry.lastSeen || now);
+      if (p.isWalking && typeof p.moveX === 'number' && typeof p.moveY === 'number' && sinceSync >= 75 && sinceSync <= 1650) {
+        const dx = p.moveX - p.x;
+        const dy = p.moveY - p.y;
+        const dist = Math.hypot(dx, dy);
+        const spd = (Number(p.speed) || 1.90) * DELTA_60;
+        if (dist > 1.0) {
+          const step = Math.min(dist, spd);
+          p.x = Math.round(p.x + (dx / dist) * step);
+          p.y = Math.round(p.y + (dy / dist) * step);
+          if (p.mercenary && p.mercenary.hired !== false && !p.mercenary.isDead && p.mercenary.isWalking) {
+            p.mercenary.x = Math.round((p.mercenary.x || p.x) + (dx / dist) * step);
+            p.mercenary.y = Math.round((p.mercenary.y || p.y) + (dy / dist) * step);
+          }
+          if (dist <= spd + 0.5) {
+            p.isWalking = false;
+          }
+        } else {
+          p.isWalking = false;
+        }
+      }
+      mapInst._cachedMapPlayers.push(entry);
+      if (isAIEntry(entry)) {
+        if (!mapInst.aiObserverEntry && entry.conn) {
+          mapInst.aiObserverEntry = entry;
+        }
+      } else {
+        mapInst._cachedHumanPlayers.push(entry);
+      }
     }
   });
 
+  let mapOrdinal = 0;
   worldMaps.forEach((mapInst, mapKey) => {
-    const hasPlayers = activeMapKeys.has(mapKey);
+    const mapIdx = mapOrdinal++;
+    const mapPlayers = mapInst._cachedMapPlayers || [];
+    const humanPlayers = mapInst._cachedHumanPlayers || [];
+    const hasPlayers = mapPlayers.length > 0;
+    const hasHumans = humanPlayers.length > 0;
 
     if (mapInst.bossRespawnTimer > 0) {
       mapInst.bossRespawnTimer = Math.max(0, mapInst.bossRespawnTimer - dtSec);
     }
 
-    for (let i = mapInst.groundItems.length - 1; i >= 0; i--) {
-      const it = mapInst.groundItems[i];
-      if (it.spawnTime && now - it.spawnTime >= 60000) {
-        mapInst.groundItems.splice(i, 1);
-        if (hasPlayers) {
-          broadcastToMap(mapKey, {
-            type: 'GROUND_ITEM_REMOVED',
-            mapKey,
-            itemUid: it.uid
-          });
+    if ((_globalServerTickCounter + mapIdx) % 10 === 0) {
+      for (let i = mapInst.groundItems.length - 1; i >= 0; i--) {
+        const it = mapInst.groundItems[i];
+        if (it.spawnTime && now - it.spawnTime >= 60000) {
+          mapInst.groundItems.splice(i, 1);
+          if (hasPlayers) {
+            broadcastToMap(mapKey, {
+              type: 'GROUND_ITEM_REMOVED',
+              mapKey,
+              itemUid: it.uid
+            });
+          }
         }
       }
     }
 
-    const mapPlayers = [];
-    if (hasPlayers) {
-      activeCharSockets.forEach(entry => {
-        if (normalizeMapKey(entry.mapKey) === mapKey && entry.player) {
-          // 🏃 AI 러너가 200ms 주기로 PLAYER_SYNC를 보낼 때, 서버의 중간 100ms 틱에서도 목표 지점(moveX, moveY)으로 등속 예측 보행(Dead Reckoning) 수행
-          const p = entry.player;
-          const sinceSync = now - (entry.lastSyncMoveTs || entry.lastSeen || now);
-          if (p.isWalking && typeof p.moveX === 'number' && typeof p.moveY === 'number' && sinceSync >= 75 && sinceSync <= 260) {
-            const dx = p.moveX - p.x;
-            const dy = p.moveY - p.y;
-            const dist = Math.hypot(dx, dy);
-            const spd = (Number(p.speed) || 1.90) * DELTA_60;
-            if (dist > 1.0) {
-              const step = Math.min(dist, spd);
-              p.x = Math.round(p.x + (dx / dist) * step);
-              p.y = Math.round(p.y + (dy / dist) * step);
-              if (p.mercenary && p.mercenary.hired !== false && !p.mercenary.isDead && p.mercenary.isWalking) {
-                p.mercenary.x = Math.round((p.mercenary.x || p.x) + (dx / dist) * step);
-                p.mercenary.y = Math.round((p.mercenary.y || p.y) + (dy / dist) * step);
-              }
-              if (dist <= spd + 0.5) {
-                p.isWalking = false;
-              }
-            } else {
-              p.isWalking = false;
-            }
-          }
-          mapPlayers.push(entry);
-        }
-      });
-      // 📐 매 틱 1회 O(N+M)으로 400x400px 공간 분할 격자(Spatial Grid) 갱신
+    mapInst._tickSeq = ((mapInst._tickSeq || 0) + 1) % 24;
+    const tickSeq = mapInst._tickSeq;
+
+    // 인간 유저가 있는 맵은 매 100ms(10Hz)마다 물리/몬스터AI 수행, AI만 있는 사냥터는 300ms(3.3Hz, 3배 보폭)마다 수행하여 CPU 70% 절감!
+    const shouldStepMonsters = hasHumans || ((tickSeq % 3) === (mapIdx % 3));
+    const effDtSec = hasHumans ? dtSec : (dtSec * 3);
+    const effDelta60 = hasHumans ? DELTA_60 : (DELTA_60 * 3);
+
+    if (hasPlayers && shouldStepMonsters) {
       rebuildMapSpatialGrids(mapInst, mapPlayers);
     }
 
-    mapInst.monsters.forEach(m => {
-      if (m.isDead) {
-        if (m.respawnTimer > 0) {
-          m.respawnTimer = Math.max(0, m.respawnTimer - dtSec);
-          if (m.respawnTimer <= 0) {
-            const safeSpawn = findServerSafeSpot(mapInst, m.spawnX, m.spawnY);
-            const nextElite = !m.isBoss && Math.random() < 0.10;
-            const baseHp = m.baseMaxHp || m.maxHp || 50;
-            m.isElite = nextElite;
-            m.scaleMult = nextElite ? 1.90 : 1.0;
-            m.maxHp = nextElite ? Math.round(baseHp * 1.85) : baseHp;
-            m.isDead = false;
-            m.hp = m.maxHp;
-            m.mp = m.maxMp;
-            m.x = safeSpawn.x;
-            m.y = safeSpawn.y;
-            m.targetX = safeSpawn.x;
-            m.targetY = safeSpawn.y;
-            m.stunUntil = 0;
-            m.defDownUntil = 0;
-            m.damageContributors.clear();
-            if (m.isBoss) {
-              mapInst.bossRespawnTimer = 0;
+    if (shouldStepMonsters) {
+      mapInst.monsters.forEach(m => {
+        if (m.isDead) {
+          if (m.respawnTimer > 0) {
+            m.respawnTimer = Math.max(0, m.respawnTimer - effDtSec);
+            if (m.respawnTimer <= 0) {
+              const safeSpawn = findServerSafeSpot(mapInst, m.spawnX, m.spawnY);
+              const nextElite = !m.isBoss && Math.random() < 0.10;
+              const baseHp = m.baseMaxHp || m.maxHp || 50;
+              m.isElite = nextElite;
+              m.scaleMult = nextElite ? 1.90 : 1.0;
+              m.maxHp = nextElite ? Math.round(baseHp * 1.85) : baseHp;
+              m.isDead = false;
+              m.hp = m.maxHp;
+              m.mp = m.maxMp;
+              m.x = safeSpawn.x;
+              m.y = safeSpawn.y;
+              m.targetX = safeSpawn.x;
+              m.targetY = safeSpawn.y;
+              m.stunUntil = 0;
+              m.defDownUntil = 0;
+              m.damageContributors.clear();
+              if (m.isBoss) {
+                mapInst.bossRespawnTimer = 0;
+              }
+              if (hasPlayers) {
+                broadcastToMap(mapKey, {
+                  type: 'MONSTER_RESPAWNED',
+                  mapKey,
+                  monster: {
+                    id: m.id,
+                    x: m.x,
+                    y: m.y,
+                    hp: m.hp,
+                    maxHp: m.maxHp,
+                    mp: m.mp,
+                    maxMp: m.maxMp,
+                    isBoss: m.isBoss,
+                    isElite: Boolean(m.isElite),
+                    scaleMult: m.scaleMult || 1.0,
+                    name: m.name
+                  },
+                  bossRespawnTimer: Math.ceil(mapInst.bossRespawnTimer)
+                });
+              }
             }
-            if (hasPlayers) {
+          }
+          return;
+        }
+
+        if (!hasPlayers) return;
+        if (m.stunUntil && now < m.stunUntil) return;
+
+        let bestTarget = null;
+        let minTargetDist = Infinity;
+
+        const candidateEntries = querySpatialGrid9(mapInst.playerGrid, m.x, m.y, true);
+        for (let cIdx = 0; cIdx < candidateEntries.length; cIdx++) {
+          const entry = candidateEntries[cIdx];
+          if (!entry || entry.gmInvisible || entry.bgInvincible) continue;
+          const p = entry.player;
+          if (!p || (p.hp !== undefined && p.hp <= 0)) continue;
+          if (isInsideServerWarpSafeZone(mapInst, p.x, p.y)) continue;
+
+          const dxP = p.x - m.x;
+          const dyP = p.y - m.y;
+          if (Math.abs(dxP) > 680 || Math.abs(dyP) > 680) continue;
+          const dPlayer = Math.hypot(dxP, dyP);
+          const merc = p.mercenary;
+          const dMerc = (merc && merc.hired !== false && !merc.isDead && merc.x !== undefined && !isInsideServerWarpSafeZone(mapInst, merc.x, merc.y))
+            ? Math.hypot(merc.x - m.x, merc.y - m.y)
+            : Infinity;
+
+          const preferMerc = dMerc < dPlayer * 0.85 || (merc?.class === 'knight' && dMerc < 140);
+          const effDist = preferMerc ? dMerc : dPlayer;
+          if (effDist < minTargetDist) {
+            minTargetDist = effDist;
+            bestTarget = {
+              charId: entry.charId,
+              entry,
+              isMerc: preferMerc,
+              x: preferMerc ? merc.x : p.x,
+              y: preferMerc ? merc.y : p.y,
+              dist: effDist
+            };
+          }
+        }
+
+        const distFromSpawn = Math.hypot(m.x - m.spawnX, m.y - m.spawnY);
+        const isRangedOrMagic = (m.maxMp > 0 && m.mp >= 10) || String(m.name || '').includes('궁수') || String(m.name || '').includes('주술사') || String(m.name || '').includes('사제');
+        const mobAtkRange = isRangedOrMagic ? 175 : (m.isBoss ? 64 : 54);
+        const isProvoked = bestTarget && ((m.hp < m.maxHp && bestTarget.dist < 660) || (m.isAggro && bestTarget.dist < 285));
+
+        if (isProvoked && distFromSpawn < 600) {
+          const targetX = bestTarget.x;
+          const targetY = bestTarget.y;
+          const targetDist = bestTarget.dist;
+
+          if (m.isBoss && targetDist <= 380) {
+            if (!m.lastTelegraphTime) m.lastTelegraphTime = now - 5000;
+            if (now - m.lastTelegraphTime >= 8500) {
+              m.lastTelegraphTime = now;
+              const tgRadius = 165;
+              mapInst.bossTelegraphs.push({
+                boss: m,
+                x: Math.round(targetX),
+                y: Math.round(targetY),
+                radius: tgRadius,
+                startTime: now,
+                duration: 1500
+              });
               broadcastToMap(mapKey, {
-                type: 'MONSTER_RESPAWNED',
+                type: 'BOSS_TELEGRAPH_START',
                 mapKey,
-                monster: {
-                  id: m.id,
-                  x: m.x,
-                  y: m.y,
-                  hp: m.hp,
-                  maxHp: m.maxHp,
-                  mp: m.mp,
-                  maxMp: m.maxMp,
-                  isBoss: m.isBoss,
-                  isElite: Boolean(m.isElite),
-                  scaleMult: m.scaleMult || 1.0,
-                  name: m.name
-                },
-                bossRespawnTimer: Math.ceil(mapInst.bossRespawnTimer)
+                bossId: m.id,
+                bossX: Math.round(m.x),
+                bossY: Math.round(m.y),
+                x: Math.round(targetX),
+                y: Math.round(targetY),
+                radius: tgRadius,
+                duration: 1500
               });
             }
           }
-        }
-        return;
-      }
 
-      if (!hasPlayers) return;
-      if (m.stunUntil && now < m.stunUntil) return;
+          if (targetDist > mobAtkRange) {
+            const angle = Math.atan2(targetY - m.y, targetX - m.x);
+            const chaseSpd = m.isBoss ? 1.82 : 1.45;
+            const step = Math.min(targetDist - mobAtkRange + 4, chaseSpd * effDelta60);
+            if (hasHumans) {
+              const steer = findServerOpenSteerPoint(mapInst, m.x, m.y, angle, step, true, m, mapPlayers);
+              if (steer) {
+                m.x = steer.x;
+                m.y = steer.y;
+              }
+            } else {
+              // 인간 유저가 없는 AI 전용 사냥터에서는 12방향 레이캐스팅 대신 직선+좌우 3방향 고속 이동 적용
+              const nx = m.x + Math.cos(angle) * step;
+              const ny = m.y + Math.sin(angle) * step;
+              if (!checkServerCollision(mapInst, nx, ny) && !isInsideServerWarpSafeZone(mapInst, nx, ny)) {
+                m.x = nx;
+                m.y = ny;
+              }
+            }
+          } else if (now - (m.lastAtkTime || 0) > 1200) {
+            m.lastAtkTime = now;
+            const atkAngle = Math.atan2(targetY - m.y, targetX - m.x);
+            if (m.maxMp > 0 && m.mp >= 10) m.mp = Math.max(0, m.mp - 10);
 
-      let bestTarget = null;
-      let minTargetDist = Infinity;
-
-      // 📐 공간 격자(Spatial Grid)를 사용하여 몬스터 주변 인접 격자 내 플레이어만 탐색 (전수 비교 제거)
-      const candidateEntries = querySpatialGrid9(mapInst.playerGrid, m.x, m.y, true);
-      for (let cIdx = 0; cIdx < candidateEntries.length; cIdx++) {
-        const entry = candidateEntries[cIdx];
-        if (!entry || entry.gmInvisible || entry.bgInvincible) continue;
-        const p = entry.player;
-        if (!p || (p.hp !== undefined && p.hp <= 0)) continue;
-        if (isInsideServerWarpSafeZone(mapInst, p.x, p.y)) continue;
-
-        const dPlayer = Math.hypot(p.x - m.x, p.y - m.y);
-        const merc = p.mercenary;
-        const dMerc = (merc && merc.hired !== false && !merc.isDead && merc.x !== undefined && !isInsideServerWarpSafeZone(mapInst, merc.x, merc.y))
-          ? Math.hypot(merc.x - m.x, merc.y - m.y)
-          : Infinity;
-
-        const preferMerc = dMerc < dPlayer * 0.85 || (merc?.class === 'knight' && dMerc < 140);
-        const effDist = preferMerc ? dMerc : dPlayer;
-        if (effDist < minTargetDist) {
-          minTargetDist = effDist;
-          bestTarget = {
-            charId: entry.charId,
-            entry,
-            isMerc: preferMerc,
-            x: preferMerc ? merc.x : p.x,
-            y: preferMerc ? merc.y : p.y,
-            dist: effDist
-          };
-        }
-      }
-
-      const distFromSpawn = Math.hypot(m.x - m.spawnX, m.y - m.spawnY);
-      const isRangedOrMagic = (m.maxMp > 0 && m.mp >= 10) || String(m.name || '').includes('궁수') || String(m.name || '').includes('주술사') || String(m.name || '').includes('사제');
-      const mobAtkRange = isRangedOrMagic ? 175 : (m.isBoss ? 64 : 54);
-      const isProvoked = bestTarget && ((m.hp < m.maxHp && bestTarget.dist < 660) || (m.isAggro && bestTarget.dist < 285));
-
-      if (isProvoked && distFromSpawn < 600) {
-        const targetX = bestTarget.x;
-        const targetY = bestTarget.y;
-        const targetDist = bestTarget.dist;
-
-        if (m.isBoss && targetDist <= 380) {
-          if (!m.lastTelegraphTime) m.lastTelegraphTime = now - 5000;
-          if (now - m.lastTelegraphTime >= 8500) {
-            m.lastTelegraphTime = now;
-            const tgRadius = 165;
-            mapInst.bossTelegraphs.push({
-              boss: m,
-              x: Math.round(targetX),
-              y: Math.round(targetY),
-              radius: tgRadius,
-              startTime: now,
-              duration: 1500
-            });
-            broadcastToMap(mapKey, {
-              type: 'BOSS_TELEGRAPH_START',
-              mapKey,
-              bossId: m.id,
-              bossX: Math.round(m.x),
-              bossY: Math.round(m.y),
-              x: Math.round(targetX),
-              y: Math.round(targetY),
-              radius: tgRadius,
-              duration: 1500
-            });
+            const isAiTarget = isAIEntry(bestTarget.entry);
+            if (isAiTarget) {
+              queueAiRunnerEvent(bestTarget.charId, {
+                type: 'MONSTER_ATTACK_EVENT',
+                targetCharId: bestTarget.charId,
+                targetType: bestTarget.isMerc ? 'mercenary' : 'player',
+                mobId: m.id,
+                mobAtk: m.atk || 10,
+                isMagic: Boolean(isRangedOrMagic)
+              });
+            }
+            if (hasHumans) {
+              broadcastToMapAoi(mapKey, m.x, m.y, 1450, 0, {
+                type: 'MONSTER_ATTACK_EVENT',
+                mapKey,
+                mobId: m.id,
+                mobName: m.name,
+                mobLv: m.lv || 1,
+                mobAtk: m.atk || 10,
+                isBoss: Boolean(m.isBoss),
+                isMagic: Boolean(isRangedOrMagic),
+                skillName: m.skill || null,
+                targetCharId: bestTarget.charId,
+                targetType: bestTarget.isMerc ? 'mercenary' : 'player',
+                gmBlocked: Boolean((bestTarget.entry?.gmInvincible && !bestTarget.isMerc) || bestTarget.entry?.bgInvincible),
+                atkAngle: Number(atkAngle.toFixed(2)),
+                x: Math.round(m.x),
+                y: Math.round(m.y)
+              }, null, isAiTarget ? null : bestTarget.charId);
+            }
+          }
+        } else {
+          if (m.maxMp > 0 && m.mp < m.maxMp) m.mp = Math.min(m.maxMp, m.mp + 0.1 * effDelta60);
+          if (candidateEntries.length === 0 && distFromSpawn < 80) return;
+          if (distFromSpawn >= 520) {
+            m.targetX = m.spawnX;
+            m.targetY = m.spawnY;
+          } else if (Math.random() < 0.025) {
+            m.targetX = m.spawnX + (Math.random() * 160 - 80);
+            m.targetY = m.spawnY + (Math.random() * 160 - 80);
+          }
+          const dTarget = Math.hypot(m.targetX - m.x, m.targetY - m.y);
+          if (dTarget > 5) {
+            const angle = Math.atan2(m.targetY - m.y, m.targetX - m.x);
+            const nx = m.x + Math.cos(angle) * 0.65 * effDelta60;
+            const ny = m.y + Math.sin(angle) * 0.65 * effDelta60;
+            if (!checkServerCollision(mapInst, nx, ny) && !isInsideServerWarpSafeZone(mapInst, nx, ny) && (!hasHumans || !checkServerUnitCollision(mapInst, nx, ny, m, mapPlayers))) {
+              m.x = nx;
+              m.y = ny;
+            }
           }
         }
+      });
 
-        if (targetDist > mobAtkRange) {
-          const angle = Math.atan2(targetY - m.y, targetX - m.x);
-          const chaseSpd = m.isBoss ? 1.82 : 1.45;
-          const step = chaseSpd * DELTA_60;
-          const steer = findServerOpenSteerPoint(mapInst, m.x, m.y, angle, step, true, m, mapPlayers);
-          if (steer) {
-            m.x = steer.x;
-            m.y = steer.y;
-          }
-        } else if (now - (m.lastAtkTime || 0) > 1200) {
-          m.lastAtkTime = now;
-          const atkAngle = Math.atan2(targetY - m.y, targetX - m.x);
-          if (m.maxMp > 0 && m.mp >= 10) m.mp = Math.max(0, m.mp - 10);
-
-          broadcastToMapAoi(mapKey, m.x, m.y, 1450, 0, {
-            type: 'MONSTER_ATTACK_EVENT',
-            mapKey,
-            mobId: m.id,
-            mobName: m.name,
-            mobLv: m.lv || 1,
-            mobAtk: m.atk || 10,
-            isBoss: Boolean(m.isBoss),
-            isMagic: Boolean(isRangedOrMagic),
-            skillName: m.skill || null,
-            targetCharId: bestTarget.charId,
-            targetType: bestTarget.isMerc ? 'mercenary' : 'player',
-            gmBlocked: Boolean((bestTarget.entry?.gmInvincible && !bestTarget.isMerc) || bestTarget.entry?.bgInvincible),
-            atkAngle: Number(atkAngle.toFixed(2)),
-            x: Math.round(m.x),
-            y: Math.round(m.y)
-          }, null, bestTarget.charId);
-        }
-      } else {
-        if (m.maxMp > 0 && m.mp < m.maxMp) m.mp = Math.min(m.maxMp, m.mp + 0.1 * DELTA_60);
-        if (candidateEntries.length === 0 && distFromSpawn < 80) return;
-        if (distFromSpawn >= 520) {
-          m.targetX = m.spawnX;
-          m.targetY = m.spawnY;
-        } else if (Math.random() < 0.025) {
-          m.targetX = m.spawnX + (Math.random() * 160 - 80);
-          m.targetY = m.spawnY + (Math.random() * 160 - 80);
-        }
-        const dTarget = Math.hypot(m.targetX - m.x, m.targetY - m.y);
-        if (dTarget > 5) {
-          const angle = Math.atan2(m.targetY - m.y, m.targetX - m.x);
-          const nx = m.x + Math.cos(angle) * 0.65 * DELTA_60;
-          const ny = m.y + Math.sin(angle) * 0.65 * DELTA_60;
-          if (!checkServerCollision(mapInst, nx, ny) && !isInsideServerWarpSafeZone(mapInst, nx, ny) && !checkServerUnitCollision(mapInst, nx, ny, m, mapPlayers)) {
-            m.x = nx;
-            m.y = ny;
-          }
-        }
+      if (hasHumans && mapPlayers.length > 0 && (tickSeq % 2 === 0)) {
+        resolveServerMonsterSeparation(mapInst, mapPlayers);
       }
-    });
-
-    if (hasPlayers && mapPlayers.length > 0 && ((mapInst._tickSeq || 0) % 2 === 0)) {
-      resolveServerMonsterSeparation(mapInst, mapPlayers);
     }
 
     for (let i = mapInst.bossTelegraphs.length - 1; i >= 0; i--) {
@@ -5198,38 +5451,100 @@ setInterval(() => {
     }
 
     if (hasPlayers && mapPlayers.length > 0) {
-      // 📡 [Spatial Grid 기반 AOI & 동시접속 150명 + AI 100명 CPU 65% 이하 보장 패킷 동기화]
-      mapInst._tickSeq = ((mapInst._tickSeq || 0) + 1) % 24;
-      const tickSeq = mapInst._tickSeq;
-      const isNearRefreshTick = (tickSeq % 12 === 0); // 1.2초마다 AOI 전체 정합성 보정
-      const isRadarTick = (tickSeq % 6 === 0);        // 0.6초마다 실제 유저용 미니맵 원거리 레이더 갱신
+      const isNearRefreshTick = (tickSeq % 12 === 0);
+      const isRadarTick = (tickSeq % 6 === 0);
+      const isAiMapObserverTick = ((tickSeq % 3) === (mapIdx % 3));
 
       const MOB_AOI_RADIUS = 1650;
       const MOB_AOI_RADIUS_SQ = MOB_AOI_RADIUS * MOB_AOI_RADIUS;
-      const AI_MOB_AOI_RADIUS = 1450;
-      const AI_MOB_AOI_RADIUS_SQ = AI_MOB_AOI_RADIUS * AI_MOB_AOI_RADIUS;
 
-      // 맵 내 몬스터 정수 좌표 및 상태 사전 계산 (수신자 루프 내부 Math.round / 상태 연산 중복 제거)
       const mobsLen = mapInst.monsters.length;
-      for (let mIdx = 0; mIdx < mobsLen; mIdx++) {
-        const m = mapInst.monsters[mIdx];
-        m._rx = Math.round(m.x);
-        m._ry = Math.round(m.y);
-        m._stunVal = (m.stunUntil && m.stunUntil > now) ? m.stunUntil : 0;
-        m._defDownVal = (m.defDownUntil && m.defDownUntil > now) ? m.defDownUntil : 0;
+      if (hasHumans || isAiMapObserverTick) {
+        for (let mIdx = 0; mIdx < mobsLen; mIdx++) {
+          const m = mapInst.monsters[mIdx];
+          m._rx = Math.round(m.x);
+          m._ry = Math.round(m.y);
+          m._stunVal = (m.stunUntil && m.stunUntil > now) ? m.stunUntil : 0;
+          m._defDownVal = (m.defDownUntil && m.defDownUntil > now) ? m.defDownUntil : 0;
+        }
       }
 
-      // AI 수신자 틱 분할 계수: 평시 3분할(300ms), 서버 CPU 55% 이상 시 4분할(400ms)로 자동 조절하여 실제 유저 150명의 100ms 반응성 보호
-      const aiTickModulo = serverCpuUsagePct >= (SERVER_CPU_LIMIT_PCT - 8) ? 4 : 3;
+      // [A] 맵당 단 1명의 AI 대표(aiObserverEntry)에게만 300ms 주기로 맵 델타를 전송 (300개 소켓 중복 루프/전송 원천 제거!)
+      if (isAiMapObserverTick && mapInst.aiObserverEntry && mapInst.aiObserverEntry.conn) {
+        const aiObs = mapInst.aiObserverEntry;
+        if (!mapInst._aiKnownMobs) mapInst._aiKnownMobs = new Map();
+        if (!mapInst._aiKnownPlayers) mapInst._aiKnownPlayers = new Map();
 
-      for (let rIdx = 0; rIdx < mapPlayers.length; rIdx++) {
-        const receiver = mapPlayers[rIdx];
-        if (!receiver || !receiver.conn) continue;
-
-        const isAiReceiver = isAIEntry(receiver);
-        if (isAiReceiver && !isNearRefreshTick && (tickSeq % aiTickModulo !== (rIdx % aiTickModulo))) {
-          continue;
+        const aiMobs = [];
+        for (let i = 0; i < mobsLen; i++) {
+          const m = mapInst.monsters[i];
+          const rx = m._rx;
+          const ry = m._ry;
+          const prev = mapInst._aiKnownMobs.get(m.id);
+          const changed = !prev || prev.dead !== m.isDead || prev.hp !== m.hp || Math.abs(prev.x - rx) >= 6 || Math.abs(prev.y - ry) >= 6;
+          if (changed || isNearRefreshTick) {
+            mapInst._aiKnownMobs.set(m.id, { x: rx, y: ry, hp: m.hp, dead: m.isDead });
+            if (!prev || isNearRefreshTick) {
+              aiMobs.push([m.id, rx, ry, m.hp, m.isDead ? 1 : 0, 0, m.maxHp]);
+            } else {
+              aiMobs.push([m.id, rx, ry, m.hp, m.isDead ? 1 : 0]);
+            }
+          }
         }
+
+        const aiPlayers = [];
+        const validIds = [];
+        for (let i = 0; i < mapPlayers.length; i++) {
+          const other = mapPlayers[i];
+          if (!other || !other.player || other.gmInvisible) continue;
+          validIds.push(other.charId);
+          const op = other.player;
+          const ox = Math.round(op.x || 2000);
+          const oy = Math.round(op.y || 14250);
+          const prevP = mapInst._aiKnownPlayers.get(other.charId);
+          const pChanged = !prevP || Math.abs(prevP.x - ox) >= 8 || Math.abs(prevP.y - oy) >= 8 || prevP.hp !== op.hp || prevP.tId !== (op.targetMobId || null) || prevP.pId !== (other.partyId || null);
+          if (pChanged || isNearRefreshTick) {
+            const isNew = !prevP || isNearRefreshTick;
+            mapInst._aiKnownPlayers.set(other.charId, { x: ox, y: oy, hp: op.hp, tId: op.targetMobId || null, pId: other.partyId || null });
+            const pkt = { charId: other.charId, x: ox, y: oy, hp: op.hp, maxHp: op.maxHp, targetMobId: op.targetMobId || null };
+            if (other.partyId) pkt.partyId = other.partyId;
+            if (isNew) {
+              pkt.name = op.name;
+              pkt.level = op.level;
+              pkt.class = op.class;
+            }
+            aiPlayers.push(pkt);
+          }
+        }
+
+        let removedAny = false;
+        const validSet = new Set(validIds);
+        mapInst._aiKnownPlayers.forEach((_, cid) => {
+          if (!validSet.has(cid)) {
+            mapInst._aiKnownPlayers.delete(cid);
+            removedAny = true;
+          }
+        });
+
+        if (aiMobs.length > 0 || aiPlayers.length > 0 || removedAny || isNearRefreshTick) {
+          const aiTickPkt = {
+            type: 'WORLD_STATE_TICK',
+            serverTime: now,
+            mapKey,
+            hasHuman: hasHumans
+          };
+          if (aiMobs.length > 0) aiTickPkt.ms = aiMobs;
+          if (aiPlayers.length > 0) aiTickPkt.players = aiPlayers;
+          if (removedAny || isNearRefreshTick) aiTickPkt.allCharIds = validIds;
+          queueAiRunnerEvent(aiObs.charId, aiTickPkt);
+        }
+      }
+
+      // [B] 실제 인간 유저(humanPlayers)에게는 매 100ms마다 100% 무손실 정밀 AOI 패킷 전송!
+      for (let rIdx = 0; rIdx < humanPlayers.length; rIdx++) {
+        const receiver = humanPlayers[rIdx];
+        if (!receiver || !receiver.conn) continue;
+        const isAiReceiver = false;
 
         const bufferedBytes = receiver.conn?.bufferedAmount ?? receiver.conn?.socket?.writableLength ?? 0;
         if (!isNearRefreshTick && bufferedBytes > 65536) continue;
@@ -5243,10 +5558,9 @@ setInterval(() => {
         const recParty = getPartyByCharId(receiver.charId);
         const recPartyId = recParty ? recParty.partyId : null;
 
-        // 1) 내 주변 필드 + 미니맵 범위 몬스터 선별 (제곱 거리 비교로 Math.hypot 제거)
         const compactMobs = [];
-        const mobRadius = isAiReceiver ? AI_MOB_AOI_RADIUS : MOB_AOI_RADIUS;
-        const mobRadiusSq = isAiReceiver ? AI_MOB_AOI_RADIUS_SQ : MOB_AOI_RADIUS_SQ;
+        const mobRadius = MOB_AOI_RADIUS;
+        const mobRadiusSq = MOB_AOI_RADIUS_SQ;
 
         for (let i = 0; i < mobsLen; i++) {
           const m = mapInst.monsters[i];
@@ -5280,7 +5594,7 @@ setInterval(() => {
           const ccChanged = (!prev) || Boolean(prev.stun) !== Boolean(m._stunVal) || Boolean(prev.defDown) !== Boolean(m._defDownVal);
 
           if (enteredAoi || stateChanged || movedNow || stoppedNow || hpChanged || ccChanged || (isNearRefreshTick && !m.isDead)) {
-            const needFullMeta = !isAiReceiver && (enteredAoi || stateChanged || isNearRefreshTick);
+            const needFullMeta = (enteredAoi || stateChanged || isNearRefreshTick);
             receiver._knownMobs.set(m.id, {
               x: rx,
               y: ry,
@@ -5312,15 +5626,11 @@ setInterval(() => {
           }
         }
 
-        // 2) 📐 Spatial Grid 기반 플레이어 AOI 탐색 (실제 유저는 카메라 화면 전체 1450px 커버, AI는 760px 커버)
         const visiblePlayers = [];
         const currentAoiIds = new Set();
-        const searchRadius = isAiReceiver ? AI_PLAYER_AOI_HYSTERESIS : PLAYER_AOI_HYSTERESIS;
-        const aoiCandidates = isAiReceiver
-          ? querySpatialGrid9(mapInst.playerGrid, rPx, rPy, true)
-          : querySpatialGridRadius(mapInst.playerGrid, rPx, rPy, searchRadius);
+        const searchRadius = PLAYER_AOI_HYSTERESIS;
+        const aoiCandidates = querySpatialGridRadius(mapInst.playerGrid, rPx, rPy, searchRadius);
 
-        // 같은 파티원이 AOI 밖에 있더라도 파티 점사/추적을 위해 후보에 포함
         if (recParty && Array.isArray(recParty.members)) {
           for (let mIdx = 0; mIdx < recParty.members.length; mIdx++) {
             const pMemEntry = activeCharSockets.get(recParty.members[mIdx]);
@@ -5330,8 +5640,8 @@ setInterval(() => {
           }
         }
 
-        const enterR = isAiReceiver ? AI_PLAYER_AOI_RADIUS : PLAYER_AOI_RADIUS;
-        const exitR = isAiReceiver ? AI_PLAYER_AOI_HYSTERESIS : PLAYER_AOI_HYSTERESIS;
+        const enterR = PLAYER_AOI_RADIUS;
+        const exitR = PLAYER_AOI_HYSTERESIS;
 
         for (let cIdx = 0; cIdx < aoiCandidates.length; cIdx++) {
           const other = aoiCandidates[cIdx];
@@ -5357,35 +5667,6 @@ setInterval(() => {
           const oParty = getPartyByCharId(other.charId);
           const partyId = oParty ? oParty.partyId : null;
           const isLeader = Boolean(oParty && oParty.leaderCharId === other.charId);
-
-          // AI 수신자에게는 시각 렌더링용 메타데이터/용병 정보를 생략하고 핵심 좌표·파티·체력만 초경량 전송
-          if (isAiReceiver) {
-            const aiMoved = !prevP || Math.abs(prevP.x - ox) >= 2 || Math.abs(prevP.y - oy) >= 2 || prevP.hp !== op.hp || prevP.targetMobId !== (op.targetMobId || null) || prevP.partyId !== partyId;
-            if (aiMoved || isNearRefreshTick) {
-              const isNewForAi = !prevP || isNearRefreshTick;
-              receiver._knownPlayers.set(other.charId, {
-                x: ox, y: oy, hp: op.hp,
-                targetMobId: op.targetMobId || null,
-                partyId
-              });
-              const aiPkt = {
-                charId: other.charId,
-                x: ox,
-                y: oy,
-                hp: op.hp,
-                maxHp: op.maxHp
-              };
-              if (isNewForAi) {
-                aiPkt.name = op.name;
-                aiPkt.level = op.level;
-                aiPkt.class = op.class;
-              }
-              if (partyId) aiPkt.partyId = partyId;
-              aiPkt.targetMobId = op.targetMobId || null;
-              visiblePlayers.push(aiPkt);
-            }
-            continue;
-          }
 
           const merc = (op.mercenary && op.mercenary.hired !== false) ? op.mercenary : null;
           const mx = merc ? Math.round(merc.x || ox) : 0;
@@ -5420,7 +5701,6 @@ setInterval(() => {
                 isAI: isAIEntry(other)
               });
             } else {
-              // 📉 정적 메타데이터를 제거한 초경량 델타 패킷
               const deltaP = {
                 charId: other.charId,
                 x: ox,
@@ -5458,51 +5738,45 @@ setInterval(() => {
           }
         }
 
-        // 실제 유저(Human)에게는:
-        // 1) 방금 AOI 밖으로 벗어난 플레이어(prevFar.metaSig !== 'minimap')는 즉시 _minimapOnly 전환 패킷을 보내 화면 가장자리 잔상 제거!
-        // 2) 레이더 틱(isRadarTick)마다 원거리 플레이어의 미니맵 좌표 갱신!
         const allMapValidIds = [];
-        if (!isAiReceiver) {
-          for (let i = 0; i < mapPlayers.length; i++) {
-            const farOther = mapPlayers[i];
-            if (!farOther || farOther.charId === receiver.charId) continue;
-            if (farOther.gmInvisible && !receiver.isAdmin) continue;
-            allMapValidIds.push(farOther.charId);
-            if (currentAoiIds.has(farOther.charId)) continue;
+        for (let i = 0; i < mapPlayers.length; i++) {
+          const farOther = mapPlayers[i];
+          if (!farOther || farOther.charId === receiver.charId) continue;
+          if (farOther.gmInvisible && !receiver.isAdmin) continue;
+          allMapValidIds.push(farOther.charId);
+          if (currentAoiIds.has(farOther.charId)) continue;
 
-            const fop = farOther.player;
-            if (!fop) continue;
-            const fox = Math.round(fop.x || 2000);
-            const foy = Math.round(fop.y || 14250);
-            const prevFar = receiver._knownPlayers.get(farOther.charId);
-            const justLeftAoi = Boolean(prevFar && prevFar.metaSig !== 'minimap');
+          const fop = farOther.player;
+          if (!fop) continue;
+          const fox = Math.round(fop.x || 2000);
+          const foy = Math.round(fop.y || 14250);
+          const prevFar = receiver._knownPlayers.get(farOther.charId);
+          const justLeftAoi = Boolean(prevFar && prevFar.metaSig !== 'minimap');
 
-            if (!prevFar || justLeftAoi || (isRadarTick && (Math.abs(prevFar.x - fox) >= 15 || Math.abs(prevFar.y - foy) >= 15))) {
-              receiver._knownPlayers.set(farOther.charId, {
-                x: fox,
-                y: foy,
-                metaSig: 'minimap'
-              });
-              const fParty = getPartyByCharId(farOther.charId);
-              visiblePlayers.push({
-                charId: farOther.charId,
-                name: fop.name || '모험가',
-                level: fop.level || 1,
-                class: fop.class || 'knight',
-                x: fox,
-                y: foy,
-                partyId: fParty ? fParty.partyId : (farOther.partyId || null),
-                isPartyLeader: Boolean(fParty && fParty.leaderCharId === farOther.charId),
-                partyMemberCount: fParty ? fParty.members.length : 0,
-                isAI: isAIEntry(farOther),
-                _minimapOnly: true
-              });
-            }
+          if (!prevFar || justLeftAoi || (isRadarTick && (Math.abs(prevFar.x - fox) >= 15 || Math.abs(prevFar.y - foy) >= 15))) {
+            receiver._knownPlayers.set(farOther.charId, {
+              x: fox,
+              y: foy,
+              metaSig: 'minimap'
+            });
+            const fParty = getPartyByCharId(farOther.charId);
+            visiblePlayers.push({
+              charId: farOther.charId,
+              name: fop.name || '모험가',
+              level: fop.level || 1,
+              class: fop.class || 'knight',
+              x: fox,
+              y: foy,
+              partyId: fParty ? fParty.partyId : (farOther.partyId || null),
+              isPartyLeader: Boolean(fParty && fParty.leaderCharId === farOther.charId),
+              partyMemberCount: fParty ? fParty.members.length : 0,
+              isAI: isAIEntry(farOther),
+              _minimapOnly: true
+            });
           }
         }
 
-        // 맵(또는 AI의 경우 AOI)을 벗어난 플레이어 캐시 정리
-        const validSetForReceiver = isAiReceiver ? currentAoiIds : new Set(allMapValidIds);
+        const validSetForReceiver = new Set(allMapValidIds);
         let otherRemoved = false;
         receiver._knownPlayers.forEach((_, cId) => {
           if (!validSetForReceiver.has(cId)) {
@@ -5532,17 +5806,18 @@ setInterval(() => {
           tickPacket.players = visiblePlayers;
           tickPacket.playersDelta = true;
           if (otherCountChanged || isNearRefreshTick) {
-            tickPacket.allCharIds = isAiReceiver ? Array.from(currentAoiIds) : allMapValidIds;
+            tickPacket.allCharIds = allMapValidIds;
           }
         }
         if (isNearRefreshTick) {
-          if (!isAiReceiver) tickPacket.buildVersion = CURRENT_BUILD_VERSION;
+          tickPacket.buildVersion = CURRENT_BUILD_VERSION;
           tickPacket.party = recParty ? buildPartySnapshot(recParty) : null;
         }
         sendWsMessage(receiver.conn, tickPacket, true);
       }
     }
   });
+  flushServerAiBatch();
 }, SERVER_TICK_MS);
 
 // ============================================================================
@@ -5636,12 +5911,17 @@ function maskEmailAddress(email) {
   return `${visible}${'*'.repeat(maskedLen)}${domainPart}`;
 }
 
-  // [API 0] 수파베이스 실시간 온라인 연결 가능 여부 핑 체크
+  // [API 0] 수파베이스 온라인 핑 체크 (5분 메모리 캐시 적용으로 로그인 화면 접속 시 반복 DB 쿼리 차단)
   if (pathname === '/api/supabase/ping' && (req.method === 'GET' || req.method === 'POST')) {
-    const pingRows = await supabaseRest('magic_accounts', 'GET', '?select=*&limit=1');
+    const nowTs = Date.now();
+    if (global._lastSupabasePingOkTs && (nowTs - global._lastSupabasePingOkTs < 300000)) {
+      return sendJson(res, 200, { ok: true, online: true, cached: true });
+    }
+    const pingRows = await supabaseRest('magic_accounts', 'GET', '?select=user_id&limit=1');
     if (pingRows === null) {
       return sendJson(res, 503, { ok: false, online: false, error: '수파베이스 DB에 온라인 연결할 수 없습니다.' });
     }
+    global._lastSupabasePingOkTs = nowTs;
     return sendJson(res, 200, { ok: true, online: true });
   }
 
@@ -6229,7 +6509,7 @@ setInterval(() => {
 }, 3000);
 
 server.listen(PORT, '0.0.0.0', () => {
-  startBatchSyncWorker(240000);
+  startBatchSyncWorker(600000);
   console.log(`==============================================================`);
   console.log(`🚀 [Age of Magic] 수파베이스 단독 기준 서버 가동 완료!`);
   console.log(`🌐 접속 주소  : http://0.0.0.0:${PORT}`);
@@ -6238,7 +6518,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`==============================================================`);
 
   // 로컬 단독 실행 시(PM2 이중 실행이 아닐 때) AI 에이전트 러너 자동 구동
-  if (process.env.PM2_MANAGED !== 'true' && process.env.DISABLE_AUTO_AI_RUNNER !== 'true') {
+  if (process.env.PM2_MANAGED !== 'true' && process.env.pm_id === undefined && process.env.DISABLE_AUTO_AI_RUNNER !== 'true') {
     setTimeout(() => {
       try {
         const runnerPath = fs.existsSync(path.join(__dirname, 'aiAgentRunner.js')) ? './aiAgentRunner.js' : './aiagentrunner.js';

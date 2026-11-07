@@ -60,7 +60,7 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 // 기본 배치 주기: 3분(180,000ms) - 환경변수 BATCH_SYNC_INTERVAL_MS로 1~5분(60000~300000) 조절 가능
 const DEFAULT_BATCH_INTERVAL_MS = Math.max(
   30000,
-  Number(process.env.BATCH_SYNC_INTERVAL_MS || 180000)
+  Number(process.env.BATCH_SYNC_INTERVAL_MS || 600000)
 );
 
 // Redis 키 네임스페이스 상수
