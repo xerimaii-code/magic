@@ -296,11 +296,11 @@ async function initSupabaseConnection() {
     }
   }
 
-  // 1) 브라우저 직접 REST 핑 & 2) 중앙 서버(/api/supabase/ping) 동시 병렬 확인
-  const [directRestOk, srvPing] = await Promise.all([
-    pingSupabaseDirectRest(url, key, accTable),
-    callCentralServerApi('/api/supabase/ping', 'GET')
-  ]);
+  // 1) 중앙 서버(/api/supabase/ping - 5분 캐시됨) 우선 확인 후 미응답 시에만 직접 REST 핑 수행하여 DB 로그 절약!
+  const srvPing = await callCentralServerApi('/api/supabase/ping', 'GET');
+  const directRestOk = (srvPing && srvPing.ok && srvPing.online)
+    ? true
+    : await pingSupabaseDirectRest(url, key, accTable);
 
   let directOnlineOk = Boolean(directRestOk);
   let serverOnlineOk = Boolean(srvPing && srvPing.ok && srvPing.online);

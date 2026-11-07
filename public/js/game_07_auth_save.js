@@ -125,32 +125,14 @@ function startSlotScreenRealtimeSync() {
   if (!currentAccountUser) return;
   const charTable = GameDB.SupabaseConfig?.tables?.characters || 'magic_characters';
 
-  // 1) Supabase Realtime 구독으로 다른 기기에서 캐릭터 생성/삭제 시 슬롯 화면 실시간 자동 갱신
-  if (isSupabaseRemoteConnected && supabaseClient) {
-    try {
-      slotScreenRealtimeSub = supabaseClient
-        .channel(`magic_slot_watch_${currentAccountUser.id}`)
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: charTable, filter: `user_id=eq.${currentAccountUser.id}` },
-          async () => {
-            if (!isGameSessionActive && currentAccountUser) {
-              await loadAccountCharacterSlots(true);
-              renderCharacterSlots();
-            }
-          }
-        )
-        .subscribe();
-    } catch (e) {}
-  }
-
-  // 2) 15초 주기 서버 폴링으로 선택 대기 상태에서도 데이터 소모를 아끼면서 수파베이스 최신 슬롯 상태 유지 (Realtime 구독 병행)
+  // 📉 수파베이스 Realtime 웹소켓 하트비트 로그(Log Ingestion) 원천 차단을 위해 불필요한 채널 구독 제거
+  // 대기 화면에서는 60초 간격으로만 가볍게 갱신
   slotScreenPollTimer = setInterval(async () => {
     if (!isGameSessionActive && !document.hidden && currentAccountUser && document.getElementById('slot-box')?.style.display !== 'none') {
       await loadAccountCharacterSlots(true);
       renderCharacterSlots();
     }
-  }, 30000);
+  }, 60000);
 }
 
 function stopSlotScreenRealtimeSync() {
@@ -215,8 +197,8 @@ window.checkEmailDuplicate = async function() {
     if (srvCheck.exists) exists = true;
   }
 
-  // B. Supabase magic_accounts 테이블 직접 실시간 조회
-  if (isSupabaseRemoteConnected && supabaseClient) {
+  // B. 중앙 서버 미응답 시에만 Supabase magic_accounts 테이블 직접 조회 폴백
+  if (!verifiedRemote && isSupabaseRemoteConnected && supabaseClient) {
     const { data, error } = await supabaseClient
       .from(accTable)
       .select('email')
@@ -508,8 +490,21 @@ async function loadAccountSharedStorage(forceRemote = true) {
   let loadedItems = Array(maxSlots).fill(null);
   let loadedFromRemote = false;
 
-  // A. 수파베이스 직접 조회 최우선
-  if (isSupabaseRemoteConnected && supabaseClient) {
+  // A. 중앙 서버 조회 우선
+  const srvStFirst = await callCentralServerApi(`/api/storage/${encodeURIComponent(currentAccountUser.id)}`, 'GET');
+  if (srvStFirst && srvStFirst.ok) {
+    if (srvStFirst.storage) {
+      loadedGold = Number(srvStFirst.storage.bank_gold) || 0;
+      if (Array.isArray(srvStFirst.storage.bank_items)) {
+        loadedItems = srvStFirst.storage.bank_items.slice(0, maxSlots);
+        while (loadedItems.length < maxSlots) loadedItems.push(null);
+      }
+    }
+    loadedFromRemote = true;
+  }
+
+  // B. 중앙 서버 미응답 시 수파베이스 직접 조회 폴백
+  if (!loadedFromRemote && isSupabaseRemoteConnected && supabaseClient) {
     const { data, error } = await supabaseClient
       .from(storageTable)
       .select('*')
@@ -563,9 +558,8 @@ async function saveAccountSharedStorage() {
     updated_at: new Date().toISOString()
   };
 
-  callCentralServerApi('/api/storage/save', 'POST', payload);
-
-  if (isSupabaseRemoteConnected && supabaseClient) {
+  const srvSaved = await callCentralServerApi('/api/storage/save', 'POST', payload);
+  if (!srvSaved && isSupabaseRemoteConnected && supabaseClient) {
     await supabaseClient.from(storageTable).upsert(payload, { onConflict: 'user_id' });
   }
 }
@@ -763,7 +757,7 @@ window.checkCharacterNameDuplicate = async function() {
     if (srvDup.exists) isDup = true;
   }
 
-  if (isSupabaseRemoteConnected && supabaseClient) {
+  if (!checkedRemote && isSupabaseRemoteConnected && supabaseClient) {
     const { data, error } = await supabaseClient
       .from(charTable)
       .select('id, name')
@@ -883,8 +877,8 @@ window.confirmCreateCharacter = async function() {
     dbCreatedOk = true;
   }
 
-  // B. Supabase 클라이언트 직접 검증 및 저장
-  if (isSupabaseRemoteConnected && supabaseClient) {
+  // B. 중앙 서버 미응답 시에만 Supabase 클라이언트 직접 검증 및 저장 폴백
+  if (!dbCreatedOk && isSupabaseRemoteConnected && supabaseClient) {
     const { data: liveSlotRows, error: slotCheckErr } = await supabaseClient
       .from(charTable)
       .select('id, name, slot_index')
@@ -998,7 +992,7 @@ window.executeDeleteCharacter = async function() {
     deletedRemote = true;
   }
 
-  if (isSupabaseRemoteConnected && supabaseClient) {
+  if (!deletedRemote && isSupabaseRemoteConnected && supabaseClient) {
     const { error } = await supabaseClient
       .from(charTable)
       .delete()
@@ -1098,34 +1092,8 @@ async function registerActiveGameSession(charId, prevCharId = null) {
     await callCentralServerApi('/api/characters/save', 'POST', initCharPayload);
   }
 
-  if (isSupabaseRemoteConnected && supabaseClient) {
-    await supabaseClient
-      .from(charTable)
-      .update({ session_token: currentSessionToken, updated_at: new Date().toISOString() })
-      .eq('id', charId);
-
-    // 🌟 Supabase Realtime 구독을 계정(magic_accounts)이 아닌 '현재 캐릭터(magic_characters.id)' 단위로 감시!
-    // -> 같은 계정의 다른 캐릭터가 접속해도 끊기지 않으며, 오직 동일한 캐릭터(charId)로 새로 접속했을 때만 기존 캐릭터가 종료됨!
-    try {
-      if (realtimeSubscription) {
-        supabaseClient.removeChannel(realtimeSubscription);
-        realtimeSubscription = null;
-      }
-      realtimeSubscription = supabaseClient
-        .channel(`magic_char_session_${charId}`)
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: charTable, filter: `id=eq.${charId}` },
-          (payload) => {
-            const newToken = payload?.new?.session_token;
-            if (isGameSessionActive && activeCharacterId === charId && newToken && newToken !== currentSessionToken) {
-              handleForceDisconnectByOtherBrowser();
-            }
-          }
-        )
-        .subscribe();
-    } catch (e) {}
-  }
+  // 📉 중앙 서버(magic_server.js)가 ENTER_CHAR 웹소켓 패킷으로 중복 접속 차단을 100% 처리하므로,
+  // 브라우저의 이중 DB UPDATE 및 Supabase Realtime 웹소켓 상시 구독을 생략하여 Log Ingestion을 절감합니다.
 
   // 같은 브라우저의 다른 탭에도 '동일 캐릭터(charId)' 기준 브로드캐스트
   if (sessionBroadcastChannel) {
