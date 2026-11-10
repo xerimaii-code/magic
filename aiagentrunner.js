@@ -3293,6 +3293,9 @@ ${situationContext}
   }
 
   buildCharacterRecord(isLogout = false) {
+    const cd = (this.dbRow && typeof this.dbRow === 'object' && this.dbRow.char_data)
+      ? this.dbRow.char_data
+      : {};
     return {
       id: this.charId,
       user_id: this.userId,
@@ -3308,18 +3311,18 @@ ${situationContext}
       pos_y: Math.round(this.y),
       session_token: isLogout ? null : this.sessionToken,
       char_data: {
-        ...(this.dbRow.char_data || {}),
+        ...cd,
         isAI: true,
         hp: Math.round(this.hp),
         maxHp: Math.round(this.maxHp),
         mp: Math.round(this.mp),
         maxMp: Math.round(this.maxMp),
         maxExp: this.maxExp,
-        stats: this.stats,
-        equip: this.equip,
-        inventory: this.inventory,
-        learnedSkills: this.learnedSkills,
-        mercenary: this.mercenary,
+        stats: this.stats || {},
+        equip: this.equip || {},
+        inventory: this.inventory || [],
+        learnedSkills: this.learnedSkills || [],
+        mercenary: this.mercenary || null,
         personality: this.personality,
         autoInviteChance: this.autoInviteChance
       },
@@ -3345,6 +3348,8 @@ ${situationContext}
   }
 
   destroy() {
+    if (this._destroyed) return;
+    this._destroyed = true;
     this.isLoggingOut = true;
     if (this.loopTimer && typeof this.loopTimer === 'object') {
       clearInterval(this.loopTimer);
@@ -3377,10 +3382,14 @@ ${situationContext}
   }
 
   async logout(skipDbSave = false) {
+    if (this._hasLoggedOut) return;
+    this._hasLoggedOut = true;
     this.isLoggingOut = true;
     this.sendWs({ type: 'LEAVE_CHAR', charId: this.charId });
-    if (!skipDbSave) {
-      await this.saveToSupabase(true);
+    if (!skipDbSave && !this._destroyed) {
+      try {
+        await this.saveToSupabase(true);
+      } catch (_) {}
     }
     this.destroy();
     activeAgents = activeAgents.filter(a => a !== this);
@@ -3432,7 +3441,11 @@ async function manageAgentRotation() {
     for (let i = 0; i < activeAgents.length; i++) {
       const a = activeAgents[i];
       if (!a) continue;
-      const isSocketAlive = !a.isLoggingOut && a.ws && (a.ws.readyState === WebSocket.OPEN || a.ws.readyState === WebSocket.CONNECTING);
+      if (a.isLoggingOut) {
+        // gracefulLogout 타임아웃(1.5초) 대기 중인 에이전트는 destroy를 미리 부르지 않고 유지
+        continue;
+      }
+      const isSocketAlive = a.ws && (a.ws.readyState === WebSocket.OPEN || a.ws.readyState === WebSocket.CONNECTING);
       if (isSocketAlive) {
         aliveList.push(a);
       } else {
