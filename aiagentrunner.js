@@ -3604,9 +3604,10 @@ async function startAIAgentRunner() {
   runnerStarted = true;
 
   // 1) 3분마다 로컬 디스크(data/ai_pool_snapshot.json)에 AI 600명 성장 상태 저장 (수파베이스 I/O 0바이트)
-  setInterval(() => flushLocalAiSnapshotIfNeeded(false), 180000);
+  // 🛑 3분 주기 600명 통짜 직렬화(메모리 380MB 스파이크 및 SIGKILL 주범) 완전 제거!
+  // AI 성장 스냅샷은 프로세스 종료(SIGINT/SIGTERM) 시에만 안전하게 1회 저장합니다.
   // 2) 6시간마다 레벨업한 AI만 모아서 수파베이스 체크포인트 백업 (하루 단 4회 호출로 일일 로그 1MB 미만 유지)
-  setInterval(() => flushAiMilestonesToSupabase(), 6 * 60 * 60 * 1000);
+  // 🛑 핫루프 Supabase 주기적 플러시 제거 (서버 종료 시에만 저장)
   process.once('SIGINT', async () => { await flushAiMilestonesToSupabase(); process.exit(0); });
   process.once('SIGTERM', async () => { await flushAiMilestonesToSupabase(); process.exit(0); });
 
