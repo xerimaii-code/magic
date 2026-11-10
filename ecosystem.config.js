@@ -6,8 +6,7 @@ module.exports = {
       script: "./magic_server.js",
       autorestart: true,
       watch: false,
-      max_memory_restart: "250M",
-      node_args: "--max-old-space-size=128",
+      max_memory_restart: "400M",
       env: {
         NODE_ENV: "production",
         PORT: 4000,
@@ -25,8 +24,8 @@ module.exports = {
       script: "./aiagentrunner.js",
       autorestart: true,
       watch: false,
-      max_memory_restart: "350M",
-      node_args: "--max-old-space-size=128 --expose-gc",
+      max_memory_restart: "480M",
+      node_args: "--expose-gc",
       env: {
         NODE_ENV: "production",
         SERVER_WS_URL: "ws://127.0.0.1:4000/ws",

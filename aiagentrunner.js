@@ -3408,17 +3408,17 @@ function ensureMasterAiLoopRunning() {
 }
 
 
-// ─── 768MB~1GB VPS 호스트 메모리 보호: 15초마다 V8 능동 가비지 컬렉션(GC)으로 메모리 튐(380MB) 완전 차단 ───
+// ─── 768MB~1GB VPS 호스트 메모리 보호: 30초마다 가비지 컬렉션(GC)으로 안정적인 메모리 유지 ───
 setInterval(() => {
   if (typeof global.gc === 'function') {
     try {
       const m = process.memoryUsage();
-      if (m.heapUsed > 70 * 1024 * 1024 || m.rss > 175 * 1024 * 1024) {
+      if (m.heapUsed > 75 * 1024 * 1024) {
         global.gc();
       }
     } catch (_) {}
   }
-}, 15000);
+}, 30000);
 
 let isFirstRotationWave = true;
 let isRebuildingPool = false;
@@ -3456,7 +3456,12 @@ async function manageAgentRotation() {
       let spawned = 0;
       let scanned = 0;
 
-      while (spawned < needed && scanned < totalPoolLen) {
+      // 🌟 스마트 순차 접속(Staggered Spawning): 1ms에 100개 웹소켓이 한꺼번에 열리며 발생하는 CPU 200% & 353MB 메모리 폭주를 원천 차단!
+      // 부팅 시 8명씩 부드럽게 접속시켜 호스트 RAM과 CPU에 일체의 충격이 없도록 제어
+      const spawnBatchLimit = isFirstRotationWave ? 8 : 4;
+      const toSpawn = Math.min(needed, spawnBatchLimit);
+
+      while (spawned < toSpawn && scanned < totalPoolLen) {
         const idx = rotationCursor % totalPoolLen;
         rotationCursor = (rotationCursor + 1) % totalPoolLen;
         scanned++;
@@ -3466,7 +3471,9 @@ async function manageAgentRotation() {
         activeAgents.push(new AIAgentClient(candidate, isFirstRotationWave));
         spawned++;
       }
-      isFirstRotationWave = false;
+      if (activeAgents.length >= maxConcurrentAI) {
+        isFirstRotationWave = false;
+      }
     }
   } catch (err) {
     console.error('[-] AI 로테이션 관리 오류:', err.message);
@@ -3611,7 +3618,14 @@ async function startAIAgentRunner() {
 
   console.log(`🤖 [AI Agent Runner 가동] ${AI_ACCOUNT_EMAIL} 총 ${allAiDbRecords.length}명 풀(슬롯 ${AI_SLOT_START}~${AI_SLOT_START + allAiDbRecords.length - 1}) 중 동시접속 ${maxConcurrentAI}명 상시 유지 로테이션 가동! (파티 정원: ${MAX_PARTY_MEMBERS}명, Redis Lazy Sync 활성화)`);
   await manageAgentRotation();
-  setInterval(manageAgentRotation, 5000);
+  // 부팅 초기 충원 시 1.5초 간격으로 8명씩 부드럽게 충원, 100명 달성 후 5초 간격 전환
+  let rotTimer = setInterval(async () => {
+    await manageAgentRotation();
+    if (!isFirstRotationWave && rotTimer) {
+      clearInterval(rotTimer);
+      setInterval(manageAgentRotation, 5000);
+    }
+  }, 1500);
 }
 
 if (require.main === module) {
