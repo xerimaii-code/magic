@@ -57,7 +57,16 @@ function loadLocalAiSnapshot(expectedCount = AI_TOTAL_POOL) {
     const raw = fs.readFileSync(AI_SNAPSHOT_FILE, 'utf8');
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length >= expectedCount) {
-      return parsed.slice(0, expectedCount);
+      const sliced = parsed.slice(0, expectedCount);
+      for (let i = 0; i < sliced.length; i++) {
+        const m = sliced[i]?.char_data?.mercenary;
+        if (m && typeof m === 'object') {
+          delete m.inventory;
+          delete m.equip;
+          delete m.stats;
+        }
+      }
+      return sliced;
     }
   } catch (_) {}
   return null;

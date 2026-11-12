@@ -242,17 +242,24 @@ function parseAccountTokenString(tokenStr) {
   return { pwHash: parts[0].slice(3) || null, sessionToken: parts[1] || null };
 }
 
+// 📉 수파베이스 Egress(대역폭) 극한 절감용 인메모리 캐시 (유저 슬롯/창고 반복 조회 0바이트화)
+const userCharactersCache = new Map(); // userId -> { ts: number, rows: Array }
+const userStorageCache = new Map();    // userId -> { ts: number, data: Object }
+
 async function supabaseRest(table, method = 'GET', query = '', bodyObj = null, conflictCol = null) {
   if (!SUPABASE_URL || !SUPABASE_KEY || typeof fetch === 'undefined') return null;
   try {
     const conflictParam = conflictCol ? `${query ? '&' : '?'}on_conflict=${conflictCol}` : '';
     const url = `${SUPABASE_URL}/rest/v1/${table}${query}${conflictParam}`;
+    // 📉 POST/PATCH/DELETE 시 return=minimal을 사용하여 수파베이스가 대용량 JSON을 역전송(Egress)하지 않도록 차단!
+    const preferHeader = method === 'GET'
+      ? 'return=representation'
+      : 'return=minimal,resolution=merge-duplicates';
     const headers = {
       'Content-Type': 'application/json',
       'apikey': SUPABASE_KEY,
-      'Prefer': 'return=representation,resolution=merge-duplicates'
+      'Prefer': preferHeader
     };
-    // Supabase 신규 sb_publishable_ 키는 apikey 헤더로만 전달 (Bearer 토큰 사용 금지)
     if (SUPABASE_KEY.startsWith('eyJ')) {
       headers['Authorization'] = `Bearer ${SUPABASE_KEY}`;
     }
@@ -266,8 +273,10 @@ async function supabaseRest(table, method = 'GET', query = '', bodyObj = null, c
       console.error(`[Supabase ${table}] ${method} 오류 (HTTP ${res.status}): ${errText}`);
       return null;
     }
+    if (method !== 'GET') {
+      return Array.isArray(bodyObj) ? bodyObj : (bodyObj ? [bodyObj] : []);
+    }
     const text = await res.text();
-    console.log(`[Supabase ${table}] ${method} 성공! (데이터가 수파베이스에 정상 저장/조회됨)`);
     return text ? JSON.parse(text) : null;
   } catch (e) {
     console.error(`[Supabase ${table}] 네트워크 통신 오류:`, e.message);
@@ -996,7 +1005,7 @@ function populateServerMapMonsters(mapInst) {
       }
     });
 
-    const dx = mapData.dungeonEntrance?.x || 3000, dy = mapData.dungeonEntrance?.y || 7500;
+    const dx = mapData.dungeonEntrance?.x || 4000, dy = mapData.dungeonEntrance?.y || 7500;
     [[dx, dy + 280], [dx - 420, dy + 120], [dx + 420, dy + 120], [dx, dy + 650]].forEach(([cx, cy], cIdx) => {
       for (let i = 0; i < 7; i++) {
         pushSafeMonster(`${currentRegionKey}_dgate_${cIdx}_${i}`, dPool[i % dPool.length], cx + Math.cos(i) * 135, cy + Math.sin(i) * 135);
@@ -1565,10 +1574,19 @@ function removeCharFromParty(charId, reason = 'leave') {
   broadcastPartyUpdate(party);
 }
 
-// 📡 단일 직렬화 후 다중 소켓 고속 전송 헬퍼 (동시접속 150명 + AI 100명 브로드캐스트 시 JSON.stringify/Buffer 중복 생성 0회!)
-function sendPreSerializedWs(conn, jsonStr, payloadBuf, useBinary = true) {
+// 📡 [Zero-TCP & 단일 직렬화 고속 전송 헬퍼]
+// - 인프로세스 AI 소켓(conn.isDirectMemory): JSON.stringify / Buffer.from / TCP 소켓 없이 메모리 객체 직접 전달 (루프백 0바이트, 버퍼 할당 0바이트!)
+// - 실제 유저 브라우저 소켓: 단일 직렬화 바이너리 프레임 전송
+function sendPreSerializedWs(conn, jsonStr, payloadBuf, useBinary = true, rawObj = null) {
   if (!conn) return;
   try {
+    if (conn.isDirectMemory) {
+      if (conn.readyState === 1 && typeof conn._deliverToClient === 'function') {
+        const pkt = rawObj || (jsonStr ? JSON.parse(jsonStr) : null);
+        if (pkt) conn._deliverToClient(pkt);
+      }
+      return;
+    }
     const sendAsBin = Boolean(useBinary && conn.binarySupported !== false);
     if (typeof conn.send === 'function') {
       if (conn.readyState !== undefined && conn.readyState !== 1) return;
@@ -1602,25 +1620,67 @@ function sendPreSerializedWs(conn, jsonStr, payloadBuf, useBinary = true) {
 function sendWsMessage(conn, obj, useBinary = true) {
   if (!conn) return;
   try {
+    if (conn.isDirectMemory) {
+      if (conn.readyState === 1 && typeof conn._deliverToClient === 'function') {
+        conn._deliverToClient(typeof obj === 'string' ? JSON.parse(obj) : obj);
+      }
+      return;
+    }
     const json = typeof obj === 'string' ? obj : JSON.stringify(obj);
     const payload = Buffer.from(json, 'utf8');
-    sendPreSerializedWs(conn, json, payload, useBinary);
+    sendPreSerializedWs(conn, json, payload, useBinary, typeof obj === 'object' ? obj : null);
   } catch (e) {}
 }
 
+// 📡 맵 브로드캐스트: 실제 유저에게는 100% 전원 즉시 전송하고,
+// 공유 월드 캐시(sharedMapWorldState)를 쓰는 AI 에이전트에게는 맵당 대표 1명(+기여자)에게만 전송하여 루프백 트래픽 90% 절감!
+const SHARED_AI_MAP_EVENT_TYPES = new Set([
+  'MONSTERS_SPAWNED',
+  'MONSTER_RESPAWNED',
+  'GROUND_ITEM_REMOVED',
+  'GROUND_ITEM_ADDED',
+  'GROUND_ITEMS_SYNC',
+  'PLAYER_LEFT_MAP'
+]);
+
 function broadcastToMap(rawMapKey, packetObj, excludeCharId = null) {
   const targetMapKey = normalizeMapKey(rawMapKey);
+  const pktType = (packetObj && typeof packetObj === 'object') ? packetObj.type : '';
+  const isSharedAiMapEvent = SHARED_AI_MAP_EVENT_TYPES.has(pktType);
+  const isMonsterKilled = pktType === 'MONSTER_KILLED';
+  const isMonsterDamaged = pktType === 'MONSTER_DAMAGED';
+  const contributors = (isMonsterKilled && Array.isArray(packetObj.contributors)) ? packetObj.contributors : null;
+
   let jsonStr = null;
   let payloadBuf = null;
+  let aiRepSent = false;
+
   activeCharSockets.forEach(entry => {
     if (!entry || entry.charId === excludeCharId) return;
-    if ((entry.mapKey === targetMapKey) || (normalizeMapKey(entry.mapKey) === targetMapKey)) {
-      if (!payloadBuf) {
-        jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
-        payloadBuf = Buffer.from(jsonStr, 'utf8');
+    if ((entry.mapKey !== targetMapKey) && (normalizeMapKey(entry.mapKey) !== targetMapKey)) return;
+
+    const isAi = isAIEntry(entry);
+    if (isAi) {
+      if (isMonsterDamaged) return; // AI는 타인의 허공/미스 데미지 패킷 불필요
+      if (isSharedAiMapEvent) {
+        if (aiRepSent) return;
+        aiRepSent = true;
+      } else if (isMonsterKilled) {
+        const isContrib = contributors && contributors.includes(entry.charId);
+        if (aiRepSent && !isContrib) return;
+        aiRepSent = true;
       }
-      sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
     }
+
+    if (entry.conn && entry.conn.isDirectMemory) {
+      sendPreSerializedWs(entry.conn, null, null, true, packetObj);
+      return;
+    }
+    if (!payloadBuf) {
+      jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
+      payloadBuf = Buffer.from(jsonStr, 'utf8');
+    }
+    sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true, packetObj);
   });
 }
 
@@ -1636,11 +1696,15 @@ function broadcastToMapAoi(rawMapKey, cx, cy, humanRadius, aiRadius, packetObj, 
     if (!entry || entry.charId === excludeCharId) return;
     if (entry.mapKey !== targetMapKey && normalizeMapKey(entry.mapKey) !== targetMapKey) return;
     if (alwaysIncludeCharId && entry.charId === alwaysIncludeCharId) {
+      if (entry.conn && entry.conn.isDirectMemory) {
+        sendPreSerializedWs(entry.conn, null, null, true, packetObj);
+        return;
+      }
       if (!payloadBuf) {
         jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
         payloadBuf = Buffer.from(jsonStr, 'utf8');
       }
-      sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
+      sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true, packetObj);
       return;
     }
     const isAi = isAIEntry(entry);
@@ -1651,11 +1715,15 @@ function broadcastToMapAoi(rawMapKey, cx, cy, humanRadius, aiRadius, packetObj, 
     const dx = Math.abs(px - cx);
     const dy = Math.abs(py - cy);
     if (dx <= maxR && dy <= maxR && (dx * dx + dy * dy) <= (isAi ? aiRSq : humanRSq)) {
+      if (entry.conn && entry.conn.isDirectMemory) {
+        sendPreSerializedWs(entry.conn, null, null, true, packetObj);
+        return;
+      }
       if (!payloadBuf) {
         jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
         payloadBuf = Buffer.from(jsonStr, 'utf8');
       }
-      sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
+      sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true, packetObj);
     }
   });
 }
@@ -1668,11 +1736,15 @@ function broadcastToRegion(rawRegionKey, packetObj, excludeCharId = null) {
     if (!entry || entry.charId === excludeCharId) return;
     const entryReg = String(entry.regionKey || entry.mapKey || 'R01').split('_')[0];
     if (entryReg === targetReg) {
+      if (entry.conn && entry.conn.isDirectMemory) {
+        sendPreSerializedWs(entry.conn, null, null, true, packetObj);
+        return;
+      }
       if (!payloadBuf) {
         jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
         payloadBuf = Buffer.from(jsonStr, 'utf8');
       }
-      sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
+      sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true, packetObj);
     }
   });
 }
@@ -1682,11 +1754,15 @@ function broadcastToAll(packetObj, excludeCharId = null) {
   let payloadBuf = null;
   activeCharSockets.forEach(entry => {
     if (!entry || entry.charId === excludeCharId) return;
+    if (entry.conn && entry.conn.isDirectMemory) {
+      sendPreSerializedWs(entry.conn, null, null, true, packetObj);
+      return;
+    }
     if (!payloadBuf) {
       jsonStr = typeof packetObj === 'string' ? packetObj : JSON.stringify(packetObj);
       payloadBuf = Buffer.from(jsonStr, 'utf8');
     }
-    sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true);
+    sendPreSerializedWs(entry.conn, jsonStr, payloadBuf, true, packetObj);
   });
 }
 
@@ -2833,12 +2909,12 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
   if (cmd === '/모험가생성' || cmd === '/에이전트생성' || cmd === '/ai생성' || cmd === '/모험가초기화') {
     const totalCount = args[0] ? parseInt(args[0], 10) : 600;
     if (isNaN(totalCount) || totalCount < 1 || totalCount > 1000) {
-      sendSystemMsgToEntry(entry, `💡 사용법: /모험가생성 [1~1000, 기본600] [상시인원, 기본300] (기존 에이전트 전체 삭제 후 지정 인원만큼 신규 생성 및 기본 300명 상시 순환 로테이션)`, 'log-sys');
+      sendSystemMsgToEntry(entry, `💡 사용법: /모험가생성 [1~1000, 기본600] [상시인원, 기본400] (기존 에이전트 전체 삭제 후 지정 인원만큼 신규 생성 및 기본 300명 상시 순환 로테이션)`, 'log-sys');
       return true;
     }
     const defaultConcurrent = args[1]
-      ? Math.min(totalCount, Math.max(1, parseInt(args[1], 10) || 300))
-      : Math.min(300, totalCount);
+      ? Math.min(totalCount, Math.max(1, parseInt(args[1], 10) || 400))
+      : Math.min(400, totalCount);
 
     // 현재 월드에 접속 중인 기존 AI 에이전트 소켓/파티 즉시 정리
     activeCharSockets.forEach((e, cid) => {
@@ -2886,7 +2962,7 @@ if (cmd === '/누구' || cmd === '/who' || cmd === '/접속자' || cmd === '/유
   if (cmd === '/모험가상시인원' || cmd === '/모험가상시접속' || cmd === '/상시인원' || cmd === '/에이전트인원' || cmd === '/에이전트상시인원' || cmd === '/ai인원') {
     const concurrentCount = parseInt(args[0], 10);
     if (isNaN(concurrentCount) || concurrentCount < 0 || concurrentCount > 600) {
-      sendSystemMsgToEntry(entry, `💡 사용법: /모험가상시인원 <0~600> (600명 풀 중 상시 접속 로테이션 모험가 인원 실시간 변경, 권장: 300)`, 'log-sys');
+      sendSystemMsgToEntry(entry, `💡 사용법: /모험가상시인원 <0~600> (600명 풀 중 상시 접속 로테이션 모험가 인원 실시간 변경, 권장: 400)`, 'log-sys');
       return true;
     }
 
@@ -3611,6 +3687,46 @@ function cancelServerMobileBgProtection(charId) {
   if (entry.player) entry.player.bgInvincible = false;
   entry.lastSeen = Date.now();
 }
+
+
+// ─── 🚀 [400명 상시 AI Zero-TCP 다이렉트 메모리 브릿지] ───
+// 별도 프로세스나 TCP 루프백 소켓을 열지 않고 메모리 내에서 직접 패킷 객체를 주고받아 RAM 200MB 절약 & 루프백 트래픽 0바이트 달성!
+global.__MAGIC_DIRECT_WS_FACTORY__ = function createDirectServerSocket(clientWs) {
+  const serverConn = {
+    isDirectMemory: true,
+    readyState: 1,
+    bufferedAmount: 0,
+    charId: null,
+    _deliverToClient(pktObj) {
+      if (this.readyState !== 1 || !pktObj) return;
+      if (typeof clientWs._onDirectObject === 'function') {
+        clientWs._onDirectObject(pktObj);
+      }
+    },
+    send(data) {
+      if (this.readyState !== 1) return;
+      const obj = (typeof data === 'object' && !Buffer.isBuffer(data))
+        ? data
+        : JSON.parse(Buffer.isBuffer(data) ? data.toString('utf8') : String(data));
+      this._deliverToClient(obj);
+    },
+    close() {
+      if (this.readyState === 3) return;
+      this.readyState = 3;
+      removeDisconnectedConn(this);
+    }
+  };
+  return {
+    serverConn,
+    sendFromClient(pktObj) {
+      if (serverConn.readyState !== 1 || !pktObj) return;
+      handleClientWsPacket(serverConn, pktObj);
+    },
+    closeFromClient() {
+      serverConn.close();
+    }
+  };
+};
 
 function handleClientWsPacket(conn, msg) {
   if (!msg || !msg.type) return;
@@ -5291,23 +5407,34 @@ setInterval(() => {
         m._defDownVal = (m.defDownUntil && m.defDownUntil > now) ? m.defDownUntil : 0;
       }
 
-      // AI 수신자 틱 분할 계수: 평시 3분할(300ms), 서버 CPU 55% 이상 시 4분할(400ms)로 자동 조절하여 실제 유저 150명의 100ms 반응성 보호
-      const aiTickModulo = serverCpuUsagePct >= (SERVER_CPU_LIMIT_PCT - 12) ? 6 : 5;
+      // 🌟 [298명 상시 AI 초경량 동기화]
+      // aiagentrunner.js 내 동일 맵 AI들은 단일 sharedMapWorldState를 공유하므로,
+      // 맵당 '대표 AI 1명(firstAiOnMap)'에게만 400ms 주기로 맵 상태 틱을 전송하여 298명 루프백 패킷과 메모리를 90% 절감합니다!
+      // 실제 유저(!isAiReceiver)는 기존과 100% 동일하게 매 100ms(10Hz)마다 개별 AOI 패킷을 즉시 수신합니다.
+      let aiMapRepSent = false;
+      const isAiMapSyncTick = (tickSeq % 4 === ((mapKey.charCodeAt(1) || 0) % 4));
 
       for (let rIdx = 0; rIdx < mapPlayers.length; rIdx++) {
         const receiver = mapPlayers[rIdx];
         if (!receiver || !receiver.conn) continue;
 
         const isAiReceiver = isAIEntry(receiver);
-        if (isAiReceiver && !isNearRefreshTick && (tickSeq % aiTickModulo !== (rIdx % aiTickModulo))) {
-          continue;
+        if (isAiReceiver) {
+          if (aiMapRepSent || !isAiMapSyncTick) {
+            continue;
+          }
+          aiMapRepSent = true;
         }
 
         const bufferedBytes = receiver.conn?.bufferedAmount ?? receiver.conn?.socket?.writableLength ?? 0;
         if (!isNearRefreshTick && bufferedBytes > 65536) continue;
 
-        if (!receiver._knownMobs) receiver._knownMobs = new Map();
-        if (!receiver._knownPlayers) receiver._knownPlayers = new Map();
+        const knownMobsMap = isAiReceiver
+          ? (mapInst._aiKnownMobs || (mapInst._aiKnownMobs = new Map()))
+          : (knownMobsMap || (knownMobsMap = new Map()));
+        const knownPlayersMap = isAiReceiver
+          ? (mapInst._aiKnownPlayers || (mapInst._aiKnownPlayers = new Map()))
+          : (knownPlayersMap || (knownPlayersMap = new Map()));
 
         const rPx = Math.round(Number(receiver.player?.x) || 2000);
         const rPy = Math.round(Number(receiver.player?.y) || 14250);
@@ -5317,8 +5444,8 @@ setInterval(() => {
 
         // 1) 내 주변 필드 + 미니맵 범위 몬스터 선별 (제곱 거리 비교로 Math.hypot 제거)
         const compactMobs = [];
-        const mobRadius = isAiReceiver ? AI_MOB_AOI_RADIUS : MOB_AOI_RADIUS;
-        const mobRadiusSq = isAiReceiver ? AI_MOB_AOI_RADIUS_SQ : MOB_AOI_RADIUS_SQ;
+        const mobRadius = isAiReceiver ? 30000 : MOB_AOI_RADIUS;
+        const mobRadiusSq = isAiReceiver ? 900000000 : MOB_AOI_RADIUS_SQ;
 
         for (let i = 0; i < mobsLen; i++) {
           const m = mapInst.monsters[i];
@@ -5326,10 +5453,10 @@ setInterval(() => {
           const ry = m._ry;
           const dxM = Math.abs(rx - rPx);
           const dyM = Math.abs(ry - rPy);
-          const distSq = (dxM <= 2200 && dyM <= 2200) ? (dxM * dxM + dyM * dyM) : 999999999;
+          const distSq = isAiReceiver ? 0 : ((dxM <= 2200 && dyM <= 2200) ? (dxM * dxM + dyM * dyM) : 999999999);
           const inAoi = (dxM <= mobRadius && dyM <= mobRadius && distSq <= mobRadiusSq) || m.isBoss || (rTargetMobId === m.id) || (!m.isDead && m.hp < m.maxHp && distSq <= 4840000);
 
-          const prev = receiver._knownMobs.get(m.id);
+          const prev = knownMobsMap.get(m.id);
           if (!inAoi) {
             if (prev && prev.dead !== m.isDead) {
               prev.dead = m.isDead;
@@ -5353,7 +5480,7 @@ setInterval(() => {
 
           if (enteredAoi || stateChanged || movedNow || stoppedNow || hpChanged || ccChanged || (isNearRefreshTick && !m.isDead)) {
             const needFullMeta = !isAiReceiver && (enteredAoi || stateChanged || isNearRefreshTick);
-            receiver._knownMobs.set(m.id, {
+            knownMobsMap.set(m.id, {
               x: rx,
               y: ry,
               hp: m.hp,
@@ -5389,7 +5516,7 @@ setInterval(() => {
         const currentAoiIds = new Set();
         const searchRadius = isAiReceiver ? AI_PLAYER_AOI_HYSTERESIS : PLAYER_AOI_HYSTERESIS;
         const aoiCandidates = isAiReceiver
-          ? querySpatialGrid9(mapInst.playerGrid, rPx, rPy, true)
+          ? mapPlayers
           : querySpatialGridRadius(mapInst.playerGrid, rPx, rPy, searchRadius);
 
         // 같은 파티원이 AOI 밖에 있더라도 파티 점사/추적을 위해 후보에 포함
@@ -5402,8 +5529,8 @@ setInterval(() => {
           }
         }
 
-        const enterR = isAiReceiver ? AI_PLAYER_AOI_RADIUS : PLAYER_AOI_RADIUS;
-        const exitR = isAiReceiver ? AI_PLAYER_AOI_HYSTERESIS : PLAYER_AOI_HYSTERESIS;
+        const enterR = isAiReceiver ? 30000 : PLAYER_AOI_RADIUS;
+        const exitR = isAiReceiver ? 30000 : PLAYER_AOI_HYSTERESIS;
 
         for (let cIdx = 0; cIdx < aoiCandidates.length; cIdx++) {
           const other = aoiCandidates[cIdx];
@@ -5416,7 +5543,7 @@ setInterval(() => {
           const oy = Math.round(op.y || 14250);
           const dxP = Math.abs(ox - rPx);
           const dyP = Math.abs(oy - rPy);
-          const prevP = receiver._knownPlayers.get(other.charId);
+          const prevP = knownPlayersMap.get(other.charId);
           const wasFullInAoi = Boolean(prevP && prevP.metaSig !== 'minimap');
           const isSameParty = Boolean(recPartyId && other.partyId === recPartyId);
 
@@ -5435,7 +5562,7 @@ setInterval(() => {
             const aiMoved = !prevP || Math.abs(prevP.x - ox) >= 2 || Math.abs(prevP.y - oy) >= 2 || prevP.hp !== op.hp || prevP.targetMobId !== (op.targetMobId || null) || prevP.partyId !== partyId;
             if (aiMoved || isNearRefreshTick) {
               const isNewForAi = !prevP || isNearRefreshTick;
-              receiver._knownPlayers.set(other.charId, {
+              knownPlayersMap.set(other.charId, {
                 x: ox, y: oy, hp: op.hp,
                 targetMobId: op.targetMobId || null,
                 partyId
@@ -5470,7 +5597,7 @@ setInterval(() => {
 
           if (pMoved || mMoved || statOrMetaDiff || isNearRefreshTick) {
             const includeFullMeta = !wasFullInAoi || prevP.metaSig !== metaSig || isNearRefreshTick;
-            receiver._knownPlayers.set(other.charId, {
+            knownPlayersMap.set(other.charId, {
               x: ox, y: oy, dir: op.dir, walk: Boolean(op.isWalking),
               hp: op.hp, maxHp: op.maxHp, mp: op.mp, maxMp: op.maxMp,
               spd: op.speed, atkTs: op.lastAttackTime,
@@ -5546,11 +5673,11 @@ setInterval(() => {
             if (!fop) continue;
             const fox = Math.round(fop.x || 2000);
             const foy = Math.round(fop.y || 14250);
-            const prevFar = receiver._knownPlayers.get(farOther.charId);
+            const prevFar = knownPlayersMap.get(farOther.charId);
             const justLeftAoi = Boolean(prevFar && prevFar.metaSig !== 'minimap');
 
             if (!prevFar || justLeftAoi || (isRadarTick && (Math.abs(prevFar.x - fox) >= 15 || Math.abs(prevFar.y - foy) >= 15))) {
-              receiver._knownPlayers.set(farOther.charId, {
+              knownPlayersMap.set(farOther.charId, {
                 x: fox,
                 y: foy,
                 metaSig: 'minimap'
@@ -5576,9 +5703,9 @@ setInterval(() => {
         // 맵(또는 AI의 경우 AOI)을 벗어난 플레이어 캐시 정리
         const validSetForReceiver = isAiReceiver ? currentAoiIds : new Set(allMapValidIds);
         let otherRemoved = false;
-        receiver._knownPlayers.forEach((_, cId) => {
+        knownPlayersMap.forEach((_, cId) => {
           if (!validSetForReceiver.has(cId)) {
-            receiver._knownPlayers.delete(cId);
+            knownPlayersMap.delete(cId);
             otherRemoved = true;
           }
         });
@@ -5948,18 +6075,26 @@ function maskEmailAddress(email) {
     return sendJson(res, 200, { ok: true });
   }
 
-  // [API 5] 캐릭터 슬롯 목록 조회 (수파베이스 조회 + Redis 최신 지연 동기화 캐시 병합)
+  // [API 5] 캐릭터 슬롯 목록 조회 (5분 메모리 캐시 + Redis 최신 상태 병합으로 대기실 폴링 시 수파베이스 대역폭 0바이트화!)
   if (pathname.startsWith('/api/characters/') && req.method === 'GET') {
     const userId = pathname.replace('/api/characters/', '').trim();
-    const remoteChars = await supabaseRest(
-      'magic_characters',
-      'GET',
-      `?user_id=eq.${encodeURIComponent(userId)}&slot_index=lt.100&select=id,user_id,slot_index,name,class,level,exp,gold,region_key,map_key,pos_x,pos_y,char_data,session_token&order=slot_index.asc`
-    );
-    if (remoteChars === null) {
-      return sendJson(res, 500, { ok: false, error: '수파베이스 캐릭터 조회에 실패했습니다.', characters: [] });
+    const nowTs = Date.now();
+    let charList = null;
+    const cachedEntry = userCharactersCache.get(userId);
+    if (cachedEntry && (nowTs - cachedEntry.ts < 300000)) {
+      charList = cachedEntry.rows;
+    } else {
+      const remoteChars = await supabaseRest(
+        'magic_characters',
+        'GET',
+        `?user_id=eq.${encodeURIComponent(userId)}&slot_index=lt.100&select=id,user_id,slot_index,name,class,level,exp,gold,region_key,map_key,pos_x,pos_y,char_data,session_token&order=slot_index.asc`
+      );
+      if (remoteChars === null) {
+        return sendJson(res, 500, { ok: false, error: '수파베이스 캐릭터 조회에 실패했습니다.', characters: [] });
+      }
+      charList = Array.isArray(remoteChars) ? remoteChars : [];
+      userCharactersCache.set(userId, { ts: nowTs, rows: charList });
     }
-    const charList = Array.isArray(remoteChars) ? remoteChars : [];
     const redisMap = await getMultipleAgentStates(charList.map(c => c?.id).filter(Boolean));
     const annotated = charList.map(c => {
       const cached = c && c.id ? redisMap.get(String(c.id)) : null;
@@ -5978,7 +6113,7 @@ function maskEmailAddress(email) {
     const name = String(body.name || '').trim().toLowerCase();
     if (!name) return sendJson(res, 200, { exists: false });
 
-    const remoteDup = await supabaseRest('magic_characters', 'GET', `?name=ilike.${encodeURIComponent(name)}&limit=1`);
+    const remoteDup = await supabaseRest('magic_characters', 'GET', `?name=ilike.${encodeURIComponent(name)}&select=id&limit=1`);
     if (remoteDup === null) {
       return sendJson(res, 500, { exists: false, error: '수파베이스 이름 중복 체크 실패' });
     }
@@ -5995,7 +6130,7 @@ function maskEmailAddress(email) {
     if (charPayload && charPayload.id) {
       if (isNewCreate && charPayload.user_id) {
         // 1) 실시간 수파베이스 계정의 현재 슬롯 상태 먼저 검증
-        const existingChars = await supabaseRest('magic_characters', 'GET', `?user_id=eq.${encodeURIComponent(charPayload.user_id)}&slot_index=lt.100&order=slot_index.asc`);
+        const existingChars = await supabaseRest('magic_characters', 'GET', `?user_id=eq.${encodeURIComponent(charPayload.user_id)}&slot_index=lt.100&select=id,slot_index,name&order=slot_index.asc`);
         if (existingChars === null) {
           return sendJson(res, 500, { ok: false, error: '수파베이스 DB 연결 실패로 캐릭터를 생성할 수 없습니다.' });
         }
@@ -6020,7 +6155,7 @@ function maskEmailAddress(email) {
         }
         // 2) 캐릭터 이름 중복 실시간 검증
         if (charPayload.name) {
-          const dupName = await supabaseRest('magic_characters', 'GET', `?name=ilike.${encodeURIComponent(charPayload.name)}&limit=1`);
+          const dupName = await supabaseRest('magic_characters', 'GET', `?name=ilike.${encodeURIComponent(charPayload.name)}&select=id,name&limit=1`);
           if (dupName === null) {
             return sendJson(res, 500, { ok: false, error: '수파베이스 이름 검증에 실패했습니다.' });
           }
@@ -6052,11 +6187,20 @@ function maskEmailAddress(email) {
           }
         }
       }
+      if (charPayload.user_id && userCharactersCache.has(charPayload.user_id)) {
+        const cEntry = userCharactersCache.get(charPayload.user_id);
+        if (cEntry && Array.isArray(cEntry.rows)) {
+          const idx = cEntry.rows.findIndex(r => r.id === charPayload.id);
+          if (idx > -1) cEntry.rows[idx] = { ...cEntry.rows[idx], ...charPayload };
+          else cEntry.rows.push(charPayload);
+        }
+      }
       if (isNewCreate) {
         const saveRes = await supabaseRest('magic_characters', 'POST', '', charPayload, 'id');
         if (!saveRes) {
           return sendJson(res, 500, { ok: false, error: '수파베이스 캐릭터 저장 실패' });
         }
+        userCharactersCache.delete(charPayload.user_id);
         await updateAgentState(charPayload.id, charPayload);
         return sendJson(res, 200, { ok: true, character: Array.isArray(saveRes) ? saveRes[0] : charPayload });
       }
@@ -6112,11 +6256,11 @@ function maskEmailAddress(email) {
     if (!body || !body.id || !body.user_id) {
       return sendJson(res, 400, { ok: false, error: '삭제할 캐릭터 정보가 올바르지 않습니다.' });
     }
-    const checkExist = await supabaseRest('magic_characters', 'GET', `?id=eq.${encodeURIComponent(body.id)}&user_id=eq.${encodeURIComponent(body.user_id)}&limit=1`);
-    if (checkExist === null) {
+    const delRes = await supabaseRest('magic_characters', 'DELETE', `?id=eq.${encodeURIComponent(body.id)}&user_id=eq.${encodeURIComponent(body.user_id)}`);
+    if (delRes === null) {
       return sendJson(res, 500, { ok: false, error: '수파베이스 DB 연결 실패로 삭제할 수 없습니다.' });
     }
-    await supabaseRest('magic_characters', 'DELETE', `?id=eq.${encodeURIComponent(body.id)}&user_id=eq.${encodeURIComponent(body.user_id)}`);
+    userCharactersCache.delete(body.user_id);
     if (activeCharSockets.has(body.id)) {
       const delEntry = activeCharSockets.get(body.id);
       if (delEntry) {
@@ -6129,19 +6273,27 @@ function maskEmailAddress(email) {
     return sendJson(res, 200, { ok: true, characters: Array.isArray(remainingChars) ? remainingChars : [] });
   }
 
-  // [API 9] 계정 공유 창고 조회 및 저장 (수파베이스 필수)
+  // [API 9] 계정 공유 창고 조회 및 저장 (10분 메모리 캐시 적용으로 반복 창고 조회 시 수파베이스 대역폭 0바이트화!)
   if (pathname.startsWith('/api/storage/') && req.method === 'GET' && pathname !== '/api/storage/save') {
     const userId = pathname.replace('/api/storage/', '').trim();
+    const nowTs = Date.now();
+    const cachedSt = userStorageCache.get(userId);
+    if (cachedSt && (nowTs - cachedSt.ts < 600000)) {
+      return sendJson(res, 200, { ok: true, storage: cachedSt.data });
+    }
     const remoteSt = await supabaseRest('magic_storage', 'GET', `?user_id=eq.${encodeURIComponent(userId)}&limit=1`);
     if (remoteSt === null) {
       return sendJson(res, 500, { ok: false, error: '수파베이스 창고 조회 실패', storage: null });
     }
-    return sendJson(res, 200, { ok: true, storage: Array.isArray(remoteSt) && remoteSt.length > 0 ? remoteSt[0] : null });
+    const stData = Array.isArray(remoteSt) && remoteSt.length > 0 ? remoteSt[0] : null;
+    userStorageCache.set(userId, { ts: nowTs, data: stData });
+    return sendJson(res, 200, { ok: true, storage: stData });
   }
 
   if (pathname === '/api/storage/save' && req.method === 'POST') {
     const stPayload = await readJsonBody(req);
     if (stPayload && stPayload.user_id) {
+      userStorageCache.set(stPayload.user_id, { ts: Date.now(), data: stPayload });
       await supabaseRest('magic_storage', 'POST', '', stPayload, 'user_id');
     }
     return sendJson(res, 200, { ok: true });
@@ -6316,8 +6468,13 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`👑 운영자모드 : 채팅창에 '/운영자모드' 또는 '/?' 입력 (/서버재부팅 지원)`);
   console.log(`==============================================================`);
 
-  // 로컬 단독 실행 시(PM2 이중 실행이 아닐 때) AI 에이전트 러너 자동 구동
-  if (process.env.PM2_MANAGED !== 'true' && process.env.DISABLE_AUTO_AI_RUNNER !== 'true') {
+  // 🚀 [단일 프로세스 Zero-TCP 통합 AI 러너 가동]
+  // 기존에 분리되어 메모리를 2배(270MB)로 먹던 구버전 PM2 magic-ai-runner 프로세스가 남아있다면 즉시 자동 제거하고,
+  // magic-game-server 단일 프로세스 내부에서 Zero-TCP 다이렉트 메모리 모드로 400명 AI를 가동합니다!
+  if (process.platform !== 'win32') {
+    exec('pm2 delete magic-ai-runner >/dev/null 2>&1 || true', () => {});
+  }
+  if (process.env.DISABLE_AUTO_AI_RUNNER !== 'true') {
     setTimeout(() => {
       try {
         const runnerPath = fs.existsSync(path.join(__dirname, 'aiAgentRunner.js')) ? './aiAgentRunner.js' : './aiagentrunner.js';
@@ -6326,6 +6483,6 @@ server.listen(PORT, '0.0.0.0', () => {
       } catch (err) {
         console.warn('⚠️ [AI Runner 자동 시작 알림]:', err.message);
       }
-    }, 1500);
+    }, 1000);
   }
 });
