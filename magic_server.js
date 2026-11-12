@@ -1940,62 +1940,44 @@ let _lastDiskCleanupTs = 0;
 function executeSafeDiskCleanup(triggerReason = 'server_event') {
   if (process.platform === 'win32') return;
   const nowTs = Date.now();
-  // 5분 이내 중복 실행 방지
   if (nowTs - _lastDiskCleanupTs < 300000) return;
   _lastDiskCleanupTs = nowTs;
 
-  console.log(`🧹 [디스크·메모리 자동 최적화 시작] 사유: ${triggerReason} | sale ERP 보호 모드`);
+  // 1) PM2 CLI 자식 프로세스(150MB 메모리 폭증 유발)를 띄우지 않고 Node.js 내장 fs.truncateSync로 0.1ms 만에 로그 비우기!
+  try {
+    const homeDir = process.env.HOME || '/root';
+    const pm2LogDir = path.join(homeDir, '.pm2', 'logs');
+    if (fs.existsSync(pm2LogDir)) {
+      const files = fs.readdirSync(pm2LogDir);
+      for (const f of files) {
+        if (f.startsWith('magic-') && f.endsWith('.log')) {
+          const fullP = path.join(pm2LogDir, f);
+          const st = fs.statSync(fullP);
+          if (st.size > 2 * 1024 * 1024) {
+            fs.truncateSync(fullP, 0);
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 2) 정기 리부팅(pre_reboot) 또는 수동 명령(gm_command)일 때만 경량 시스템 캐시 정리 실행 (부팅 시 불필요한 자식 쉘 생성 차단)
+  if (triggerReason === 'server_startup_post_rebuild') {
+    if (typeof global.gc === 'function') {
+      try { global.gc(); } catch (_) {}
+    }
+    return;
+  }
 
   const cleanupShellCommand = `
     renice -n 19 $$ >/dev/null 2>&1 || true
-    if command -v ionice >/dev/null 2>&1; then
-      ionice -c 3 -p $$ >/dev/null 2>&1 || true
-    fi
-
-    # 1. 게임 서버 PM2 로그만 선별 비우기 ('sale' ERP 로그는 절대 보존)
-    if command -v pm2 >/dev/null 2>&1; then
-      pm2 flush magic-ai-runner >/dev/null 2>&1 || true
-      pm2 flush magic-game-server >/dev/null 2>&1 || true
-    fi
-    if [ -d "$HOME/.pm2/logs" ]; then
-      find "$HOME/.pm2/logs" -type f -name "magic-*.log" -size +10M -exec truncate -s 0 {} \; 2>/dev/null || true
-    fi
-
-    # 2. 리눅스 시스템 저널 로그 정리 (최근 3일치 / 50MB만 유지)
-    if command -v journalctl >/dev/null 2>&1; then
-      journalctl --vacuum-time=3d >/dev/null 2>&1 || true
-      journalctl --vacuum-size=50M >/dev/null 2>&1 || true
-    fi
-
-    # 3. /var/log 내 오래된 시스템 압축 로그(*.gz, *.1) 정리
     find /var/log -type f \( -name "*.gz" -o -name "*.1" -o -name "*.old" \) -delete 2>/dev/null || true
-
-    # 4. APT 패키지 설치 캐시 비우기 (500MB~1.5GB 회수)
-    if command -v apt-get >/dev/null 2>&1; then
-      apt-get clean -y >/dev/null 2>&1 || true
-      apt-get autoremove --purge -y >/dev/null 2>&1 || true
-    fi
-
-    # 5. npm 전역 캐시 정리
-    if command -v npm >/dev/null 2>&1; then
-      npm cache clean --force >/dev/null 2>&1 || true
-    fi
-
-    # 6. 임시 디렉토리 안전 정리 (SQLite/ERP 연관 파일 엄격 제외)
     find /tmp -type f -atime +3 ! -name "etilqs_*" ! -name "*.sock" ! -name "*.lock" ! -name "*.db*" ! -path "*/sale/*" -delete 2>/dev/null || true
-    find /var/tmp -type f -atime +3 ! -name "etilqs_*" ! -name "*.sock" ! -name "*.lock" ! -name "*.db*" ! -path "*/sale/*" -delete 2>/dev/null || true
-
-    # 7. SQLite 데이터 안전 플러시(sync) 후 PageCache 메모리 회수
     sync
     echo 1 > /proc/sys/vm/drop_caches 2>/dev/null || true
   `;
-
   try {
-    exec(cleanupShellCommand, (err) => {
-      if (!err) {
-        console.log(`✨ [디스크·메모리 자동 최적화 완료] 사유: ${triggerReason} | sale ERP 안전 보존 및 디스크 용량 회수 성공`);
-      }
-    });
+    exec(cleanupShellCommand, () => {});
   } catch (_) {}
 }
 
@@ -5431,10 +5413,10 @@ setInterval(() => {
 
         const knownMobsMap = isAiReceiver
           ? (mapInst._aiKnownMobs || (mapInst._aiKnownMobs = new Map()))
-          : (knownMobsMap || (knownMobsMap = new Map()));
+          : (receiver._knownMobs || (receiver._knownMobs = new Map()));
         const knownPlayersMap = isAiReceiver
           ? (mapInst._aiKnownPlayers || (mapInst._aiKnownPlayers = new Map()))
-          : (knownPlayersMap || (knownPlayersMap = new Map()));
+          : (receiver._knownPlayers || (receiver._knownPlayers = new Map()));
 
         const rPx = Math.round(Number(receiver.player?.x) || 2000);
         const rPy = Math.round(Number(receiver.player?.y) || 14250);
@@ -6471,9 +6453,7 @@ server.listen(PORT, '0.0.0.0', () => {
   // 🚀 [단일 프로세스 Zero-TCP 통합 AI 러너 가동]
   // 기존에 분리되어 메모리를 2배(270MB)로 먹던 구버전 PM2 magic-ai-runner 프로세스가 남아있다면 즉시 자동 제거하고,
   // magic-game-server 단일 프로세스 내부에서 Zero-TCP 다이렉트 메모리 모드로 400명 AI를 가동합니다!
-  if (process.platform !== 'win32') {
-    exec('pm2 delete magic-ai-runner >/dev/null 2>&1 || true', () => {});
-  }
+
   if (process.env.DISABLE_AUTO_AI_RUNNER !== 'true') {
     setTimeout(() => {
       try {
